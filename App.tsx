@@ -15,10 +15,12 @@ import { AuthProvider, useAuth } from './state/AuthProvider';
 import { NavigationProvider, useNavigation } from './state/NavigationProvider';
 import { ProjectProvider } from './state/ProjectRepository';
 import {
-  Manrope_400Regular,
   Manrope_500Medium,
   Manrope_600SemiBold,
   Manrope_700Bold,
+  Poppins_400Regular,
+  Poppins_500Medium,
+  Poppins_600SemiBold,
   colors,
 } from './theme';
 
@@ -63,10 +65,12 @@ function ProjectTabs() {
 
 export default function App() {
   const [fontsLoaded] = useFonts({
-    Manrope_400Regular,
     Manrope_500Medium,
     Manrope_600SemiBold,
     Manrope_700Bold,
+    Poppins_400Regular,
+    Poppins_500Medium,
+    Poppins_600SemiBold,
   });
 
   if (!fontsLoaded) {
