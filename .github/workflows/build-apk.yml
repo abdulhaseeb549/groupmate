@@ -43,13 +43,20 @@ jobs:
       - name: Prebuild native Android project
         run: npx expo prebuild --platform android --no-install
 
-      - name: Build debug APK
+      - name: Build release APK
         working-directory: android
-        run: ./gradlew assembleDebug
+        # assembleRelease (not assembleDebug): a debug APK expects a live Metro
+        # server on the dev machine and crashes with "Unable to load script"
+        # once installed standalone — release embeds the JS bundle into the
+        # APK itself. Still installs fine without a real signing key: Expo's
+        # template points buildTypes.release at signingConfigs.debug by
+        # default, so this stays a debug-keystore-signed APK, just with the
+        # JS actually bundled in.
+        run: ./gradlew assembleRelease
 
       - name: Publish release with APK
         uses: softprops/action-gh-release@v2
         with:
           tag_name: build-${{ github.run_number }}
           name: Build ${{ github.run_number }}
-          files: android/app/build/outputs/apk/debug/app-debug.apk
+          files: android/app/build/outputs/apk/release/app-release.apk
