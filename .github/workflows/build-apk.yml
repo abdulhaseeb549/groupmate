@@ -43,6 +43,22 @@ jobs:
       - name: Prebuild native Android project
         run: npx expo prebuild --platform android --no-install
 
+      - name: Raise Gradle/Kotlin memory limits for CI
+        # expo prebuild regenerates android/gradle.properties from scratch
+        # every run, so this has to happen after prebuild, not committed
+        # into the repo. Without it, Kotlin/KSP compilation (expo-updates'
+        # codegen in particular) hits OutOfMemoryError: Metaspace on the
+        # runner's default heap and fails assembleRelease outright — this
+        # was masked by the earlier daemon hang, which stopped the build
+        # before this failure was visible. Workers capped to 2 as well, so
+        # fewer JVMs compete for memory at once on a 2-core/7GB runner.
+        run: |
+          cat >> android/gradle.properties <<'EOF'
+          org.gradle.jvmargs=-Xmx3g -XX:MaxMetaspaceSize=768m
+          org.gradle.workers.max=2
+          kotlin.daemon.jvmargs=-Xmx2g -XX:MaxMetaspaceSize=512m
+          EOF
+
       - name: Build release APK
         working-directory: android
         # assembleRelease (not assembleDebug): a debug APK expects a live Metro
