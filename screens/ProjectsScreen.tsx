@@ -1,15 +1,16 @@
 import { useMemo, useState } from 'react';
 import { Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
+import { LinearGradient } from 'expo-linear-gradient';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Avatar } from '../components/Avatar';
 import { BottomNav, NavTab } from '../components/BottomNav';
-import { Card, CardDivider } from '../components/Card';
+import { Card } from '../components/Card';
 import { DistributionEditor } from '../components/DistributionEditor';
 import { ProjectTimeline } from '../components/projects/ProjectTimeline';
 import { CURRENT_USER_ID, TEAM, TEAM_ORDER } from '../data/team';
 import { ProjectHealth } from '../state/projectState';
 import { useProject } from '../state/ProjectRepository';
-import { colors, layout, spacing, type } from '../theme';
+import { colors, gradients, layout, spacing, type } from '../theme';
 import { formatDueDate } from '../utils/dates';
 
 type Props = {
@@ -90,24 +91,26 @@ export function ProjectsScreen({ activeTab, onSelectTab }: Props) {
         <View style={styles.section}>
           <Text style={type.sectionHeading}>Workload</Text>
           <Card>
-            {workload.map((w, i) => {
+            {workload.map((w) => {
               const pct = w.total > 0 ? w.done / w.total : 0;
               return (
-                <View key={w.member.id}>
-                  {i > 0 ? <CardDivider inset={16} /> : null}
-                  <View style={styles.workloadRow}>
-                    <View style={styles.workloadHeader}>
-                      <Avatar initials={w.member.initials} bg={w.member.bg} fg={w.member.fg} size={28} />
-                      <Text style={[type.taskTitle, styles.workloadName]} numberOfLines={1}>
-                        {w.member.name}
-                      </Text>
-                      <Text style={[type.metadata, { color: colors.muted }]}>
-                        {w.done}/{w.total}
-                      </Text>
-                    </View>
-                    <View style={styles.workloadTrack}>
-                      <View style={[styles.workloadFill, { width: `${Math.round(pct * 100)}%` }]} />
-                    </View>
+                <View key={w.member.id} style={styles.workloadRow}>
+                  <View style={styles.workloadHeader}>
+                    <Avatar initials={w.member.initials} bg={w.member.bg} fg={w.member.fg} size={28} />
+                    <Text style={[type.taskTitle, styles.workloadName]} numberOfLines={1}>
+                      {w.member.name}
+                    </Text>
+                    <Text style={[type.metadata, { color: colors.muted }]}>
+                      {w.done}/{w.total}
+                    </Text>
+                  </View>
+                  <View style={styles.workloadTrack}>
+                    <LinearGradient
+                      colors={gradients.purpleDeep}
+                      start={{ x: 0, y: 0 }}
+                      end={{ x: 1, y: 0 }}
+                      style={[styles.workloadFill, { width: `${Math.round(pct * 100)}%` }]}
+                    />
                   </View>
                 </View>
               );
@@ -237,7 +240,7 @@ const styles = StyleSheet.create({
   },
   workloadRow: {
     gap: 12,
-    paddingVertical: 12,
+    paddingVertical: 16,
     paddingHorizontal: 16,
   },
   workloadHeader: {
@@ -250,6 +253,8 @@ const styles = StyleSheet.create({
     color: colors.ink,
   },
   workloadTrack: {
+    // 28 (avatar) + 10 (header gap) — the bar's left edge lines up with the name's, not the avatar's.
+    marginLeft: 38,
     height: 6,
     borderRadius: 3,
     backgroundColor: colors.surfaceMuted,
@@ -258,6 +263,5 @@ const styles = StyleSheet.create({
   workloadFill: {
     height: '100%',
     borderRadius: 3,
-    backgroundColor: colors.purple,
   },
 });
