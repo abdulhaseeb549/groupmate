@@ -75,7 +75,11 @@ jobs:
         # thread and never exits, hanging the whole job well past when the
         # actual work is done. A one-shot CI run doesn't need a persistent
         # daemon anyway.
-        run: ./gradlew assembleRelease --no-daemon
+        # --stacktrace: the last failure was just "Process 'command node'
+        # finished with non-zero exit value 1" with no detail on WHY — the
+        # actual Metro/bundler error Gradle captured isn't shown at the
+        # default log level. This surfaces it.
+        run: ./gradlew assembleRelease --no-daemon --stacktrace
 
       - name: Publish release with APK
         uses: softprops/action-gh-release@v2
