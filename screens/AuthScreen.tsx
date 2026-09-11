@@ -1,0 +1,301 @@
+import { useState } from 'react';
+import {
+  ActivityIndicator,
+  KeyboardAvoidingView,
+  Platform,
+  Pressable,
+  ScrollView,
+  StyleSheet,
+  Text,
+  TextInput,
+  View,
+} from 'react-native';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import { Icon } from '../components/Icon';
+import { useAuth } from '../state/AuthProvider';
+import { colors, layout, type } from '../theme';
+
+type Mode = 'signIn' | 'signUp';
+
+export function AuthScreen() {
+  const insets = useSafeAreaInsets();
+  const { signIn, signUp } = useAuth();
+  const [mode, setMode] = useState<Mode>('signIn');
+  const [fullName, setFullName] = useState('');
+  const [email, setEmail] = useState('');
+  const [password, setPassword] = useState('');
+  const [submitting, setSubmitting] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [signedUp, setSignedUp] = useState(false);
+
+  const isSignUp = mode === 'signUp';
+  const canSubmit =
+    email.trim().length > 0 && password.length >= 6 && (!isSignUp || fullName.trim().length > 0);
+
+  function switchMode(next: Mode) {
+    setMode(next);
+    setError(null);
+    setSignedUp(false);
+  }
+
+  async function submit() {
+    if (!canSubmit || submitting) return;
+    setSubmitting(true);
+    setError(null);
+    const result = isSignUp
+      ? await signUp(email.trim(), password, fullName.trim())
+      : await signIn(email.trim(), password);
+    setSubmitting(false);
+    if (result.error) {
+      setError(result.error);
+    } else if (isSignUp) {
+      // Sign-up without email confirmation logs the user straight in — with
+      // it on, there's no session yet, so say so rather than looking stuck.
+      setSignedUp(true);
+    }
+  }
+
+  return (
+    <KeyboardAvoidingView
+      style={styles.screen}
+      behavior={Platform.OS === 'ios' ? 'padding' : undefined}
+    >
+      <ScrollView
+        contentContainerStyle={[
+          styles.content,
+          { paddingTop: Math.max(insets.top, 32) + 40, paddingBottom: insets.bottom + 32 },
+        ]}
+        keyboardShouldPersistTaps="handled"
+        showsVerticalScrollIndicator={false}
+      >
+        <View style={styles.brand}>
+          <View style={styles.mark}>
+            <Icon name="document" size={26} color={colors.purple} strokeWidth={1.8} />
+          </View>
+          <Text style={[type.pageTitle, styles.ink]}>GroupMate</Text>
+          <Text style={[type.body, styles.muted, styles.tagline]}>
+            Turn assignments into teamwork.
+          </Text>
+        </View>
+
+        <View style={styles.tabs}>
+          <ModeTab label="Sign in" active={mode === 'signIn'} onPress={() => switchMode('signIn')} />
+          <ModeTab label="Create account" active={mode === 'signUp'} onPress={() => switchMode('signUp')} />
+        </View>
+
+        <View style={styles.form}>
+          {isSignUp ? (
+            <Field label="Your name">
+              <TextInput
+                value={fullName}
+                onChangeText={setFullName}
+                placeholder="Your full name"
+                placeholderTextColor={colors.faint}
+                autoCapitalize="words"
+                autoComplete="name"
+                style={styles.input}
+              />
+            </Field>
+          ) : null}
+
+          <Field label="Email">
+            <TextInput
+              value={email}
+              onChangeText={setEmail}
+              placeholder="you@university.edu"
+              placeholderTextColor={colors.faint}
+              autoCapitalize="none"
+              autoComplete="email"
+              keyboardType="email-address"
+              style={styles.input}
+            />
+          </Field>
+
+          <Field label="Password">
+            <TextInput
+              value={password}
+              onChangeText={setPassword}
+              placeholder={isSignUp ? 'At least 6 characters' : '••••••••'}
+              placeholderTextColor={colors.faint}
+              secureTextEntry
+              autoComplete={isSignUp ? 'new-password' : 'current-password'}
+              style={styles.input}
+            />
+          </Field>
+
+          {error ? (
+            <View style={styles.errorBox}>
+              <Icon name="exclamation" size={16} color={colors.redText} strokeWidth={2.2} />
+              <Text style={[type.caption, styles.errorText]}>{error}</Text>
+            </View>
+          ) : null}
+
+          {signedUp ? (
+            <View style={styles.noticeBox}>
+              <Icon name="check" size={16} color={colors.mintText} strokeWidth={2.4} />
+              <Text style={[type.caption, styles.noticeText]}>
+                Account created. Check your email to confirm it, then sign in.
+              </Text>
+            </View>
+          ) : null}
+
+          <Pressable
+            onPress={submit}
+            disabled={!canSubmit || submitting}
+            accessibilityRole="button"
+            accessibilityState={{ disabled: !canSubmit || submitting }}
+            style={({ pressed }) => [
+              styles.submit,
+              (!canSubmit || submitting) && styles.submitDisabled,
+              pressed && canSubmit && !submitting && styles.submitPressed,
+            ]}
+          >
+            {submitting ? (
+              <ActivityIndicator color={colors.onInk} />
+            ) : (
+              <Text style={[type.button, styles.submitLabel]}>
+                {isSignUp ? 'Create account' : 'Sign in'}
+              </Text>
+            )}
+          </Pressable>
+        </View>
+      </ScrollView>
+    </KeyboardAvoidingView>
+  );
+}
+
+function ModeTab({ label, active, onPress }: { label: string; active: boolean; onPress: () => void }) {
+  return (
+    <Pressable
+      onPress={onPress}
+      accessibilityRole="tab"
+      aria-selected={active}
+      style={[styles.tab, active && styles.tabActive]}
+    >
+      <Text style={[type.button, active ? styles.ink : styles.muted]}>{label}</Text>
+    </Pressable>
+  );
+}
+
+function Field({ label, children }: { label: string; children: React.ReactNode }) {
+  return (
+    <View style={styles.field}>
+      <Text style={[type.metadata, styles.muted]}>{label}</Text>
+      {children}
+    </View>
+  );
+}
+
+const styles = StyleSheet.create({
+  screen: {
+    flex: 1,
+    backgroundColor: colors.bg,
+  },
+  content: {
+    flexGrow: 1,
+    paddingHorizontal: layout.screenPadding,
+    justifyContent: 'center',
+    gap: 28,
+  },
+  ink: {
+    color: colors.ink,
+  },
+  muted: {
+    color: colors.muted,
+  },
+  brand: {
+    alignItems: 'center',
+    gap: 10,
+  },
+  mark: {
+    width: 56,
+    height: 56,
+    borderRadius: 18,
+    backgroundColor: colors.purpleSoft,
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginBottom: 4,
+  },
+  tagline: {
+    textAlign: 'center',
+  },
+  tabs: {
+    flexDirection: 'row',
+    backgroundColor: colors.surfaceMuted,
+    borderRadius: 16,
+    padding: 4,
+  },
+  tab: {
+    flex: 1,
+    height: 40,
+    borderRadius: 12,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  tabActive: {
+    backgroundColor: colors.surface,
+    shadowColor: '#1C1633',
+    shadowOpacity: 0.08,
+    shadowRadius: 8,
+    shadowOffset: { width: 0, height: 2 },
+    elevation: 2,
+  },
+  form: {
+    gap: 16,
+  },
+  field: {
+    gap: 6,
+  },
+  input: {
+    height: 50,
+    borderRadius: 14,
+    paddingHorizontal: 16,
+    backgroundColor: colors.surface,
+    borderWidth: 1.5,
+    borderColor: colors.border,
+    color: colors.ink,
+    fontFamily: type.body.fontFamily,
+    fontSize: type.body.fontSize,
+  },
+  errorBox: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    gap: 8,
+    backgroundColor: colors.redSoft,
+    borderRadius: 12,
+    padding: 12,
+  },
+  errorText: {
+    flex: 1,
+    color: colors.redText,
+  },
+  noticeBox: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    gap: 8,
+    backgroundColor: colors.mint,
+    borderRadius: 12,
+    padding: 12,
+  },
+  noticeText: {
+    flex: 1,
+    color: colors.mintText,
+  },
+  submit: {
+    height: 52,
+    borderRadius: 16,
+    backgroundColor: colors.purple,
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginTop: 4,
+  },
+  submitDisabled: {
+    opacity: 0.5,
+  },
+  submitPressed: {
+    opacity: 0.85,
+  },
+  submitLabel: {
+    color: colors.onInk,
+  },
+});
