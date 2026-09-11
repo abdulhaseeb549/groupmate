@@ -21,8 +21,8 @@ export const radius = {
 export const layout = {
   screenPadding: 20,
 
-  // A 24px box plus hitSlop={10} makes a 44px touch target.
-  checkboxSize: 24,
+  // A 20px box plus hitSlop={12} makes a 44px touch target.
+  checkboxSize: 20,
 
   quickActionHeight: 87,
   quickActionGap: 13,

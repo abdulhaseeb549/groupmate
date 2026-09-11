@@ -49,13 +49,13 @@ export function TaskRow({ task, context, onComplete }: Props) {
     <View style={styles.row}>
       <Pressable
         onPress={complete}
-        hitSlop={10}
+        hitSlop={12}
         accessibilityRole="checkbox"
         aria-checked={completing}
         accessibilityLabel={`Mark ${task.title} as done`}
         style={[styles.checkbox, completing && styles.checkboxChecked]}
       >
-        {completing ? <Icon name="check" size={15} color={colors.onInk} strokeWidth={2.6} /> : null}
+        {completing ? <Icon name="check" size={13} color={colors.onInk} strokeWidth={2.6} /> : null}
       </Pressable>
 
       <Pressable
@@ -123,12 +123,13 @@ const styles = StyleSheet.create({
   checkbox: {
     width: layout.checkboxSize,
     height: layout.checkboxSize,
-    borderRadius: 7,
+    borderRadius: 6,
     borderWidth: 1.5,
     borderColor: colors.control,
     alignItems: 'center',
     justifyContent: 'center',
-    marginTop: -1,
+    // Centers against the title's first line, not the full (possibly 2-line) block.
+    marginTop: 1,
   },
   checkboxChecked: {
     backgroundColor: colors.purple,
