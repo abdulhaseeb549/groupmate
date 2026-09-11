@@ -52,7 +52,14 @@ jobs:
         # template points buildTypes.release at signingConfigs.debug by
         # default, so this stays a debug-keystore-signed APK, just with the
         # JS actually bundled in.
-        run: ./gradlew assembleRelease
+        #
+        # --no-daemon: without it, the build finishes (see "N actionable
+        # tasks: N executed" in the log) but the leftover Gradle daemon can
+        # get stuck spinning on OutOfMemoryError: Metaspace in a background
+        # thread and never exits, hanging the whole job well past when the
+        # actual work is done. A one-shot CI run doesn't need a persistent
+        # daemon anyway.
+        run: ./gradlew assembleRelease --no-daemon
 
       - name: Publish release with APK
         uses: softprops/action-gh-release@v2
