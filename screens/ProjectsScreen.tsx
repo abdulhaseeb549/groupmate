@@ -239,8 +239,8 @@ const styles = StyleSheet.create({
     backgroundColor: colors.purple,
   },
   workloadRow: {
-    gap: 12,
-    paddingVertical: 16,
+    gap: 8,
+    paddingVertical: 12,
     paddingHorizontal: 16,
   },
   workloadHeader: {
