@@ -75,11 +75,30 @@ jobs:
         # thread and never exits, hanging the whole job well past when the
         # actual work is done. A one-shot CI run doesn't need a persistent
         # daemon anyway.
-        # --stacktrace: the last failure was just "Process 'command node'
-        # finished with non-zero exit value 1" with no detail on WHY — the
-        # actual Metro/bundler error Gradle captured isn't shown at the
-        # default log level. This surfaces it.
-        run: ./gradlew assembleRelease --no-daemon --stacktrace
+        #
+        # NODE_OPTIONS: the failure is "Process 'command node' finished
+        # with non-zero exit value 1" during the Metro/JS-bundling task —
+        # plausibly the bundler itself running out of heap on this runner,
+        # same underlying resource pressure as the Kotlin/KSP OOM above.
+        #
+        # Output piped to build.log (not just relied on in the Actions UI):
+        # the web log viewer virtualizes long steps, so only whatever's
+        # currently scrolled into view exists in the page at all — grepping
+        # a real file in the next step is the reliable way to actually see
+        # the failure instead of manually scrolling a huge collapsed step.
+        env:
+          NODE_OPTIONS: --max-old-space-size=4096
+        run: ./gradlew assembleRelease --no-daemon --stacktrace 2>&1 | tee build.log
+
+      - name: Show the real error if the build failed
+        if: failure()
+        working-directory: android
+        run: |
+          echo "===== lines mentioning error/exception/failed ====="
+          grep -inE 'error|exception|failed|node_modules.*not found|cannot find module' build.log | tail -100
+          echo
+          echo "===== last 150 lines of the full log ====="
+          tail -150 build.log
 
       - name: Publish release with APK
         uses: softprops/action-gh-release@v2
