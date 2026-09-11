@@ -3,6 +3,7 @@ import { Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Avatar } from '../components/Avatar';
 import { BottomNav, NavTab } from '../components/BottomNav';
+import { Card, CardDivider } from '../components/Card';
 import { DistributionEditor } from '../components/DistributionEditor';
 import { ProjectTimeline } from '../components/projects/ProjectTimeline';
 import { CURRENT_USER_ID, TEAM, TEAM_ORDER } from '../data/team';
@@ -88,28 +89,30 @@ export function ProjectsScreen({ activeTab, onSelectTab }: Props) {
 
         <View style={styles.section}>
           <Text style={type.sectionHeading}>Workload</Text>
-          <View style={styles.workloadCard}>
+          <Card>
             {workload.map((w, i) => {
               const pct = w.total > 0 ? w.done / w.total : 0;
               return (
                 <View key={w.member.id}>
-                  {i > 0 ? <View style={styles.workloadDivider} /> : null}
+                  {i > 0 ? <CardDivider inset={16} /> : null}
                   <View style={styles.workloadRow}>
-                    <Avatar initials={w.member.initials} bg={w.member.bg} fg={w.member.fg} size={28} />
-                    <Text style={[type.body, styles.workloadName]} numberOfLines={1}>
-                      {w.member.name}
-                    </Text>
+                    <View style={styles.workloadHeader}>
+                      <Avatar initials={w.member.initials} bg={w.member.bg} fg={w.member.fg} size={28} />
+                      <Text style={[type.body, styles.workloadName]} numberOfLines={1}>
+                        {w.member.name}
+                      </Text>
+                      <Text style={[type.metadata, { color: colors.muted }]}>
+                        {w.done}/{w.total}
+                      </Text>
+                    </View>
                     <View style={styles.workloadTrack}>
                       <View style={[styles.workloadFill, { width: `${Math.round(pct * 100)}%` }]} />
                     </View>
-                    <Text style={[type.metadata, { color: colors.muted }]}>
-                      {w.done}/{w.total}
-                    </Text>
                   </View>
                 </View>
               );
             })}
-          </View>
+          </Card>
         </View>
 
         <View style={styles.section}>
@@ -232,29 +235,21 @@ const styles = StyleSheet.create({
     borderRadius: layout.progressBarHeight / 2,
     backgroundColor: colors.purple,
   },
-  workloadCard: {
-    backgroundColor: colors.surface,
-    borderRadius: 24,
-    overflow: 'hidden',
-  },
   workloadRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 10,
+    gap: 8,
     paddingVertical: 12,
     paddingHorizontal: 16,
   },
-  workloadDivider: {
-    height: StyleSheet.hairlineWidth,
-    backgroundColor: colors.border,
-    marginLeft: 16 + 28 + 10,
+  workloadHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
   },
   workloadName: {
+    flex: 1,
     color: colors.ink,
-    width: 64,
   },
   workloadTrack: {
-    flex: 1,
     height: 6,
     borderRadius: 3,
     backgroundColor: colors.surfaceMuted,
