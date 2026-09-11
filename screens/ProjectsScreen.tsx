@@ -98,7 +98,7 @@ export function ProjectsScreen({ activeTab, onSelectTab }: Props) {
                   <View style={styles.workloadRow}>
                     <View style={styles.workloadHeader}>
                       <Avatar initials={w.member.initials} bg={w.member.bg} fg={w.member.fg} size={28} />
-                      <Text style={[type.body, styles.workloadName]} numberOfLines={1}>
+                      <Text style={[type.taskTitle, styles.workloadName]} numberOfLines={1}>
                         {w.member.name}
                       </Text>
                       <Text style={[type.metadata, { color: colors.muted }]}>
@@ -236,7 +236,7 @@ const styles = StyleSheet.create({
     backgroundColor: colors.purple,
   },
   workloadRow: {
-    gap: 8,
+    gap: 12,
     paddingVertical: 12,
     paddingHorizontal: 16,
   },
