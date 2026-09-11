@@ -1,0 +1,55 @@
+name: Build Android APK
+
+on:
+  push:
+    branches: [master]
+  workflow_dispatch: {}
+
+env:
+  EXPO_PUBLIC_SUPABASE_URL: https://ywcynwkhezupyqxsxshe.supabase.co
+  EXPO_PUBLIC_SUPABASE_ANON_KEY: sb_publishable_EpC39xdKU3pS8VlAYXZEcQ_9mnuzFLH
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 17
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Bake this run's build number into app.json
+        run: |
+          node -e "
+            const fs = require('fs');
+            const p = './app.json';
+            const j = JSON.parse(fs.readFileSync(p, 'utf8'));
+            j.expo.extra = Object.assign({}, j.expo.extra, { buildNumber: ${{ github.run_number }} });
+            fs.writeFileSync(p, JSON.stringify(j, null, 2));
+          "
+
+      - name: Prebuild native Android project
+        run: npx expo prebuild --platform android --no-install
+
+      - name: Build debug APK
+        working-directory: android
+        run: ./gradlew assembleDebug
+
+      - name: Publish release with APK
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: build-${{ github.run_number }}
+          name: Build ${{ github.run_number }}
+          files: android/app/build/outputs/apk/debug/app-debug.apk
