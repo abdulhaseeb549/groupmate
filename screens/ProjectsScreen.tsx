@@ -6,6 +6,7 @@ import { Avatar } from '../components/Avatar';
 import { BottomNav, NavTab } from '../components/BottomNav';
 import { Card } from '../components/Card';
 import { DistributionEditor } from '../components/DistributionEditor';
+import { Icon } from '../components/Icon';
 import { ProjectTimeline } from '../components/projects/ProjectTimeline';
 import { CURRENT_USER_ID, TEAM, TEAM_ORDER } from '../data/team';
 import { ProjectHealth } from '../state/projectState';
@@ -28,7 +29,7 @@ const HEALTH: Record<ProjectHealth, { label: string; bg: string; dot: string; te
 
 export function ProjectsScreen({ activeTab, onSelectTab }: Props) {
   const insets = useSafeAreaInsets();
-  const { project, tasks, projectState } = useProject();
+  const { project, tasks, projectState, schedule } = useProject();
   const [filter, setFilter] = useState<(typeof FILTERS)[number]>('My tasks');
   const members = filter === 'My tasks' ? [CURRENT_USER_ID] : TEAM_ORDER;
   const today = useMemo(() => new Date(), []);
@@ -79,13 +80,19 @@ export function ProjectsScreen({ activeTab, onSelectTab }: Props) {
           </Text>
         </View>
 
+        {schedule.projectAtRisk ? (
+          <View style={styles.scheduleWarning}>
+            <Icon name="exclamation" size={16} color={colors.redText} strokeWidth={2.2} />
+            <Text style={[type.caption, styles.scheduleWarningText]}>
+              At current pace, the work still in progress won't finish by the due date — check the Timeline below for
+              what's furthest behind.
+            </Text>
+          </View>
+        ) : null}
+
         <View style={styles.section}>
           <Text style={type.sectionHeading}>Timeline</Text>
-          <ProjectTimeline
-            requirementStates={projectState.requirementStates}
-            dueDate={project.dueDate}
-            today={today}
-          />
+          <ProjectTimeline tasks={tasks} schedule={schedule} dueDate={project.dueDate} today={today} />
         </View>
 
         <View style={styles.section}>
@@ -201,6 +208,18 @@ const styles = StyleSheet.create({
     borderRadius: 20,
     padding: 16,
     gap: 12,
+  },
+  scheduleWarning: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    gap: 10,
+    backgroundColor: colors.redSoft,
+    borderRadius: 16,
+    padding: 14,
+  },
+  scheduleWarningText: {
+    flex: 1,
+    color: colors.redText,
   },
   statusTop: {
     flexDirection: 'row',

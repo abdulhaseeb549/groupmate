@@ -1,38 +1,72 @@
 import { StyleSheet, Text, View } from 'react-native';
 import { Icon } from '../Icon';
-import { RequirementState } from '../../state/projectState';
+import { Task } from '../../data/tasks';
+import { ProjectSchedule } from '../../state/projectSchedule';
 import { colors, type } from '../../theme';
-import { formatDueDate } from '../../utils/dates';
+import { formatDueDate, formatShortDate } from '../../utils/dates';
 
 type Props = {
-  requirementStates: RequirementState[];
+  tasks: Task[];
+  schedule: ProjectSchedule;
   dueDate: string;
   today: Date;
 };
 
 const DOT = 18;
 
-/** A real-data timeline, not a fabricated Gantt — requirements in their actual order between today and the actual due date, each colored by its real status. No invented per-task dates. */
-export function ProjectTimeline({ requirementStates, dueDate, today }: Props) {
+/**
+ * Checkpoints, not a fabricated Gantt chart: every dot here is a real task
+ * that at least one other task actually depends on, placed at the real
+ * date the backward-scheduling algorithm computed from effort hours +
+ * capacity + the dependency graph — never an invented per-task deadline.
+ * A task with no dependents isn't a checkpoint and doesn't appear.
+ */
+export function ProjectTimeline({ tasks, schedule, dueDate, today }: Props) {
+  const taskById = new Map(tasks.map((t) => [t.id, t]));
+  const checkpoints = tasks
+    .filter((t) => schedule.byTaskId[t.id]?.isCheckpoint)
+    .sort((a, b) => schedule.byTaskId[a.id].latestFinish.getTime() - schedule.byTaskId[b.id].latestFinish.getTime());
+
+  if (checkpoints.length === 0) {
+    return (
+      <View style={styles.card}>
+        <View style={styles.emptyRow}>
+          <Icon name="documentAlert" size={18} color={colors.faint} strokeWidth={1.8} />
+          <Text style={[type.caption, styles.emptyText]}>
+            Checkpoints show up once tasks depend on each other — this project doesn't have any dependencies yet.
+          </Text>
+        </View>
+      </View>
+    );
+  }
+
   return (
     <View style={styles.card}>
       <Text style={[type.metadata, styles.endpoint]}>TODAY</Text>
 
       <View style={styles.stepsWrap}>
         <View style={styles.spine} />
-        {requirementStates.map((state) => {
-          const met = state.status === 'met';
-          const inProgress = state.status === 'in_progress';
+        {checkpoints.map((task) => {
+          const s = schedule.byTaskId[task.id];
+          const met = task.done;
+          const atRisk = s.atRisk;
           return (
-            <View key={state.requirement.id} style={styles.step}>
-              <View style={[styles.dot, met && styles.dotMet, inProgress && styles.dotProgress]}>
+            <View key={task.id} style={styles.step}>
+              <View style={[styles.dot, met && styles.dotMet, atRisk && styles.dotRisk]}>
                 {met ? <Icon name="check" size={10} color={colors.onInk} strokeWidth={3} /> : null}
               </View>
               <View style={styles.stepBody}>
                 <Text style={[type.body, styles.stepLabel]} numberOfLines={2}>
-                  {state.requirement.label}
+                  {task.title}
                 </Text>
-                <Text style={[type.caption, styles.stepStatus]}>{statusText(state)}</Text>
+                <Text style={[type.caption, atRisk ? styles.stepRisk : styles.stepStatus]}>
+                  {met
+                    ? 'Done'
+                    : atRisk
+                      ? `Should already be underway to stay on track`
+                      : `By ${formatShortDate(s.latestFinish, today)}`}
+                  {s.blocks.length > 0 ? ` · unblocks ${s.blocks.join(', ')}` : ''}
+                </Text>
               </View>
             </View>
           );
@@ -42,14 +76,6 @@ export function ProjectTimeline({ requirementStates, dueDate, today }: Props) {
       <Text style={[type.metadata, styles.endpoint]}>DUE {formatDueDate(dueDate, today).toUpperCase()}</Text>
     </View>
   );
-}
-
-function statusText(state: RequirementState): string {
-  if (state.status === 'met') return 'Met';
-  if (state.linkedTasks.length === 0) return 'No task linked yet';
-  if (state.status === 'not_started') return 'Not started';
-  const done = state.linkedTasks.length - state.blockingTasks.length;
-  return `${done} of ${state.linkedTasks.length} tasks done`;
 }
 
 const styles = StyleSheet.create({
@@ -94,9 +120,9 @@ const styles = StyleSheet.create({
     backgroundColor: colors.green,
     borderColor: colors.green,
   },
-  dotProgress: {
-    backgroundColor: colors.amber,
-    borderColor: colors.amber,
+  dotRisk: {
+    backgroundColor: colors.red,
+    borderColor: colors.red,
   },
   stepBody: {
     flex: 1,
@@ -108,6 +134,18 @@ const styles = StyleSheet.create({
     color: colors.ink,
   },
   stepStatus: {
+    color: colors.muted,
+  },
+  stepRisk: {
+    color: colors.redText,
+  },
+  emptyRow: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    gap: 10,
+  },
+  emptyText: {
+    flex: 1,
     color: colors.muted,
   },
 });

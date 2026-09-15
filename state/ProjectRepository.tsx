@@ -9,6 +9,7 @@ import { TaskDependency } from '../data/taskDependencies';
 import { TeamId } from '../data/team';
 import { useAuth } from './AuthProvider';
 import { deriveProjectState, ProjectState } from './projectState';
+import { computeSchedule, ProjectSchedule } from './projectSchedule';
 import { fetchProjectData, persistTaskAssignee, persistTaskDone } from './projectQueries';
 
 type ProjectRepository = {
@@ -17,6 +18,7 @@ type ProjectRepository = {
   requirements: Requirement[];
   taskDependencies: TaskDependency[];
   projectState: ProjectState;
+  schedule: ProjectSchedule;
   toggleTaskDone: (taskId: string) => void;
   reassignTask: (taskId: string, memberId: TeamId) => void;
   /** Re-fetches from Supabase — used both by the error screen's retry and after replacing the project (e.g. from a new brief). */
@@ -131,6 +133,11 @@ function ProjectProviderReady({
     [tasks, requirements, taskRequirements, project]
   );
 
+  const schedule = useMemo(
+    () => computeSchedule(tasks, taskDependencies, project.memberHoursPerDay, project.dueDate, new Date()),
+    [tasks, taskDependencies, project]
+  );
+
   function toggleTaskDone(taskId: string) {
     const current = tasks.find((t) => t.id === taskId);
     if (!current) return;
@@ -153,6 +160,7 @@ function ProjectProviderReady({
     requirements,
     taskDependencies,
     projectState,
+    schedule,
     toggleTaskDone,
     reassignTask,
     refetch,

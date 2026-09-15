@@ -4,7 +4,7 @@ import { Priority, Task } from '../data/tasks';
 import { Requirement } from '../data/requirements';
 import { TaskRequirement } from '../data/taskRequirements';
 import { TaskDependency } from '../data/taskDependencies';
-import { TeamId } from '../data/team';
+import { TEAM_ORDER, TeamId } from '../data/team';
 
 type ProjectRow = {
   id: string;
@@ -12,6 +12,7 @@ type ProjectRow = {
   team: string;
   course: string;
   due_date: string;
+  member_hours_per_day: Partial<Record<TeamId, number>> | null;
 };
 
 type TaskRow = {
@@ -53,8 +54,27 @@ export type ProjectData = {
   taskDependencies: TaskDependency[];
 };
 
+const DEFAULT_HOURS_PER_DAY = 2;
+
 function toProject(row: ProjectRow): Project {
-  return { id: row.id, name: row.name, team: row.team, course: row.course, dueDate: row.due_date };
+  // Defensive per-member fallback: a project row from before this column
+  // existed, or a member somehow missing a key, still gets a sane default
+  // rather than the scheduler treating them as having zero capacity.
+  const memberHoursPerDay = TEAM_ORDER.reduce(
+    (acc, id) => {
+      acc[id] = row.member_hours_per_day?.[id] ?? DEFAULT_HOURS_PER_DAY;
+      return acc;
+    },
+    {} as Record<TeamId, number>
+  );
+  return {
+    id: row.id,
+    name: row.name,
+    team: row.team,
+    course: row.course,
+    dueDate: row.due_date,
+    memberHoursPerDay,
+  };
 }
 
 function toTask(row: TaskRow): Task {
@@ -84,7 +104,7 @@ function toRequirement(row: RequirementRow): Requirement {
 export async function fetchProjectData(ownerId: string): Promise<ProjectData> {
   const { data: projectRow, error: projectError } = await supabase
     .from('projects')
-    .select('id, name, team, course, due_date')
+    .select('id, name, team, course, due_date, member_hours_per_day')
     .eq('owner_id', ownerId)
     .limit(1)
     .maybeSingle();
@@ -140,5 +160,16 @@ export async function persistTaskDone(taskId: string, done: boolean): Promise<vo
 
 export async function persistTaskAssignee(taskId: string, assigneeId: TeamId): Promise<void> {
   const { error } = await supabase.from('tasks').update({ assignee_id: assigneeId }).eq('id', taskId);
+  if (error) throw error;
+}
+
+export async function persistMemberHoursPerDay(
+  projectId: string,
+  memberHoursPerDay: Record<TeamId, number>
+): Promise<void> {
+  const { error } = await supabase
+    .from('projects')
+    .update({ member_hours_per_day: memberHoursPerDay })
+    .eq('id', projectId);
   if (error) throw error;
 }

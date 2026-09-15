@@ -27,3 +27,9 @@ export function formatDueDate(isoDate: string, today: Date): string {
 export function formatLongDate(date: Date): string {
   return `${WEEKDAYS[date.getDay()]}, ${date.getDate()} ${MONTHS_LONG[date.getMonth()]}`;
 }
+
+/** "10 Oct" for a real Date (not an ISO string) — the year is added only when it isn't this one. Local fields throughout, never toISOString, so this can't drift a day off in timezones ahead of UTC. */
+export function formatShortDate(date: Date, today: Date): string {
+  const dayMonth = `${date.getDate()} ${MONTHS[date.getMonth()]}`;
+  return date.getFullYear() === today.getFullYear() ? dayMonth : `${dayMonth} ${date.getFullYear()}`;
+}
