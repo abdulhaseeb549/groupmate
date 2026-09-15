@@ -31,6 +31,8 @@ type Props = {
 };
 
 const FILTERS = ['My tasks', 'All'] as const;
+const SECTIONS = ['Timeline', 'Requirements', 'Workload', 'Tasks'] as const;
+type Section = (typeof SECTIONS)[number];
 
 const HEALTH: Record<ProjectHealth, { label: string; bg: string; dot: string; text: string }> = {
   on_track: { label: 'On track', bg: colors.mint, dot: colors.green, text: colors.mintText },
@@ -45,6 +47,7 @@ export function ProjectsScreen({ activeTab, onSelectTab }: Props) {
   const [capacityVisible, setCapacityVisible] = useState(false);
   const [dueDateVisible, setDueDateVisible] = useState(false);
   const [editingRequirement, setEditingRequirement] = useState<Requirement | null>(null);
+  const [section, setSection] = useState<Section>('Timeline');
   const members = filter === 'My tasks' ? [CURRENT_USER_ID] : TEAM_ORDER;
   const today = useMemo(() => new Date(), []);
 
@@ -114,104 +117,127 @@ export function ProjectsScreen({ activeTab, onSelectTab }: Props) {
           </View>
         ) : null}
 
-        <View style={styles.section}>
-          <Text style={type.sectionHeading}>Timeline</Text>
-          <ProjectTimeline tasks={tasks} schedule={schedule} dueDate={project.dueDate} today={today} />
-        </View>
+        <ScrollView
+          horizontal
+          showsHorizontalScrollIndicator={false}
+          contentContainerStyle={styles.tabRow}
+        >
+          {SECTIONS.map((s) => {
+            const active = s === section;
+            return (
+              <Pressable
+                key={s}
+                onPress={() => setSection(s)}
+                accessibilityRole="tab"
+                aria-selected={active}
+                style={[styles.tabPill, active && styles.tabPillActive]}
+              >
+                <Text style={[type.button, { color: active ? colors.onInk : colors.muted }]}>{s}</Text>
+              </Pressable>
+            );
+          })}
+        </ScrollView>
 
-        <View style={styles.section}>
-          <Text style={type.sectionHeading}>Requirements</Text>
-          <Card>
-            {projectState.requirementStates.map((state, i) => {
-              const requirementStatus = REQUIREMENT_STATUS[state.status];
-              return (
-                <Pressable
-                  key={state.requirement.id}
-                  onPress={() => setEditingRequirement(state.requirement)}
-                  style={[styles.requirementRow, i > 0 && styles.requirementRowDivider]}
-                  accessibilityRole="button"
-                  accessibilityLabel={`Edit ${state.requirement.label}`}
-                >
-                  <Text style={[type.body, styles.requirementLabel]} numberOfLines={2}>
-                    {state.requirement.label}
-                  </Text>
-                  <View style={[styles.requirementPill, { backgroundColor: requirementStatus.bg }]}>
-                    <Text style={[type.badge, { color: requirementStatus.text }]}>{requirementStatus.label}</Text>
-                  </View>
-                  <Icon name="edit" size={14} color={colors.faint} strokeWidth={1.8} />
-                </Pressable>
-              );
-            })}
-          </Card>
-        </View>
+        {section === 'Timeline' ? (
+          <View style={styles.section}>
+            <ProjectTimeline tasks={tasks} schedule={schedule} dueDate={project.dueDate} today={today} />
+          </View>
+        ) : null}
 
-        <View style={styles.section}>
-          <View style={styles.sectionHeaderRow}>
-            <Text style={type.sectionHeading}>Workload</Text>
+        {section === 'Requirements' ? (
+          <View style={styles.section}>
+            <Card>
+              {projectState.requirementStates.map((state, i) => {
+                const requirementStatus = REQUIREMENT_STATUS[state.status];
+                return (
+                  <Pressable
+                    key={state.requirement.id}
+                    onPress={() => setEditingRequirement(state.requirement)}
+                    style={[styles.requirementRow, i > 0 && styles.requirementRowDivider]}
+                    accessibilityRole="button"
+                    accessibilityLabel={`Edit ${state.requirement.label}`}
+                  >
+                    <Text style={[type.body, styles.requirementLabel]} numberOfLines={2}>
+                      {state.requirement.label}
+                    </Text>
+                    <View style={[styles.requirementPill, { backgroundColor: requirementStatus.bg }]}>
+                      <Text style={[type.badge, { color: requirementStatus.text }]}>{requirementStatus.label}</Text>
+                    </View>
+                    <Icon name="edit" size={14} color={colors.faint} strokeWidth={1.8} />
+                  </Pressable>
+                );
+              })}
+            </Card>
+          </View>
+        ) : null}
+
+        {section === 'Workload' ? (
+          <View style={styles.section}>
             <Pressable
               onPress={() => setCapacityVisible(true)}
               hitSlop={8}
               accessibilityRole="button"
               accessibilityLabel="Edit hours per day"
+              style={styles.editHoursRow}
             >
               <Text style={[type.button, styles.editHoursLink]}>Edit hours</Text>
             </Pressable>
-          </View>
-          <Card>
-            {workload.map((w) => {
-              const pct = w.total > 0 ? w.done / w.total : 0;
-              return (
-                <View key={w.member.id} style={styles.workloadRow}>
-                  <View style={styles.workloadHeader}>
-                    <Avatar initials={w.member.initials} bg={w.member.bg} fg={w.member.fg} size={28} />
-                    <Text style={[type.taskTitle, styles.workloadName]} numberOfLines={1}>
-                      {w.member.name}
-                    </Text>
-                    <Text style={[type.metadata, { color: colors.muted }]}>
-                      {w.done}/{w.total}
-                    </Text>
+            <Card>
+              {workload.map((w) => {
+                const pct = w.total > 0 ? w.done / w.total : 0;
+                return (
+                  <View key={w.member.id} style={styles.workloadRow}>
+                    <View style={styles.workloadHeader}>
+                      <Avatar initials={w.member.initials} bg={w.member.bg} fg={w.member.fg} size={28} />
+                      <Text style={[type.taskTitle, styles.workloadName]} numberOfLines={1}>
+                        {w.member.name}
+                      </Text>
+                      <Text style={[type.metadata, { color: colors.muted }]}>
+                        {w.done}/{w.total}
+                      </Text>
+                    </View>
+                    <View style={styles.workloadTrack}>
+                      <LinearGradient
+                        colors={gradients.purpleDeep}
+                        start={{ x: 0, y: 0 }}
+                        end={{ x: 1, y: 0 }}
+                        style={[styles.workloadFill, { width: `${Math.round(pct * 100)}%` }]}
+                      />
+                    </View>
                   </View>
-                  <View style={styles.workloadTrack}>
-                    <LinearGradient
-                      colors={gradients.purpleDeep}
-                      start={{ x: 0, y: 0 }}
-                      end={{ x: 1, y: 0 }}
-                      style={[styles.workloadFill, { width: `${Math.round(pct * 100)}%` }]}
-                    />
-                  </View>
-                </View>
-              );
-            })}
-          </Card>
-        </View>
-
-        <RebalanceSuggestions today={today} />
-
-        <View style={styles.section}>
-          <Text style={type.sectionHeading}>Tasks</Text>
-          <View style={styles.filterRow}>
-            {FILTERS.map((f) => {
-              const active = f === filter;
-              return (
-                <Pressable
-                  key={f}
-                  onPress={() => setFilter(f)}
-                  style={[styles.filterPill, active && styles.filterPillActive]}
-                >
-                  <Text style={[type.button, { color: active ? colors.onInk : colors.muted }]}>
-                    {f}
-                  </Text>
-                </Pressable>
-              );
-            })}
+                );
+              })}
+            </Card>
+            <RebalanceSuggestions today={today} />
           </View>
-          <Text style={[type.body, { color: colors.muted }]}>
-            Tap a task to start it, finish it, or reassign it. Changes here apply to the whole project.
-          </Text>
-          <View style={styles.card}>
-            <DistributionEditor members={members} />
+        ) : null}
+
+        {section === 'Tasks' ? (
+          <View style={styles.section}>
+            <View style={styles.filterRow}>
+              {FILTERS.map((f) => {
+                const active = f === filter;
+                return (
+                  <Pressable
+                    key={f}
+                    onPress={() => setFilter(f)}
+                    style={[styles.filterPill, active && styles.filterPillActive]}
+                  >
+                    <Text style={[type.button, { color: active ? colors.onInk : colors.muted }]}>
+                      {f}
+                    </Text>
+                  </Pressable>
+                );
+              })}
+            </View>
+            <Text style={[type.body, { color: colors.muted }]}>
+              Tap a task to start it, finish it, or reassign it. Changes here apply to the whole project.
+            </Text>
+            <View style={styles.card}>
+              <DistributionEditor members={members} />
+            </View>
           </View>
-        </View>
+        ) : null}
       </ScrollView>
 
       <BottomNav active={activeTab} onSelect={onSelectTab} />
@@ -275,10 +301,26 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
   },
-  sectionHeaderRow: {
+  tabRow: {
     flexDirection: 'row',
+    gap: 8,
+    paddingRight: 4,
+  },
+  tabPill: {
+    height: 44,
+    paddingHorizontal: 18,
+    borderRadius: 22,
+    borderWidth: 1.5,
+    borderColor: colors.border,
     alignItems: 'center',
-    justifyContent: 'space-between',
+    justifyContent: 'center',
+  },
+  tabPillActive: {
+    backgroundColor: colors.ink,
+    borderColor: colors.ink,
+  },
+  editHoursRow: {
+    alignSelf: 'flex-end',
   },
   editHoursLink: {
     color: colors.purple,
