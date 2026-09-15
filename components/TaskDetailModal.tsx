@@ -2,7 +2,9 @@ import { useMemo, useState } from 'react';
 import { Modal, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Avatar } from './Avatar';
+import { ConfirmDialog } from './ConfirmDialog';
 import { Icon } from './Icon';
+import { TaskFormModal } from './TaskFormModal';
 import { TaskStatusDot } from './TaskStatusDot';
 import { Priority, TaskStatus } from '../data/tasks';
 import { TEAM, TEAM_ORDER, TeamId } from '../data/team';
@@ -35,8 +37,10 @@ const STATUS_LABEL: Record<TaskStatus, string> = {
  */
 export function TaskDetailModal({ taskId, onClose }: Props) {
   const insets = useSafeAreaInsets();
-  const { tasks, setTaskStatus, reassignTask } = useProject();
+  const { tasks, setTaskStatus, reassignTask, removeTask } = useProject();
   const [helpOpen, setHelpOpen] = useState(false);
+  const [editing, setEditing] = useState(false);
+  const [deleting, setDeleting] = useState(false);
   const today = useMemo(() => new Date(), []);
 
   const task = tasks.find((t) => t.id === taskId);
@@ -45,6 +49,13 @@ export function TaskDetailModal({ taskId, onClose }: Props) {
   function close() {
     setHelpOpen(false);
     onClose();
+  }
+
+  function confirmDelete() {
+    if (!task) return;
+    setDeleting(false);
+    removeTask(task.id);
+    close();
   }
 
   if (!task) {
@@ -58,6 +69,7 @@ export function TaskDetailModal({ taskId, onClose }: Props) {
   const completedDate = task.completedAt ? formatShortDate(new Date(task.completedAt), today) : null;
 
   return (
+    <>
     <Modal visible={visible} transparent animationType="slide" onRequestClose={close}>
       <View style={styles.backdrop}>
         <Pressable style={StyleSheet.absoluteFill} onPress={close} />
@@ -69,7 +81,15 @@ export function TaskDetailModal({ taskId, onClose }: Props) {
           <View style={styles.handle} />
           <View style={styles.header}>
             <Text style={[type.sectionHeading, styles.title]}>{task.title}</Text>
-            <Pressable style={styles.closeButton} onPress={close} accessibilityRole="button" accessibilityLabel="Close">
+            <Pressable
+              style={styles.iconButton}
+              onPress={() => setEditing(true)}
+              accessibilityRole="button"
+              accessibilityLabel={`Edit ${task.title}`}
+            >
+              <Icon name="edit" size={16} color={colors.ink} strokeWidth={1.8} />
+            </Pressable>
+            <Pressable style={styles.iconButton} onPress={close} accessibilityRole="button" accessibilityLabel="Close">
               <Icon name="close" size={16} color={colors.ink} strokeWidth={2.2} />
             </Pressable>
           </View>
@@ -77,8 +97,12 @@ export function TaskDetailModal({ taskId, onClose }: Props) {
           <View style={styles.metaRow}>
             <Icon name="flag" size={13} color={priority.mark} fill={priority.mark} strokeWidth={1.8} />
             <Text style={[type.caption, { color: priority.text }]}>{priority.label}</Text>
-            <Text style={[type.caption, styles.metaDot]}>·</Text>
-            <Text style={[type.caption, styles.muted]}>{task.sectionRef}</Text>
+            {task.sectionRef ? (
+              <>
+                <Text style={[type.caption, styles.metaDot]}>·</Text>
+                <Text style={[type.caption, styles.muted]}>{task.sectionRef}</Text>
+              </>
+            ) : null}
             {task.effortHours ? (
               <>
                 <Text style={[type.caption, styles.metaDot]}>·</Text>
@@ -181,9 +205,31 @@ export function TaskDetailModal({ taskId, onClose }: Props) {
               ))}
             </View>
           </View>
+
+          <Pressable
+            onPress={() => setDeleting(true)}
+            style={styles.deleteLink}
+            hitSlop={8}
+            accessibilityRole="button"
+            accessibilityLabel={`Delete ${task.title}`}
+          >
+            <Text style={[type.caption, styles.deleteLinkText]}>Delete task</Text>
+          </Pressable>
         </ScrollView>
       </View>
     </Modal>
+
+      <TaskFormModal visible={editing} task={task} onClose={() => setEditing(false)} />
+      <ConfirmDialog
+        visible={deleting}
+        title="Delete this task?"
+        message={`"${task.title}" will be removed for everyone. This can't be undone.`}
+        confirmLabel="Delete"
+        destructive
+        onConfirm={confirmDelete}
+        onCancel={() => setDeleting(false)}
+      />
+    </>
   );
 }
 
@@ -219,7 +265,7 @@ const styles = StyleSheet.create({
     flex: 1,
     color: colors.ink,
   },
-  closeButton: {
+  iconButton: {
     width: 44,
     height: 44,
     borderRadius: 22,
@@ -320,5 +366,13 @@ const styles = StyleSheet.create({
   },
   assignNameActive: {
     color: colors.purple,
+  },
+  deleteLink: {
+    alignSelf: 'center',
+    paddingVertical: 12,
+    marginTop: 18,
+  },
+  deleteLinkText: {
+    color: colors.redText,
   },
 });

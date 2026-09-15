@@ -2,6 +2,7 @@ import { useMemo, useState } from 'react';
 import { Pressable, StyleSheet, Text, View } from 'react-native';
 import { Avatar } from './Avatar';
 import { TaskDetailModal } from './TaskDetailModal';
+import { TaskFormModal } from './TaskFormModal';
 import { TaskStatusDot } from './TaskStatusDot';
 import { Icon } from './Icon';
 import { Task } from '../data/tasks';
@@ -17,6 +18,7 @@ type Props = {
 
 export function DistributionEditor({ members = TEAM_ORDER }: Props) {
   const [detailTaskId, setDetailTaskId] = useState<string | null>(null);
+  const [addingTask, setAddingTask] = useState(false);
   // `tasks`/`blockingRequirementsByTask` come from the full project state
   // regardless of the `members` filter, so blocking status stays correct
   // even when only one person's group shows.
@@ -56,7 +58,24 @@ export function DistributionEditor({ members = TEAM_ORDER }: Props) {
         );
       })}
 
+      <Pressable
+        style={styles.addRow}
+        onPress={() => setAddingTask(true)}
+        accessibilityRole="button"
+        accessibilityLabel="Add task"
+      >
+        <View style={styles.addIcon}>
+          <Icon name="plus" size={14} color={colors.purple} strokeWidth={2.4} />
+        </View>
+        <Text style={[type.body, styles.addLabel]}>Add task</Text>
+      </Pressable>
+
       <TaskDetailModal taskId={detailTaskId} onClose={() => setDetailTaskId(null)} />
+      <TaskFormModal
+        visible={addingTask}
+        defaultAssignee={members.length === 1 ? members[0] : undefined}
+        onClose={() => setAddingTask(false)}
+      />
     </View>
   );
 }
@@ -158,5 +177,23 @@ const styles = StyleSheet.create({
   },
   taskMeta: {
     color: colors.muted,
+  },
+  addRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+    minHeight: 44,
+    paddingVertical: 6,
+  },
+  addIcon: {
+    width: 30,
+    height: 30,
+    borderRadius: 15,
+    backgroundColor: colors.purpleSoft,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  addLabel: {
+    color: colors.purple,
   },
 });

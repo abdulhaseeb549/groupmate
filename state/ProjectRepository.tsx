@@ -3,7 +3,7 @@ import { ErrorScreen } from '../components/ErrorScreen';
 import { LoadingScreen } from '../components/LoadingScreen';
 import { Project } from '../data/project';
 import { Requirement } from '../data/requirements';
-import { Task, TaskStatus } from '../data/tasks';
+import { Priority, Task, TaskStatus } from '../data/tasks';
 import { TaskRequirement } from '../data/taskRequirements';
 import { TaskDependency } from '../data/taskDependencies';
 import { TeamId } from '../data/team';
@@ -11,22 +11,53 @@ import { useAuth } from './AuthProvider';
 import { deriveProjectState, ProjectState } from './projectState';
 import { computeSchedule, ProjectSchedule } from './projectSchedule';
 import {
+  createTask,
+  deleteTask,
   fetchProjectData,
   persistMemberHoursPerDay,
   persistTaskAssignee,
   persistTaskStatus,
+  setTaskRequirementLinks,
+  updateProjectDueDate,
+  updateRequirementLabel,
+  updateTaskFields,
 } from './projectQueries';
+
+export type NewTaskFields = {
+  title: string;
+  sectionRef: string;
+  assigneeId: TeamId;
+  priority: Priority;
+  effortHours: number;
+  dueLabel?: string;
+  requirementIds: string[];
+};
+
+export type TaskEdits = {
+  title: string;
+  sectionRef: string;
+  priority: Priority;
+  effortHours: number;
+  dueLabel?: string;
+  requirementIds: string[];
+};
 
 type ProjectRepository = {
   project: Project;
   tasks: Task[];
   requirements: Requirement[];
+  taskRequirements: TaskRequirement[];
   taskDependencies: TaskDependency[];
   projectState: ProjectState;
   schedule: ProjectSchedule;
   setTaskStatus: (taskId: string, status: TaskStatus) => void;
   reassignTask: (taskId: string, memberId: TeamId) => void;
   updateMemberHoursPerDay: (memberId: TeamId, hoursPerDay: number) => void;
+  addTask: (fields: NewTaskFields) => Promise<{ error: string | null }>;
+  updateTask: (taskId: string, edits: TaskEdits) => Promise<{ error: string | null }>;
+  removeTask: (taskId: string) => void;
+  renameRequirement: (requirementId: string, label: string) => void;
+  updateDueDate: (dueDate: string) => void;
   /** Re-fetches from Supabase — used both by the error screen's retry and after replacing the project (e.g. from a new brief). */
   refetch: () => void;
 };
@@ -118,8 +149,8 @@ export function ProjectProvider({ children }: { children: ReactNode }) {
 function ProjectProviderReady({
   project: initialProject,
   initialTasks,
-  requirements,
-  taskRequirements,
+  requirements: initialRequirements,
+  taskRequirements: initialTaskRequirements,
   taskDependencies,
   refetch,
   children,
@@ -134,6 +165,8 @@ function ProjectProviderReady({
 }) {
   const [tasks, setTasks] = useState<Task[]>(initialTasks);
   const [project, setProject] = useState<Project>(initialProject);
+  const [requirements, setRequirements] = useState<Requirement[]>(initialRequirements);
+  const [taskRequirements, setTaskRequirements] = useState<TaskRequirement[]>(initialTaskRequirements);
 
   const projectState = useMemo(
     () => deriveProjectState(tasks, requirements, taskRequirements, project, new Date()),
@@ -165,16 +198,100 @@ function ProjectProviderReady({
     void persistMemberHoursPerDay(project.id, next);
   }
 
+  // Awaited (not fire-and-forget) unlike the setters above: there's no
+  // client-side id to add optimistically until the insert actually returns
+  // one, so the calling form owns its own loading state instead.
+  async function addTask(fields: NewTaskFields): Promise<{ error: string | null }> {
+    try {
+      const created = await createTask(project.id, {
+        title: fields.title,
+        sectionRef: fields.sectionRef,
+        assigneeId: fields.assigneeId,
+        priority: fields.priority,
+        effortHours: fields.effortHours,
+        dueLabel: fields.dueLabel,
+        position: tasks.length + 1,
+      });
+      if (fields.requirementIds.length > 0) {
+        await setTaskRequirementLinks(created.id, fields.requirementIds);
+      }
+      setTasks((prev) => [...prev, created]);
+      setTaskRequirements((prev) => [
+        ...prev,
+        ...fields.requirementIds.map((requirementId) => ({ taskId: created.id, requirementId })),
+      ]);
+      return { error: null };
+    } catch (err) {
+      return { error: err instanceof Error ? err.message : 'Could not create this task.' };
+    }
+  }
+
+  async function updateTask(taskId: string, edits: TaskEdits): Promise<{ error: string | null }> {
+    try {
+      await updateTaskFields(taskId, {
+        title: edits.title,
+        sectionRef: edits.sectionRef,
+        priority: edits.priority,
+        effortHours: edits.effortHours,
+        dueLabel: edits.dueLabel,
+      });
+      await setTaskRequirementLinks(taskId, edits.requirementIds);
+      setTasks((prev) =>
+        prev.map((t) =>
+          t.id === taskId
+            ? {
+                ...t,
+                title: edits.title,
+                sectionRef: edits.sectionRef,
+                priority: edits.priority,
+                effortHours: edits.effortHours,
+                dueLabel: edits.dueLabel,
+              }
+            : t
+        )
+      );
+      setTaskRequirements((prev) => [
+        ...prev.filter((tr) => tr.taskId !== taskId),
+        ...edits.requirementIds.map((requirementId) => ({ taskId, requirementId })),
+      ]);
+      return { error: null };
+    } catch (err) {
+      return { error: err instanceof Error ? err.message : 'Could not save these changes.' };
+    }
+  }
+
+  function removeTask(taskId: string) {
+    setTasks((prev) => prev.filter((t) => t.id !== taskId));
+    setTaskRequirements((prev) => prev.filter((tr) => tr.taskId !== taskId));
+    void deleteTask(taskId);
+  }
+
+  function renameRequirement(requirementId: string, label: string) {
+    setRequirements((prev) => prev.map((r) => (r.id === requirementId ? { ...r, label } : r)));
+    void updateRequirementLabel(requirementId, label);
+  }
+
+  function updateDueDate(dueDate: string) {
+    setProject((prev) => ({ ...prev, dueDate }));
+    void updateProjectDueDate(project.id, dueDate);
+  }
+
   const value: ProjectRepository = {
     project,
     tasks,
     requirements,
+    taskRequirements,
     taskDependencies,
     projectState,
     schedule,
     setTaskStatus,
     reassignTask,
     updateMemberHoursPerDay,
+    addTask,
+    updateTask,
+    removeTask,
+    renameRequirement,
+    updateDueDate,
     refetch,
   };
 

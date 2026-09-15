@@ -179,3 +179,87 @@ export async function persistMemberHoursPerDay(
     .eq('id', projectId);
   if (error) throw error;
 }
+
+export type NewTaskInput = {
+  title: string;
+  sectionRef: string;
+  assigneeId: TeamId;
+  priority: Priority;
+  effortHours: number;
+  dueLabel?: string;
+  position: number;
+};
+
+/** Manually added task — no guidance/outline (those are AI-written), starts not_started. */
+export async function createTask(projectId: string, input: NewTaskInput): Promise<Task> {
+  const { data, error } = await supabase
+    .from('tasks')
+    .insert({
+      project_id: projectId,
+      title: input.title,
+      section_ref: input.sectionRef,
+      assignee_id: input.assigneeId,
+      status: 'not_started',
+      priority: input.priority,
+      effort_hours: input.effortHours,
+      due_label: input.dueLabel || null,
+      due_urgent: false,
+      position: input.position,
+    })
+    .select(
+      'id, title, section_ref, assignee_id, status, completed_at, priority, due_label, due_urgent, metadata, guidance, outline, effort_hours'
+    )
+    .single();
+  if (error) throw error;
+  return toTask(data as TaskRow);
+}
+
+export type TaskFieldEdits = {
+  title: string;
+  sectionRef: string;
+  priority: Priority;
+  effortHours: number;
+  dueLabel?: string;
+};
+
+/** The fields a person can hand-correct — never guidance/outline (AI-written) or status/assignee (their own dedicated flows). */
+export async function updateTaskFields(taskId: string, edits: TaskFieldEdits): Promise<void> {
+  const { error } = await supabase
+    .from('tasks')
+    .update({
+      title: edits.title,
+      section_ref: edits.sectionRef,
+      priority: edits.priority,
+      effort_hours: edits.effortHours,
+      due_label: edits.dueLabel || null,
+    })
+    .eq('id', taskId);
+  if (error) throw error;
+}
+
+/** task_requirements/task_dependencies rows for this task cascade-delete with it. */
+export async function deleteTask(taskId: string): Promise<void> {
+  const { error } = await supabase.from('tasks').delete().eq('id', taskId);
+  if (error) throw error;
+}
+
+/** Replaces this task's requirement links wholesale — simpler and safer than diffing adds/removes for a multi-select UI. */
+export async function setTaskRequirementLinks(taskId: string, requirementIds: string[]): Promise<void> {
+  const { error: deleteError } = await supabase.from('task_requirements').delete().eq('task_id', taskId);
+  if (deleteError) throw deleteError;
+  if (requirementIds.length === 0) return;
+  const { error: insertError } = await supabase
+    .from('task_requirements')
+    .insert(requirementIds.map((requirementId) => ({ task_id: taskId, requirement_id: requirementId })));
+  if (insertError) throw insertError;
+}
+
+export async function updateRequirementLabel(requirementId: string, label: string): Promise<void> {
+  const { error } = await supabase.from('requirements').update({ label }).eq('id', requirementId);
+  if (error) throw error;
+}
+
+export async function updateProjectDueDate(projectId: string, dueDate: string): Promise<void> {
+  const { error } = await supabase.from('projects').update({ due_date: dueDate }).eq('id', projectId);
+  if (error) throw error;
+}
