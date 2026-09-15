@@ -53,11 +53,15 @@ jobs:
         # before this failure was visible. Workers capped to 2 as well, so
         # fewer JVMs compete for memory at once on a 2-core/7GB runner.
         run: |
+          # Prebuild's gradle.properties has no trailing newline; without this, the first line below fuses onto expo.inlineModules.watchedDirectories and breaks its JSON.
+          printf '\n' >> android/gradle.properties
           cat >> android/gradle.properties <<'EOF'
           org.gradle.jvmargs=-Xmx3g -XX:MaxMetaspaceSize=768m
           org.gradle.workers.max=2
           kotlin.daemon.jvmargs=-Xmx2g -XX:MaxMetaspaceSize=512m
           EOF
+          echo "--- tail of gradle.properties ---"
+          tail -6 android/gradle.properties
 
       - name: Build release APK
         working-directory: android
