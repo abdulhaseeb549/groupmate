@@ -1,9 +1,12 @@
 import { Task } from '../data/tasks';
 import { TaskDependency } from '../data/taskDependencies';
 import { TEAM, TeamId, TEAM_ORDER } from '../data/team';
-import { computeSchedule } from './projectSchedule';
+import { computeSchedule, ProjectSchedule } from './projectSchedule';
 
 const DEFAULT_EFFORT_HOURS = 2;
+// How soon counts as "near-term" for the crunch signal below — short on
+// purpose, this is meant to catch "due any minute" not "due eventually."
+const CRUNCH_WINDOW_DAYS = 3;
 
 export type MemberLoad = {
   /** Remaining effort across this person's not-done tasks. */
@@ -31,6 +34,16 @@ export type RebalanceSuggestion = {
   /** Whether this move makes the project's overall critical-path risk better, same, or worse. */
   projectRiskBefore: boolean;
   projectRiskAfter: boolean;
+  /**
+   * Distinct from loadPct: a whole-cycle ratio can look fine while someone's
+   * actual next few days are slammed (or the reverse — badly split isn't the
+   * same as badly loaded). Read against each person's CURRENT real
+   * assignment, not the hypothetical move, so it describes their real
+   * situation rather than simulating a second thing this move doesn't
+   * change either way.
+   */
+  fromNearTermCrunch: boolean;
+  toNearTermCrunch: boolean;
 };
 
 function daysUntil(isoDate: string, today: Date): number {
@@ -54,6 +67,47 @@ export function computeMemberLoad(
       .reduce((sum, t) => sum + (t.effortHours ?? DEFAULT_EFFORT_HOURS), 0);
     const capacityHours = (memberHoursPerDay[id] ?? 2) * days;
     result[id] = { loadHours, capacityHours, loadPct: capacityHours > 0 ? loadHours / capacityHours : 0 };
+  }
+  return result;
+}
+
+function atMidnight(d: Date): Date {
+  return new Date(d.getFullYear(), d.getMonth(), d.getDate());
+}
+
+function addDays(d: Date, days: number): Date {
+  return new Date(d.getTime() + days * 86_400_000);
+}
+
+/**
+ * A second, independent signal from loadPct — not a replacement for it.
+ * loadPct is hours over the WHOLE remaining cycle, so "8h spread over 2
+ * weeks" and "8h all due tomorrow" read identically. This instead asks: of
+ * a person's outstanding work, how much of it needs to START within the
+ * next CRUNCH_WINDOW_DAYS (per the real backward-scheduled dates, so a task
+ * that should already be underway counts too), against how many hours they
+ * actually have in that same short window. Informational only — this never
+ * feeds the accept/reject decision in generateRebalanceSuggestions, only
+ * what a suggestion card discloses about the people it names.
+ */
+export function computeNearTermCrunch(
+  tasks: Task[],
+  schedule: ProjectSchedule,
+  memberHoursPerDay: Record<TeamId, number>,
+  today: Date
+): Record<TeamId, boolean> {
+  const windowEnd = addDays(atMidnight(today), CRUNCH_WINDOW_DAYS);
+  const result = {} as Record<TeamId, boolean>;
+  for (const id of TEAM_ORDER) {
+    const nearTermHours = tasks
+      .filter((t) => t.assigneeId === id && t.status !== 'completed')
+      .filter((t) => {
+        const s = schedule.byTaskId[t.id];
+        return s && s.latestStart < windowEnd;
+      })
+      .reduce((sum, t) => sum + (t.effortHours ?? DEFAULT_EFFORT_HOURS), 0);
+    const nearTermCapacity = (memberHoursPerDay[id] ?? 2) * CRUNCH_WINDOW_DAYS;
+    result[id] = nearTermCapacity > 0 && nearTermHours / nearTermCapacity > 1;
   }
   return result;
 }
@@ -82,6 +136,7 @@ export function generateRebalanceSuggestions(
 ): RebalanceSuggestion[] {
   const currentLoad = computeMemberLoad(tasks, memberHoursPerDay, dueDate, today);
   const currentSchedule = computeSchedule(tasks, dependencies, memberHoursPerDay, dueDate, today);
+  const nearTermCrunch = computeNearTermCrunch(tasks, currentSchedule, memberHoursPerDay, today);
   const overloaded = TEAM_ORDER.filter((id) => currentLoad[id].loadPct > 1).sort(
     (a, b) => currentLoad[b].loadPct - currentLoad[a].loadPct
   );
@@ -142,6 +197,8 @@ export function generateRebalanceSuggestions(
             },
             projectRiskBefore: currentSchedule.projectAtRisk,
             projectRiskAfter: hypotheticalSchedule.projectAtRisk,
+            fromNearTermCrunch: nearTermCrunch[fromMember],
+            toNearTermCrunch: nearTermCrunch[toMember],
           };
         }
       }

@@ -125,8 +125,22 @@ export function RebalanceSuggestions({ today }: Props) {
                 </View>
 
                 <View style={styles.compareRow}>
-                  <PersonImpact name={from.name} before={s.before.fromPct} after={s.after.fromPct} beforeHours={s.before.fromHours} afterHours={s.after.fromHours} />
-                  <PersonImpact name={to.name} before={s.before.toPct} after={s.after.toPct} beforeHours={s.before.toHours} afterHours={s.after.toHours} />
+                  <PersonImpact
+                    name={from.name}
+                    before={s.before.fromPct}
+                    after={s.after.fromPct}
+                    beforeHours={s.before.fromHours}
+                    afterHours={s.after.fromHours}
+                    nearTermCrunch={s.fromNearTermCrunch}
+                  />
+                  <PersonImpact
+                    name={to.name}
+                    before={s.before.toPct}
+                    after={s.after.toPct}
+                    beforeHours={s.before.toHours}
+                    afterHours={s.after.toHours}
+                    nearTermCrunch={s.toNearTermCrunch}
+                  />
                 </View>
 
                 <Text style={[type.caption, styles.reason]}>{s.reason}</Text>
@@ -166,12 +180,15 @@ function PersonImpact({
   after,
   beforeHours,
   afterHours,
+  nearTermCrunch,
 }: {
   name: string;
   before: number;
   after: number;
   beforeHours: number;
   afterHours: number;
+  /** Independent of loadPct — this person's *current* near-term schedule, not affected by whether this move happens. */
+  nearTermCrunch: boolean;
 }) {
   // 150% of capacity fills the track — past that the bar just stays full rather than overflowing.
   const fillPct = Math.min(after / 1.5, 1) * 100;
@@ -191,6 +208,13 @@ function PersonImpact({
       <View style={styles.track}>
         <View style={[styles.fill, { width: `${fillPct}%`, backgroundColor: barColor(after) }]} />
       </View>
+      {nearTermCrunch ? (
+        <View style={styles.crunchTag}>
+          <Text style={[type.tinyLabel, styles.crunchTagText]} numberOfLines={1}>
+            Crunched near-term
+          </Text>
+        </View>
+      ) : null}
     </View>
   );
 }
@@ -247,6 +271,18 @@ const styles = StyleSheet.create({
   fill: {
     height: '100%',
     borderRadius: 3,
+  },
+  crunchTag: {
+    alignSelf: 'flex-start',
+    marginTop: 2,
+    height: 18,
+    paddingHorizontal: 6,
+    borderRadius: 9,
+    backgroundColor: colors.yellowSoft,
+    justifyContent: 'center',
+  },
+  crunchTagText: {
+    color: colors.yellowText,
   },
   reason: {
     color: colors.muted,
