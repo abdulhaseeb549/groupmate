@@ -9,6 +9,7 @@ import { Card } from '../components/Card';
 import { DistributionEditor } from '../components/DistributionEditor';
 import { Icon } from '../components/Icon';
 import { ProjectTimeline } from '../components/projects/ProjectTimeline';
+import { RebalanceSuggestions } from '../components/RebalanceSuggestions';
 import { CURRENT_USER_ID, TEAM, TEAM_ORDER } from '../data/team';
 import { ProjectHealth } from '../state/projectState';
 import { useProject } from '../state/ProjectRepository';
@@ -136,6 +137,8 @@ export function ProjectsScreen({ activeTab, onSelectTab }: Props) {
             })}
           </Card>
         </View>
+
+        <RebalanceSuggestions today={today} />
 
         <View style={styles.section}>
           <Text style={type.sectionHeading}>Tasks</Text>
