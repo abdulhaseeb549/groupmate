@@ -1,5 +1,3 @@
-import { TeamId } from './team';
-
 export type Priority = 'high' | 'medium' | 'low';
 
 export type TaskStatus = 'not_started' | 'in_progress' | 'completed';
@@ -8,7 +6,8 @@ export type Task = {
   id: string;
   title: string;
   sectionRef: string;
-  assigneeId: TeamId;
+  /** A real auth.users id, or null for an unclaimed task. */
+  assigneeId: string | null;
   status: TaskStatus;
   /** Set only when status is 'completed' — cleared if the task is reopened. */
   completedAt?: string;

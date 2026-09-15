@@ -4,7 +4,7 @@ import { Avatar } from '../Avatar';
 import { Card } from '../Card';
 import { Icon } from '../Icon';
 import { Project } from '../../data/project';
-import { Member } from '../../data/team';
+import { Member } from '../../data/member';
 import { ProjectHealth, ProjectState } from '../../state/projectState';
 import { colors, layout, type } from '../../theme';
 import { formatDueDate } from '../../utils/dates';

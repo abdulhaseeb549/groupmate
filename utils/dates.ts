@@ -33,3 +33,11 @@ export function formatShortDate(date: Date, today: Date): string {
   const dayMonth = `${date.getDate()} ${MONTHS[date.getMonth()]}`;
   return date.getFullYear() === today.getFullYear() ? dayMonth : `${dayMonth} ${date.getFullYear()}`;
 }
+
+/** "2:34 PM" — local time, 12-hour clock, spelled out rather than Intl so it doesn't shift with device locale. */
+export function formatTime(date: Date): string {
+  const hours24 = date.getHours();
+  const hours12 = hours24 % 12 || 12;
+  const minutes = date.getMinutes().toString().padStart(2, '0');
+  return `${hours12}:${minutes} ${hours24 < 12 ? 'AM' : 'PM'}`;
+}

@@ -1,6 +1,6 @@
+import { Member } from '../data/member';
 import { Task } from '../data/tasks';
 import { TaskDependency } from '../data/taskDependencies';
-import { TEAM, TeamId, TEAM_ORDER } from '../data/team';
 import { computeSchedule, ProjectSchedule } from './projectSchedule';
 
 const DEFAULT_EFFORT_HOURS = 2;
@@ -22,8 +22,8 @@ export type RebalanceImpact = 'low' | 'medium' | 'high';
 export type RebalanceSuggestion = {
   taskId: string;
   taskTitle: string;
-  fromMember: TeamId;
-  toMember: TeamId;
+  fromMember: string;
+  toMember: string;
   effortHours: number;
   /** One-line payoff, in the reader's terms — not "lowest workload." */
   reason: string;
@@ -55,13 +55,14 @@ function daysUntil(isoDate: string, today: Date): number {
 /** Real load — remaining effort against remaining capacity — not a task count. Matches what the rebalancing engine below actually reasons about, so the numbers a suggestion shows are the numbers that produced it. */
 export function computeMemberLoad(
   tasks: Task[],
-  memberHoursPerDay: Record<TeamId, number>,
+  memberIds: string[],
+  memberHoursPerDay: Record<string, number>,
   dueDate: string,
   today: Date
-): Record<TeamId, MemberLoad> {
+): Record<string, MemberLoad> {
   const days = daysUntil(dueDate, today);
-  const result = {} as Record<TeamId, MemberLoad>;
-  for (const id of TEAM_ORDER) {
+  const result: Record<string, MemberLoad> = {};
+  for (const id of memberIds) {
     const loadHours = tasks
       .filter((t) => t.assigneeId === id && t.status !== 'completed')
       .reduce((sum, t) => sum + (t.effortHours ?? DEFAULT_EFFORT_HOURS), 0);
@@ -92,13 +93,14 @@ function addDays(d: Date, days: number): Date {
  */
 export function computeNearTermCrunch(
   tasks: Task[],
+  memberIds: string[],
   schedule: ProjectSchedule,
-  memberHoursPerDay: Record<TeamId, number>,
+  memberHoursPerDay: Record<string, number>,
   today: Date
-): Record<TeamId, boolean> {
+): Record<string, boolean> {
   const windowEnd = addDays(atMidnight(today), CRUNCH_WINDOW_DAYS);
-  const result = {} as Record<TeamId, boolean>;
-  for (const id of TEAM_ORDER) {
+  const result: Record<string, boolean> = {};
+  for (const id of memberIds) {
     const nearTermHours = tasks
       .filter((t) => t.assigneeId === id && t.status !== 'completed')
       .filter((t) => {
@@ -129,17 +131,19 @@ export function computeNearTermCrunch(
 export function generateRebalanceSuggestions(
   tasks: Task[],
   dependencies: TaskDependency[],
-  memberHoursPerDay: Record<TeamId, number>,
+  memberIds: string[],
+  membersById: Record<string, Member>,
+  memberHoursPerDay: Record<string, number>,
   dueDate: string,
   today: Date,
   maxSuggestions = 2
 ): RebalanceSuggestion[] {
-  const currentLoad = computeMemberLoad(tasks, memberHoursPerDay, dueDate, today);
+  const currentLoad = computeMemberLoad(tasks, memberIds, memberHoursPerDay, dueDate, today);
   const currentSchedule = computeSchedule(tasks, dependencies, memberHoursPerDay, dueDate, today);
-  const nearTermCrunch = computeNearTermCrunch(tasks, currentSchedule, memberHoursPerDay, today);
-  const overloaded = TEAM_ORDER.filter((id) => currentLoad[id].loadPct > 1).sort(
-    (a, b) => currentLoad[b].loadPct - currentLoad[a].loadPct
-  );
+  const nearTermCrunch = computeNearTermCrunch(tasks, memberIds, currentSchedule, memberHoursPerDay, today);
+  const overloaded = memberIds
+    .filter((id) => currentLoad[id].loadPct > 1)
+    .sort((a, b) => currentLoad[b].loadPct - currentLoad[a].loadPct);
 
   const candidates: RebalanceSuggestion[] = [];
 
@@ -152,11 +156,11 @@ export function generateRebalanceSuggestions(
     for (const task of movableTasks) {
       let best: RebalanceSuggestion | null = null;
 
-      for (const toMember of TEAM_ORDER) {
+      for (const toMember of memberIds) {
         if (toMember === fromMember) continue;
 
         const hypotheticalTasks = tasks.map((t) => (t.id === task.id ? { ...t, assigneeId: toMember } : t));
-        const hypotheticalLoad = computeMemberLoad(hypotheticalTasks, memberHoursPerDay, dueDate, today);
+        const hypotheticalLoad = computeMemberLoad(hypotheticalTasks, memberIds, memberHoursPerDay, dueDate, today);
         const hypotheticalSchedule = computeSchedule(hypotheticalTasks, dependencies, memberHoursPerDay, dueDate, today);
 
         const fromAfter = hypotheticalLoad[fromMember].loadPct;
@@ -211,7 +215,7 @@ export function generateRebalanceSuggestions(
         candidates.push({
           ...best,
           impact,
-          reason: `Frees ${formatHours(best.effortHours)} from ${TEAM[fromMember].name}'s overloaded window.`,
+          reason: `Frees ${formatHours(best.effortHours)} from ${membersById[fromMember].name}'s overloaded window.`,
         });
         break; // one suggestion per overloaded person per pass is plenty to act on
       }

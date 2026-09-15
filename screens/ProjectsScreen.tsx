@@ -13,8 +13,8 @@ import { ProjectTimeline } from '../components/projects/ProjectTimeline';
 import { RebalanceSuggestions } from '../components/RebalanceSuggestions';
 import { RequirementEditDialog } from '../components/RequirementEditDialog';
 import { Requirement } from '../data/requirements';
-import { CURRENT_USER_ID, TEAM, TEAM_ORDER } from '../data/team';
 import { ProjectHealth, RequirementStatus } from '../state/projectState';
+import { useAuth } from '../state/AuthProvider';
 import { useProject } from '../state/ProjectRepository';
 import { colors, gradients, layout, spacing, type } from '../theme';
 import { formatDueDate } from '../utils/dates';
@@ -42,23 +42,26 @@ const HEALTH: Record<ProjectHealth, { label: string; bg: string; dot: string; te
 
 export function ProjectsScreen({ activeTab, onSelectTab }: Props) {
   const insets = useSafeAreaInsets();
-  const { project, tasks, projectState, schedule } = useProject();
+  const { project, tasks, projectState, schedule, members } = useProject();
+  const { session } = useAuth();
+  const currentUserId = session?.user.id;
   const [filter, setFilter] = useState<(typeof FILTERS)[number]>('My tasks');
   const [capacityVisible, setCapacityVisible] = useState(false);
   const [dueDateVisible, setDueDateVisible] = useState(false);
   const [editingRequirement, setEditingRequirement] = useState<Requirement | null>(null);
   const [section, setSection] = useState<Section>('Timeline');
-  const members = filter === 'My tasks' ? [CURRENT_USER_ID] : TEAM_ORDER;
+  const filteredMemberIds =
+    filter === 'My tasks' ? (currentUserId ? [currentUserId] : []) : members.map((m) => m.id);
   const today = useMemo(() => new Date(), []);
 
   const health = HEALTH[projectState.health];
   const percent = Math.round(projectState.taskProgress.pct * 100);
   const daysLabel = daysRemainingLabel(projectState.daysRemaining, projectState.health);
 
-  const workload = TEAM_ORDER.map((id) => {
-    const memberTasks = tasks.filter((t) => t.assigneeId === id);
+  const workload = members.map((member) => {
+    const memberTasks = tasks.filter((t) => t.assigneeId === member.id);
     const done = memberTasks.filter((t) => t.status === 'completed').length;
-    return { member: TEAM[id], done, total: memberTasks.length };
+    return { member, done, total: memberTasks.length };
   });
 
   return (
@@ -234,7 +237,7 @@ export function ProjectsScreen({ activeTab, onSelectTab }: Props) {
               Tap a task to start it, finish it, or reassign it. Changes here apply to the whole project.
             </Text>
             <View style={styles.card}>
-              <DistributionEditor members={members} />
+              <DistributionEditor members={filteredMemberIds} includeUnclaimed={filter !== 'My tasks'} />
             </View>
           </View>
         ) : null}

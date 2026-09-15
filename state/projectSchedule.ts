@@ -1,6 +1,5 @@
 import { Task } from '../data/tasks';
 import { TaskDependency } from '../data/taskDependencies';
-import { TeamId } from '../data/team';
 
 export type TaskSchedule = {
   taskId: string;
@@ -55,7 +54,7 @@ function addDays(d: Date, days: number): Date {
 export function computeSchedule(
   tasks: Task[],
   dependencies: TaskDependency[],
-  memberHoursPerDay: Record<TeamId, number>,
+  memberHoursPerDay: Record<string, number>,
   dueDate: string,
   today: Date
 ): ProjectSchedule {
@@ -78,7 +77,7 @@ export function computeSchedule(
   const duration = new Map<string, number>();
   for (const t of tasks) {
     const hours = t.effortHours ?? DEFAULT_EFFORT_HOURS;
-    const perDay = memberHoursPerDay[t.assigneeId] ?? DEFAULT_HOURS_PER_DAY;
+    const perDay = (t.assigneeId ? memberHoursPerDay[t.assigneeId] : undefined) ?? DEFAULT_HOURS_PER_DAY;
     duration.set(t.id, Math.max(hours / Math.max(perDay, 0.5), 0.5));
   }
 

@@ -1,7 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { Pressable, StyleSheet, Text, View } from 'react-native';
 import { Card } from './Card';
-import { TEAM } from '../data/team';
 import { useProject } from '../state/ProjectRepository';
 import { generateRebalanceSuggestions, RebalanceImpact, RebalanceSuggestion } from '../state/rebalancing';
 import { colors, type } from '../theme';
@@ -63,7 +62,7 @@ function riskNote(s: RebalanceSuggestion): RiskNote | null {
  * card for this session.
  */
 export function RebalanceSuggestions({ today }: Props) {
-  const { tasks, taskDependencies, project, reassignTask } = useProject();
+  const { tasks, taskDependencies, project, members, membersById, reassignTask } = useProject();
   const [dismissed, setDismissed] = useState<Set<string>>(new Set());
   const [accepting, setAccepting] = useState(false);
   // Suggestions are only safe as of the tasks snapshot they were computed
@@ -80,9 +79,20 @@ export function RebalanceSuggestions({ today }: Props) {
     setAccepting(false);
   }, [tasks]);
 
+  const memberIds = useMemo(() => members.map((m) => m.id), [members]);
+
   const suggestions = useMemo(
-    () => generateRebalanceSuggestions(tasks, taskDependencies, project.memberHoursPerDay, project.dueDate, today),
-    [tasks, taskDependencies, project, today]
+    () =>
+      generateRebalanceSuggestions(
+        tasks,
+        taskDependencies,
+        memberIds,
+        membersById,
+        project.memberHoursPerDay,
+        project.dueDate,
+        today
+      ),
+    [tasks, taskDependencies, memberIds, membersById, project, today]
   );
 
   const visible = suggestions.filter((s) => !dismissed.has(s.taskId));
@@ -106,8 +116,8 @@ export function RebalanceSuggestions({ today }: Props) {
       </Text>
       <View style={styles.list}>
         {visible.map((s) => {
-          const from = TEAM[s.fromMember];
-          const to = TEAM[s.toMember];
+          const from = membersById[s.fromMember];
+          const to = membersById[s.toMember];
           const impact = IMPACT[s.impact];
           const risk = riskNote(s);
           return (

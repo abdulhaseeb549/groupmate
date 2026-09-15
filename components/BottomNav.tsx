@@ -6,15 +6,16 @@ import { CreateMenu } from './CreateMenu';
 import { Icon, IconName } from './Icon';
 import { colors, gradients, layout, purpleHalo, type } from '../theme';
 
-export type NavTab = 'home' | 'projects' | 'study';
+export type NavTab = 'home' | 'projects' | 'chat' | 'study';
 
 const TABS: Record<NavTab, { label: string; icon: IconName }> = {
   home: { label: 'Home', icon: 'home' },
   projects: { label: 'Projects', icon: 'folder' },
+  chat: { label: 'Chat', icon: 'chat' },
   study: { label: 'Study', icon: 'book' },
 };
 
-const ORDER: NavTab[] = ['home', 'projects', 'study'];
+const ORDER: NavTab[] = ['home', 'projects', 'chat', 'study'];
 
 function Tab({ id, active, onPress }: { id: NavTab; active: boolean; onPress: () => void }) {
   // Muted rather than faint when inactive: faint fails 4.5:1 as label text.
@@ -77,7 +78,7 @@ export function BottomNav({
         </LinearGradient>
       </Pressable>
 
-      <View style={[styles.side, styles.sideRight]}>
+      <View style={styles.side}>
         {right.map((id) => (
           <Tab key={id} id={id} active={active === id} onPress={() => onSelect(id)} />
         ))}
@@ -110,10 +111,10 @@ const styles = StyleSheet.create({
     flex: 1,
     flexDirection: 'row',
     alignItems: 'center',
-    justifyContent: 'flex-start',
-  },
-  sideRight: {
-    justifyContent: 'flex-end',
+    // Evenly, not hugging the outer edge: flex-start/flex-end left a wide
+    // dead gap right next to the create button once there were 2 tabs on
+    // each side instead of 2-and-1.
+    justifyContent: 'space-evenly',
   },
   tab: {
     height: layout.navHeight,

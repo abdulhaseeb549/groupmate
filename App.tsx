@@ -5,6 +5,7 @@ import { SafeAreaProvider } from 'react-native-safe-area-context';
 import { LoadingScreen } from './components/LoadingScreen';
 import { isSupabaseConfigured } from './lib/supabase';
 import { AuthScreen } from './screens/AuthScreen';
+import { ChatTab } from './screens/ChatTab';
 import { HomeScreen } from './screens/HomeScreen';
 import { NewProjectScreen } from './screens/NewProjectScreen';
 import { ProjectsScreen } from './screens/ProjectsScreen';
@@ -54,6 +55,7 @@ function ProjectTabs() {
     <>
       {activeTab === 'home' && <HomeScreen activeTab={activeTab} onSelectTab={setActiveTab} />}
       {activeTab === 'projects' && <ProjectsScreen activeTab={activeTab} onSelectTab={setActiveTab} />}
+      {activeTab === 'chat' && <ChatTab activeTab={activeTab} onSelectTab={setActiveTab} />}
       {activeTab === 'study' && <StudyScreen activeTab={activeTab} onSelectTab={setActiveTab} />}
     </>
   );

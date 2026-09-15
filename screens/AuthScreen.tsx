@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import {
   ActivityIndicator,
   KeyboardAvoidingView,
@@ -12,10 +12,16 @@ import {
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Icon } from '../components/Icon';
+import { supabase } from '../lib/supabase';
 import { useAuth } from '../state/AuthProvider';
 import { colors, layout, type } from '../theme';
 
 type Mode = 'signIn' | 'signUp';
+type InviteLookup =
+  | { status: 'idle' }
+  | { status: 'checking' }
+  | { status: 'found'; projectName: string }
+  | { status: 'not_found' };
 
 export function AuthScreen() {
   const insets = useSafeAreaInsets();
@@ -24,6 +30,8 @@ export function AuthScreen() {
   const [fullName, setFullName] = useState('');
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
+  const [inviteCode, setInviteCode] = useState('');
+  const [inviteLookup, setInviteLookup] = useState<InviteLookup>({ status: 'idle' });
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [signedUp, setSignedUp] = useState(false);
@@ -38,12 +46,39 @@ export function AuthScreen() {
     setSignedUp(false);
   }
 
+  // Debounced preview — "You'll join {Project Name}" — so a mistyped code
+  // is caught before submitting rather than only surfacing as a silent
+  // fallback to a fresh demo project after signup.
+  useEffect(() => {
+    const code = inviteCode.trim().toUpperCase();
+    if (!isSignUp || code.length === 0) {
+      setInviteLookup({ status: 'idle' });
+      return;
+    }
+    setInviteLookup({ status: 'checking' });
+    let cancelled = false;
+    const timer = setTimeout(async () => {
+      try {
+        const { data } = await supabase.rpc('lookup_invite_code', { code });
+        if (cancelled) return;
+        const projectName = data?.[0]?.project_name as string | undefined;
+        setInviteLookup(projectName ? { status: 'found', projectName } : { status: 'not_found' });
+      } catch {
+        if (!cancelled) setInviteLookup({ status: 'not_found' });
+      }
+    }, 400);
+    return () => {
+      cancelled = true;
+      clearTimeout(timer);
+    };
+  }, [inviteCode, isSignUp]);
+
   async function submit() {
     if (!canSubmit || submitting) return;
     setSubmitting(true);
     setError(null);
     const result = isSignUp
-      ? await signUp(email.trim(), password, fullName.trim())
+      ? await signUp(email.trim(), password, fullName.trim(), inviteCode.trim() || undefined)
       : await signIn(email.trim(), password);
     setSubmitting(false);
     if (result.error) {
@@ -122,6 +157,31 @@ export function AuthScreen() {
               style={styles.input}
             />
           </Field>
+
+          {isSignUp ? (
+            <Field label="Invite code (optional)">
+              <TextInput
+                value={inviteCode}
+                onChangeText={setInviteCode}
+                placeholder="e.g. 7F3KQ9LP"
+                placeholderTextColor={colors.faint}
+                autoCapitalize="characters"
+                autoCorrect={false}
+                style={styles.input}
+              />
+              {inviteLookup.status === 'found' ? (
+                <Text style={[type.caption, styles.inviteFound]}>
+                  You'll join <Text style={styles.inviteFoundName}>{inviteLookup.projectName}</Text>
+                </Text>
+              ) : inviteLookup.status === 'not_found' ? (
+                <Text style={[type.caption, styles.inviteNotFound]}>No project uses that code — check it and try again.</Text>
+              ) : (
+                <Text style={[type.caption, styles.muted]}>
+                  Have a code from a teammate? Enter it to join their project instead of starting your own.
+                </Text>
+              )}
+            </Field>
+          ) : null}
 
           {error ? (
             <View style={styles.errorBox}>
@@ -267,6 +327,16 @@ const styles = StyleSheet.create({
   },
   errorText: {
     flex: 1,
+    color: colors.redText,
+  },
+  inviteFound: {
+    color: colors.muted,
+  },
+  inviteFoundName: {
+    color: colors.mintText,
+    fontFamily: type.metadata.fontFamily,
+  },
+  inviteNotFound: {
     color: colors.redText,
   },
   noticeBox: {

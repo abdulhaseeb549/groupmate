@@ -1,9 +1,8 @@
 import { useEffect, useState } from 'react';
 import { ActivityIndicator, Modal, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
-import { Avatar } from './Avatar';
+import { Avatar, UnclaimedAvatar } from './Avatar';
 import { Icon } from './Icon';
 import { Priority, Task } from '../data/tasks';
-import { TEAM, TEAM_ORDER, TeamId } from '../data/team';
 import { useProject } from '../state/ProjectRepository';
 import { colors, layout, type } from '../theme';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -12,8 +11,8 @@ type Props = {
   visible: boolean;
   /** Present to edit that task; absent to create a new one. */
   task?: Task | null;
-  /** Only used when creating — who the new task should start assigned to. */
-  defaultAssignee?: TeamId;
+  /** Only used when creating — who the new task should start assigned to. Null/absent means Unclaimed. */
+  defaultAssignee?: string | null;
   onClose: () => void;
 };
 
@@ -37,12 +36,12 @@ function formatHours(n: number): string {
  */
 export function TaskFormModal({ visible, task, defaultAssignee, onClose }: Props) {
   const insets = useSafeAreaInsets();
-  const { requirements, taskRequirements, addTask, updateTask } = useProject();
+  const { members, requirements, taskRequirements, addTask, updateTask } = useProject();
   const isEdit = Boolean(task);
 
   const [title, setTitle] = useState('');
   const [sectionRef, setSectionRef] = useState('');
-  const [assigneeId, setAssigneeId] = useState<TeamId>(defaultAssignee ?? TEAM_ORDER[0]);
+  const [assigneeId, setAssigneeId] = useState<string | null>(defaultAssignee ?? null);
   const [priority, setPriority] = useState<Priority>('medium');
   const [effortHours, setEffortHours] = useState(2);
   const [dueLabel, setDueLabel] = useState('');
@@ -66,7 +65,7 @@ export function TaskFormModal({ visible, task, defaultAssignee, onClose }: Props
     } else {
       setTitle('');
       setSectionRef('');
-      setAssigneeId(defaultAssignee ?? TEAM_ORDER[0]);
+      setAssigneeId(defaultAssignee ?? null);
       setPriority('medium');
       setEffortHours(2);
       setDueLabel('');
@@ -134,18 +133,37 @@ export function TaskFormModal({ visible, task, defaultAssignee, onClose }: Props
           {!isEdit ? (
             <Field label="Assigned to">
               <View style={styles.assignRow}>
-                {TEAM_ORDER.map((id) => (
+                <Pressable
+                  onPress={() => setAssigneeId(null)}
+                  hitSlop={4}
+                  accessibilityRole="button"
+                  accessibilityLabel="Leave unclaimed"
+                  style={styles.assignOption}
+                >
+                  <UnclaimedAvatar size={40} borderColor={assigneeId === null ? colors.purple : undefined} />
+                  <Text style={[type.tinyLabel, assigneeId === null ? styles.assignNameActive : styles.muted]} numberOfLines={1}>
+                    Unclaimed
+                  </Text>
+                </Pressable>
+                {members.map((member) => (
                   <Pressable
-                    key={id}
-                    onPress={() => setAssigneeId(id)}
+                    key={member.id}
+                    onPress={() => setAssigneeId(member.id)}
                     hitSlop={4}
                     accessibilityRole="button"
-                    accessibilityLabel={`Assign to ${TEAM[id].name}`}
+                    accessibilityLabel={`Assign to ${member.name}`}
                     style={styles.assignOption}
                   >
-                    <Avatar {...TEAM[id]} size={40} borderColor={id === assigneeId ? colors.purple : colors.surface} />
-                    <Text style={[type.tinyLabel, id === assigneeId ? styles.assignNameActive : styles.muted]} numberOfLines={1}>
-                      {TEAM[id].name}
+                    <Avatar
+                      {...member}
+                      size={40}
+                      borderColor={member.id === assigneeId ? colors.purple : colors.surface}
+                    />
+                    <Text
+                      style={[type.tinyLabel, member.id === assigneeId ? styles.assignNameActive : styles.muted]}
+                      numberOfLines={1}
+                    >
+                      {member.name}
                     </Text>
                   </Pressable>
                 ))}

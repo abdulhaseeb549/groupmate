@@ -1,7 +1,6 @@
 import { Pressable, StyleSheet, Text, View } from 'react-native';
 import { Avatar } from './Avatar';
 import { Icon } from './Icon';
-import { TEAM, TEAM_ORDER } from '../data/team';
 import { useProject } from '../state/ProjectRepository';
 import { colors, type } from '../theme';
 
@@ -21,22 +20,21 @@ function formatHours(hours: number): string {
  * not a separate save step.
  */
 export function CapacityEditor() {
-  const { project, updateMemberHoursPerDay } = useProject();
+  const { project, members, updateMemberHoursPerDay } = useProject();
 
   return (
     <View style={styles.container}>
-      {TEAM_ORDER.map((memberId) => {
-        const member = TEAM[memberId];
-        const hours = project.memberHoursPerDay[memberId] ?? 2;
+      {members.map((member) => {
+        const hours = project.memberHoursPerDay[member.id] ?? 2;
         return (
-          <View key={memberId} style={styles.row}>
+          <View key={member.id} style={styles.row}>
             <Avatar {...member} size={32} />
             <Text style={[type.taskTitle, styles.name]} numberOfLines={1}>
               {member.name}
             </Text>
             <View style={styles.stepper}>
               <Pressable
-                onPress={() => updateMemberHoursPerDay(memberId, Math.max(MIN_HOURS, hours - STEP))}
+                onPress={() => updateMemberHoursPerDay(member.id, Math.max(MIN_HOURS, hours - STEP))}
                 disabled={hours <= MIN_HOURS}
                 hitSlop={8}
                 accessibilityRole="button"
@@ -47,7 +45,7 @@ export function CapacityEditor() {
               </Pressable>
               <Text style={[type.button, styles.value]}>{formatHours(hours)}/day</Text>
               <Pressable
-                onPress={() => updateMemberHoursPerDay(memberId, Math.min(MAX_HOURS, hours + STEP))}
+                onPress={() => updateMemberHoursPerDay(member.id, Math.min(MAX_HOURS, hours + STEP))}
                 disabled={hours >= MAX_HOURS}
                 hitSlop={8}
                 accessibilityRole="button"

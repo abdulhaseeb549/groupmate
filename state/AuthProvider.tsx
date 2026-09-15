@@ -17,7 +17,8 @@ type AuthState = {
   session: Session | null | undefined;
   /** The profiles row for the signed-in user. Lags session by one round trip right after sign-up. */
   profile: Profile | null;
-  signUp: (email: string, password: string, fullName: string) => Promise<AuthResult>;
+  /** inviteCode, if present and valid, joins that project as a member instead of seeding a new demo project — see handle_new_user() in migration 0011. */
+  signUp: (email: string, password: string, fullName: string, inviteCode?: string) => Promise<AuthResult>;
   signIn: (email: string, password: string) => Promise<AuthResult>;
   signOut: () => Promise<void>;
 };
@@ -72,11 +73,11 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     };
   }, [session?.user.id]);
 
-  async function signUp(email: string, password: string, fullName: string): Promise<AuthResult> {
+  async function signUp(email: string, password: string, fullName: string, inviteCode?: string): Promise<AuthResult> {
     const { error } = await supabase.auth.signUp({
       email,
       password,
-      options: { data: { full_name: fullName } },
+      options: { data: { full_name: fullName, invite_code: inviteCode || undefined } },
     });
     return { error: error?.message ?? null };
   }

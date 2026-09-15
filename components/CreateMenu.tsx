@@ -1,8 +1,9 @@
-import { useEffect, useRef } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { Animated, Easing, Modal, Pressable, StyleSheet, View } from 'react-native';
 import { BlurView } from 'expo-blur';
 import Svg, { Circle, Path } from 'react-native-svg';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import { InviteModal } from './InviteModal';
 import { QuickAction } from './QuickAction';
 import { useNavigation } from '../state/NavigationProvider';
 import { colors, layout } from '../theme';
@@ -20,6 +21,7 @@ type Props = {
 export function CreateMenu({ visible, onClose }: Props) {
   const insets = useSafeAreaInsets();
   const { openNewProject, goToNewQuiz } = useNavigation();
+  const [inviteVisible, setInviteVisible] = useState(false);
 
   function handleNewProject() {
     openNewProject();
@@ -29,6 +31,11 @@ export function CreateMenu({ visible, onClose }: Props) {
   function handleNewQuiz() {
     goToNewQuiz();
     handleClose();
+  }
+
+  function handleInvite() {
+    handleClose();
+    setInviteVisible(true);
   }
   const scale = useRef(new Animated.Value(0.6)).current;
   const opacity = useRef(new Animated.Value(0)).current;
@@ -57,6 +64,7 @@ export function CreateMenu({ visible, onClose }: Props) {
   }
 
   return (
+    <>
     <Modal visible={visible} transparent animationType="none" onRequestClose={handleClose}>
       <Pressable style={StyleSheet.absoluteFill} onPress={handleClose}>
         <BlurView intensity={40} tint="dark" style={StyleSheet.absoluteFill} />
@@ -111,7 +119,7 @@ export function CreateMenu({ visible, onClose }: Props) {
           label="Invite"
           bg={colors.mint}
           shadowColor={colors.mintText}
-          onPress={handleClose}
+          onPress={handleInvite}
           icon={
             <Svg width={18} height={18} viewBox="0 0 24 24" fill="none">
               <Path
@@ -139,6 +147,9 @@ export function CreateMenu({ visible, onClose }: Props) {
         />
       </Animated.View>
     </Modal>
+
+      <InviteModal visible={inviteVisible} onClose={() => setInviteVisible(false)} />
+    </>
   );
 }
 
