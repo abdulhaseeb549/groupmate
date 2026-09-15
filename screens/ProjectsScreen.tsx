@@ -4,6 +4,7 @@ import { LinearGradient } from 'expo-linear-gradient';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Avatar } from '../components/Avatar';
 import { BottomNav, NavTab } from '../components/BottomNav';
+import { CapacityModal } from '../components/CapacityModal';
 import { Card } from '../components/Card';
 import { DistributionEditor } from '../components/DistributionEditor';
 import { Icon } from '../components/Icon';
@@ -31,6 +32,7 @@ export function ProjectsScreen({ activeTab, onSelectTab }: Props) {
   const insets = useSafeAreaInsets();
   const { project, tasks, projectState, schedule } = useProject();
   const [filter, setFilter] = useState<(typeof FILTERS)[number]>('My tasks');
+  const [capacityVisible, setCapacityVisible] = useState(false);
   const members = filter === 'My tasks' ? [CURRENT_USER_ID] : TEAM_ORDER;
   const today = useMemo(() => new Date(), []);
 
@@ -96,7 +98,17 @@ export function ProjectsScreen({ activeTab, onSelectTab }: Props) {
         </View>
 
         <View style={styles.section}>
-          <Text style={type.sectionHeading}>Workload</Text>
+          <View style={styles.sectionHeaderRow}>
+            <Text style={type.sectionHeading}>Workload</Text>
+            <Pressable
+              onPress={() => setCapacityVisible(true)}
+              hitSlop={8}
+              accessibilityRole="button"
+              accessibilityLabel="Edit hours per day"
+            >
+              <Text style={[type.button, styles.editHoursLink]}>Edit hours</Text>
+            </Pressable>
+          </View>
           <Card>
             {workload.map((w) => {
               const pct = w.total > 0 ? w.done / w.total : 0;
@@ -153,6 +165,8 @@ export function ProjectsScreen({ activeTab, onSelectTab }: Props) {
       </ScrollView>
 
       <BottomNav active={activeTab} onSelect={onSelectTab} />
+
+      <CapacityModal visible={capacityVisible} onClose={() => setCapacityVisible(false)} />
     </View>
   );
 }
@@ -180,6 +194,14 @@ const styles = StyleSheet.create({
   },
   section: {
     gap: 12,
+  },
+  sectionHeaderRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+  },
+  editHoursLink: {
+    color: colors.purple,
   },
   filterRow: {
     flexDirection: 'row',

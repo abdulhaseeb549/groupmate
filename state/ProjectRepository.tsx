@@ -10,7 +10,12 @@ import { TeamId } from '../data/team';
 import { useAuth } from './AuthProvider';
 import { deriveProjectState, ProjectState } from './projectState';
 import { computeSchedule, ProjectSchedule } from './projectSchedule';
-import { fetchProjectData, persistTaskAssignee, persistTaskDone } from './projectQueries';
+import {
+  fetchProjectData,
+  persistMemberHoursPerDay,
+  persistTaskAssignee,
+  persistTaskDone,
+} from './projectQueries';
 
 type ProjectRepository = {
   project: Project;
@@ -21,6 +26,7 @@ type ProjectRepository = {
   schedule: ProjectSchedule;
   toggleTaskDone: (taskId: string) => void;
   reassignTask: (taskId: string, memberId: TeamId) => void;
+  updateMemberHoursPerDay: (memberId: TeamId, hoursPerDay: number) => void;
   /** Re-fetches from Supabase — used both by the error screen's retry and after replacing the project (e.g. from a new brief). */
   refetch: () => void;
 };
@@ -110,7 +116,7 @@ export function ProjectProvider({ children }: { children: ReactNode }) {
 }
 
 function ProjectProviderReady({
-  project,
+  project: initialProject,
   initialTasks,
   requirements,
   taskRequirements,
@@ -127,6 +133,7 @@ function ProjectProviderReady({
   children: ReactNode;
 }) {
   const [tasks, setTasks] = useState<Task[]>(initialTasks);
+  const [project, setProject] = useState<Project>(initialProject);
 
   const projectState = useMemo(
     () => deriveProjectState(tasks, requirements, taskRequirements, project, new Date()),
@@ -154,6 +161,12 @@ function ProjectProviderReady({
     void persistTaskAssignee(taskId, memberId);
   }
 
+  function updateMemberHoursPerDay(memberId: TeamId, hoursPerDay: number) {
+    const next = { ...project.memberHoursPerDay, [memberId]: hoursPerDay };
+    setProject((prev) => ({ ...prev, memberHoursPerDay: next }));
+    void persistMemberHoursPerDay(project.id, next);
+  }
+
   const value: ProjectRepository = {
     project,
     tasks,
@@ -163,6 +176,7 @@ function ProjectProviderReady({
     schedule,
     toggleTaskDone,
     reassignTask,
+    updateMemberHoursPerDay,
     refetch,
   };
 
