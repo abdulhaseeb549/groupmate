@@ -1,13 +1,15 @@
 import { useMemo, useState } from 'react';
 import { Modal, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { Avatar } from './Avatar';
+import { Avatar, UnclaimedAvatar } from './Avatar';
 import { ConfirmDialog } from './ConfirmDialog';
 import { Icon } from './Icon';
 import { TaskFormModal } from './TaskFormModal';
 import { TaskStatusDot } from './TaskStatusDot';
-import { Priority, TaskStatus } from '../data/tasks';
-import { TEAM, TEAM_ORDER, TeamId } from '../data/team';
+import { Task, Priority, TaskStatus } from '../data/tasks';
+import { useAuth } from '../state/AuthProvider';
+import { shareTask } from '../state/messages';
+import { useNavigation } from '../state/NavigationProvider';
 import { useProject } from '../state/ProjectRepository';
 import { colors, layout, type } from '../theme';
 import { formatShortDate } from '../utils/dates';
@@ -15,6 +17,8 @@ import { formatShortDate } from '../utils/dates';
 type Props = {
   taskId: string | null;
   onClose: () => void;
+  /** Fires after this modal successfully claims a task — lets a caller (e.g. chat) show its own confirmation. */
+  onClaimed?: (task: Task) => void;
 };
 
 const PRIORITY: Record<Priority, { label: string; mark: string; text: string }> = {
@@ -35,12 +39,20 @@ const STATUS_LABEL: Record<TaskStatus, string> = {
  * compact rows in the Tasks list can stay scannable instead of carrying a
  * button for each of these.
  */
-export function TaskDetailModal({ taskId, onClose }: Props) {
+export function TaskDetailModal({ taskId, onClose, onClaimed }: Props) {
   const insets = useSafeAreaInsets();
-  const { tasks, setTaskStatus, reassignTask, removeTask } = useProject();
+  const { project, tasks, members, setTaskStatus, reassignTask, claimTask, removeTask } = useProject();
+  const { session } = useAuth();
+  const { goToChat } = useNavigation();
+  const currentUserId = session?.user.id;
   const [helpOpen, setHelpOpen] = useState(false);
   const [editing, setEditing] = useState(false);
   const [deleting, setDeleting] = useState(false);
+  const [claiming, setClaiming] = useState(false);
+  const [claimError, setClaimError] = useState<string | null>(null);
+  const [sharing, setSharing] = useState(false);
+  const [shared, setShared] = useState(false);
+  const [shareError, setShareError] = useState<string | null>(null);
   const today = useMemo(() => new Date(), []);
 
   const task = tasks.find((t) => t.id === taskId);
@@ -48,6 +60,8 @@ export function TaskDetailModal({ taskId, onClose }: Props) {
 
   function close() {
     setHelpOpen(false);
+    setShared(false);
+    setShareError(null);
     onClose();
   }
 
@@ -56,6 +70,37 @@ export function TaskDetailModal({ taskId, onClose }: Props) {
     setDeleting(false);
     removeTask(task.id);
     close();
+  }
+
+  async function handleClaim() {
+    if (!task || claiming || !currentUserId) return;
+    setClaiming(true);
+    setClaimError(null);
+    const result = await claimTask(task.id);
+    setClaiming(false);
+    if (result.error) {
+      setClaimError(result.error);
+    } else {
+      onClaimed?.({ ...task, assigneeId: currentUserId });
+    }
+  }
+
+  async function handleShare() {
+    if (!task || sharing || !currentUserId) return;
+    setSharing(true);
+    setShareError(null);
+    try {
+      await shareTask(project.id, currentUserId, task.id);
+      setShared(true);
+      setSharing(false);
+      // Sharing is only useful if you land where it landed — jump straight
+      // into the conversation instead of leaving the user to find it.
+      close();
+      goToChat();
+    } catch (err) {
+      setShareError(err instanceof Error ? err.message : 'Could not share this task.');
+      setSharing(false);
+    }
   }
 
   if (!task) {
@@ -182,29 +227,90 @@ export function TaskDetailModal({ taskId, onClose }: Props) {
             </View>
           ) : null}
 
+          {task.assigneeId === null && currentUserId ? (
+            <>
+              <Pressable
+                onPress={handleClaim}
+                disabled={claiming}
+                style={[styles.claimButton, claiming && styles.claimButtonDisabled]}
+                accessibilityRole="button"
+                accessibilityLabel={`Claim ${task.title}`}
+              >
+                <Icon name="check" size={15} color={colors.purple} strokeWidth={2.4} />
+                <Text style={[type.button, styles.claimButtonText]}>
+                  {claiming ? 'Claiming…' : 'Claim this task'}
+                </Text>
+              </Pressable>
+              {claimError ? (
+                <View style={styles.claimErrorBox}>
+                  <Icon name="exclamation" size={16} color={colors.redText} strokeWidth={2.2} />
+                  <Text style={[type.caption, styles.claimErrorText]}>{claimError}</Text>
+                </View>
+              ) : null}
+            </>
+          ) : null}
+
           <View style={styles.assignSection}>
             <Text style={[type.metadata, styles.eyebrow]}>ASSIGNED TO</Text>
             <View style={styles.assignRow}>
-              {TEAM_ORDER.map((id) => (
+              <Pressable
+                onPress={() => reassignTask(task.id, null)}
+                hitSlop={4}
+                accessibilityRole="button"
+                accessibilityLabel="Unassign"
+                style={styles.assignOption}
+              >
+                <UnclaimedAvatar size={40} borderColor={task.assigneeId === null ? colors.purple : undefined} />
+                <Text
+                  style={[type.tinyLabel, task.assigneeId === null ? styles.assignNameActive : styles.muted]}
+                  numberOfLines={1}
+                >
+                  Unclaimed
+                </Text>
+              </Pressable>
+              {members.map((member) => (
                 <Pressable
-                  key={id}
-                  onPress={() => reassignTask(task.id, id)}
+                  key={member.id}
+                  onPress={() => reassignTask(task.id, member.id)}
                   hitSlop={4}
                   accessibilityRole="button"
-                  accessibilityLabel={`Assign to ${TEAM[id].name}`}
+                  accessibilityLabel={`Assign to ${member.name}`}
                   style={styles.assignOption}
                 >
-                  <Avatar {...TEAM[id]} size={40} borderColor={id === task.assigneeId ? colors.purple : colors.surface} />
+                  <Avatar
+                    {...member}
+                    size={40}
+                    borderColor={member.id === task.assigneeId ? colors.purple : colors.surface}
+                  />
                   <Text
-                    style={[type.tinyLabel, id === task.assigneeId ? styles.assignNameActive : styles.muted]}
+                    style={[type.tinyLabel, member.id === task.assigneeId ? styles.assignNameActive : styles.muted]}
                     numberOfLines={1}
                   >
-                    {TEAM[id].name}
+                    {member.name}
                   </Text>
                 </Pressable>
               ))}
             </View>
           </View>
+
+          <Pressable
+            onPress={handleShare}
+            disabled={sharing}
+            style={styles.shareToChat}
+            accessibilityRole="button"
+            accessibilityLabel={`Share ${task.title} to chat`}
+          >
+            <Icon name="chat" size={15} color={colors.muted} strokeWidth={1.8} />
+            <Text style={[type.button, styles.shareToChatText]}>
+              {sharing ? 'Sharing…' : shared ? 'Shared to chat' : 'Share to chat'}
+            </Text>
+          </Pressable>
+          {shareError ? (
+            <View style={styles.claimErrorBox}>
+              <Icon name="exclamation" size={16} color={colors.redText} strokeWidth={2.2} />
+              <Text style={[type.caption, styles.claimErrorText]}>{shareError}</Text>
+            </View>
+          ) : null}
 
           <Pressable
             onPress={() => setDeleting(true)}
@@ -327,6 +433,36 @@ const styles = StyleSheet.create({
     marginTop: 6,
     marginBottom: 12,
   },
+  claimButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 6,
+    height: 48,
+    borderRadius: 24,
+    borderWidth: 1.5,
+    borderColor: colors.purple,
+    marginBottom: 8,
+  },
+  claimButtonDisabled: {
+    opacity: 0.5,
+  },
+  claimButtonText: {
+    color: colors.purple,
+  },
+  claimErrorBox: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    gap: 8,
+    backgroundColor: colors.redSoft,
+    borderRadius: 12,
+    padding: 12,
+    marginBottom: 8,
+  },
+  claimErrorText: {
+    flex: 1,
+    color: colors.redText,
+  },
   guidanceBox: {
     padding: 14,
     borderRadius: 14,
@@ -366,6 +502,20 @@ const styles = StyleSheet.create({
   },
   assignNameActive: {
     color: colors.purple,
+  },
+  shareToChat: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 6,
+    height: 44,
+    borderRadius: 22,
+    borderWidth: 1.5,
+    borderColor: colors.border,
+    marginTop: 8,
+  },
+  shareToChatText: {
+    color: colors.muted,
   },
   deleteLink: {
     alignSelf: 'center',

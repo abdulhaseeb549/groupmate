@@ -4,7 +4,7 @@ import { Priority, Task, TaskStatus } from '../data/tasks';
 import { Requirement } from '../data/requirements';
 import { TaskRequirement } from '../data/taskRequirements';
 import { TaskDependency } from '../data/taskDependencies';
-import { TEAM_ORDER, TeamId } from '../data/team';
+import { Member } from '../data/member';
 
 type ProjectRow = {
   id: string;
@@ -12,14 +12,15 @@ type ProjectRow = {
   team: string;
   course: string;
   due_date: string;
-  member_hours_per_day: Partial<Record<TeamId, number>> | null;
+  member_hours_per_day: Record<string, number> | null;
+  invite_code: string;
 };
 
 type TaskRow = {
   id: string;
   title: string;
   section_ref: string;
-  assignee_id: string;
+  assignee_id: string | null;
   status: TaskStatus;
   completed_at: string | null;
   priority: Priority;
@@ -46,6 +47,19 @@ type TaskDependencyRow = {
   depends_on_task_id: string;
 };
 
+type MemberRow = {
+  user_id: string;
+  role: 'owner' | 'member';
+};
+
+type ProfileRow = {
+  id: string;
+  full_name: string;
+  initials: string;
+  avatar_bg: string;
+  avatar_fg: string;
+};
+
 export type ProjectData = {
   /** Null only if a signed-in user somehow has no seeded project yet — see the migration's seed_demo_project(). */
   project: Project | null;
@@ -53,28 +67,21 @@ export type ProjectData = {
   requirements: Requirement[];
   taskRequirements: TaskRequirement[];
   taskDependencies: TaskDependency[];
+  members: Member[];
 };
 
-const DEFAULT_HOURS_PER_DAY = 2;
-
 function toProject(row: ProjectRow): Project {
-  // Defensive per-member fallback: a project row from before this column
-  // existed, or a member somehow missing a key, still gets a sane default
-  // rather than the scheduler treating them as having zero capacity.
-  const memberHoursPerDay = TEAM_ORDER.reduce(
-    (acc, id) => {
-      acc[id] = row.member_hours_per_day?.[id] ?? DEFAULT_HOURS_PER_DAY;
-      return acc;
-    },
-    {} as Record<TeamId, number>
-  );
   return {
     id: row.id,
     name: row.name,
     team: row.team,
     course: row.course,
     dueDate: row.due_date,
-    memberHoursPerDay,
+    // Every read site falls back to a default on its own when a given
+    // member has no entry yet, so this is passed through as-is rather than
+    // pre-filled against a fixed roster that no longer exists.
+    memberHoursPerDay: row.member_hours_per_day ?? {},
+    inviteCode: row.invite_code,
   };
 }
 
@@ -83,9 +90,7 @@ function toTask(row: TaskRow): Task {
     id: row.id,
     title: row.title,
     sectionRef: row.section_ref,
-    // A data/team.ts TeamId — safe to assume, since only the seed function
-    // (controlled by us) writes this column until teammates are real accounts.
-    assigneeId: row.assignee_id as TeamId,
+    assigneeId: row.assignee_id,
     status: row.status,
     completedAt: row.completed_at ?? undefined,
     priority: row.priority,
@@ -103,19 +108,33 @@ function toRequirement(row: RequirementRow): Requirement {
 }
 
 /** Everything Home/Projects need for the signed-in user's one project. */
-export async function fetchProjectData(ownerId: string): Promise<ProjectData> {
+export async function fetchProjectData(userId: string): Promise<ProjectData> {
+  // Looked up via project_members, not projects.owner_id: since migration
+  // 0011, a user can be a member of a project they didn't create (joined
+  // via invite code) and owns no project row at all — owner_id would find
+  // nothing for them.
+  const { data: membershipRow, error: membershipError } = await supabase
+    .from('project_members')
+    .select('project_id')
+    .eq('user_id', userId)
+    .limit(1)
+    .maybeSingle();
+  if (membershipError) throw membershipError;
+  if (!membershipRow) {
+    return { project: null, tasks: [], requirements: [], taskRequirements: [], taskDependencies: [], members: [] };
+  }
+
   const { data: projectRow, error: projectError } = await supabase
     .from('projects')
-    .select('id, name, team, course, due_date, member_hours_per_day')
-    .eq('owner_id', ownerId)
-    .limit(1)
+    .select('id, name, team, course, due_date, member_hours_per_day, invite_code')
+    .eq('id', membershipRow.project_id)
     .maybeSingle();
   if (projectError) throw projectError;
   if (!projectRow) {
-    return { project: null, tasks: [], requirements: [], taskRequirements: [], taskDependencies: [] };
+    return { project: null, tasks: [], requirements: [], taskRequirements: [], taskDependencies: [], members: [] };
   }
 
-  const [taskResult, requirementResult] = await Promise.all([
+  const [taskResult, requirementResult, memberResult] = await Promise.all([
     supabase
       .from('tasks')
       .select(
@@ -124,24 +143,60 @@ export async function fetchProjectData(ownerId: string): Promise<ProjectData> {
       .eq('project_id', projectRow.id)
       .order('position'),
     supabase.from('requirements').select('id, label').eq('project_id', projectRow.id).order('position'),
+    supabase.from('project_members').select('user_id, role').eq('project_id', projectRow.id).order('joined_at'),
   ]);
   if (taskResult.error) throw taskResult.error;
   if (requirementResult.error) throw requirementResult.error;
+  if (memberResult.error) throw memberResult.error;
 
   const taskRows = (taskResult.data ?? []) as TaskRow[];
   const taskIds = taskRows.map((t) => t.id);
+  const memberRows = (memberResult.data ?? []) as MemberRow[];
 
-  const [{ data: linkRows, error: linkError }, { data: dependencyRows, error: dependencyError }] = taskIds.length
-    ? await Promise.all([
-        supabase.from('task_requirements').select('task_id, requirement_id').in('task_id', taskIds),
-        supabase.from('task_dependencies').select('task_id, depends_on_task_id').in('task_id', taskIds),
-      ])
-    : [
-        { data: [] as TaskRequirementRow[], error: null },
-        { data: [] as TaskDependencyRow[], error: null },
-      ];
+  // project_members.user_id and profiles.id are parallel FKs to auth.users,
+  // not to each other, so PostgREST can't embed profiles off project_members
+  // in one query — fetched separately and joined here, same as
+  // task_requirements/task_dependencies below.
+  const [
+    { data: linkRows, error: linkError },
+    { data: dependencyRows, error: dependencyError },
+    { data: profileRows, error: profileError },
+  ] = await Promise.all([
+    taskIds.length
+      ? supabase.from('task_requirements').select('task_id, requirement_id').in('task_id', taskIds)
+      : Promise.resolve({ data: [] as TaskRequirementRow[], error: null }),
+    taskIds.length
+      ? supabase.from('task_dependencies').select('task_id, depends_on_task_id').in('task_id', taskIds)
+      : Promise.resolve({ data: [] as TaskDependencyRow[], error: null }),
+    memberRows.length
+      ? supabase
+          .from('profiles')
+          .select('id, full_name, initials, avatar_bg, avatar_fg')
+          .in(
+            'id',
+            memberRows.map((m) => m.user_id)
+          )
+      : Promise.resolve({ data: [] as ProfileRow[], error: null }),
+  ]);
   if (linkError) throw linkError;
   if (dependencyError) throw dependencyError;
+  if (profileError) throw profileError;
+
+  const profileById = new Map((profileRows ?? []).map((p) => [p.id, p as ProfileRow]));
+  const members: Member[] = memberRows
+    .map((m) => {
+      const profile = profileById.get(m.user_id);
+      if (!profile) return null;
+      return {
+        id: profile.id,
+        initials: profile.initials,
+        name: profile.full_name,
+        bg: profile.avatar_bg,
+        fg: profile.avatar_fg,
+        role: m.role,
+      };
+    })
+    .filter((m): m is Member => m !== null);
 
   return {
     project: toProject(projectRow),
@@ -152,6 +207,7 @@ export async function fetchProjectData(ownerId: string): Promise<ProjectData> {
       taskId: d.task_id,
       dependsOnTaskId: d.depends_on_task_id,
     })),
+    members,
   };
 }
 
@@ -164,14 +220,14 @@ export async function persistTaskStatus(
   if (error) throw error;
 }
 
-export async function persistTaskAssignee(taskId: string, assigneeId: TeamId): Promise<void> {
+export async function persistTaskAssignee(taskId: string, assigneeId: string | null): Promise<void> {
   const { error } = await supabase.from('tasks').update({ assignee_id: assigneeId }).eq('id', taskId);
   if (error) throw error;
 }
 
 export async function persistMemberHoursPerDay(
   projectId: string,
-  memberHoursPerDay: Record<TeamId, number>
+  memberHoursPerDay: Record<string, number>
 ): Promise<void> {
   const { error } = await supabase
     .from('projects')
@@ -183,7 +239,7 @@ export async function persistMemberHoursPerDay(
 export type NewTaskInput = {
   title: string;
   sectionRef: string;
-  assigneeId: TeamId;
+  assigneeId: string | null;
   priority: Priority;
   effortHours: number;
   dueLabel?: string;
@@ -262,4 +318,80 @@ export async function updateRequirementLabel(requirementId: string, label: strin
 export async function updateProjectDueDate(projectId: string, dueDate: string): Promise<void> {
   const { error } = await supabase.from('projects').update({ due_date: dueDate }).eq('id', projectId);
   if (error) throw error;
+}
+
+/** Invalidates the project's current invite code and returns the new one — anyone still holding the old code can no longer use it to join. */
+export async function regenerateInviteCode(projectId: string): Promise<string> {
+  const { data, error } = await supabase.rpc('regenerate_invite_code', { target_project_id: projectId });
+  if (error) throw error;
+  return data as string;
+}
+
+/**
+ * Joins the signed-in user to a project by its invite code — the
+ * onboarding screen's "Join a project" flow, for an already-authenticated
+ * user (see migration 0016's join_project_by_code, the signed-in-user
+ * counterpart to handle_new_user's signup-time join branch). Throws with
+ * the RPC's own message on a bad code.
+ */
+export async function joinProjectByCode(code: string): Promise<{ projectName: string }> {
+  const { data, error } = await supabase.rpc('join_project_by_code', { code });
+  if (error) throw error;
+  const projectName = data?.[0]?.project_name as string | undefined;
+  if (!projectName) throw new Error('No project uses that code.');
+  return { projectName };
+}
+
+export type TaskChangeEvent = { type: 'upsert'; task: Task } | { type: 'delete'; taskId: string };
+
+/**
+ * Live task updates from other clients — keeps a shared project's task
+ * list in sync (someone else claiming or editing a task) without a manual
+ * refetch. Requires `tasks` to be in the supabase_realtime publication
+ * (migration 0012). Returns an unsubscribe function. Echoes this client's
+ * own writes back too (Realtime broadcasts every change to every
+ * subscriber, including the one that made it) — harmless, since merging
+ * the server row back in is idempotent.
+ */
+export function subscribeToTaskChanges(projectId: string, onChange: (event: TaskChangeEvent) => void): () => void {
+  const channel = supabase
+    .channel(`project:${projectId}:tasks`)
+    .on(
+      'postgres_changes',
+      { event: '*', schema: 'public', table: 'tasks', filter: `project_id=eq.${projectId}` },
+      (payload) => {
+        if (payload.eventType === 'DELETE') {
+          onChange({ type: 'delete', taskId: (payload.old as { id: string }).id });
+          return;
+        }
+        onChange({ type: 'upsert', task: toTask(payload.new as TaskRow) });
+      }
+    )
+    .subscribe();
+  return () => {
+    void supabase.removeChannel(channel);
+  };
+}
+
+export type ClaimResult = 'claimed' | 'already_claimed';
+
+/**
+ * Atomic compare-and-swap: only succeeds if the task is still unclaimed at
+ * the moment Postgres applies the UPDATE. .select() (not .single()) turns
+ * this into a row-count check instead of an error — PostgREST returns
+ * whatever rows the UPDATE actually matched, so an empty array is real
+ * information ("someone else already got there"), not a missing-row error.
+ * This is what makes claiming safe under a genuine race: two simultaneous
+ * claims can't both match the same WHERE, Postgres's row locking serializes
+ * them, and only the first sees a matched row.
+ */
+export async function claimTask(taskId: string, userId: string): Promise<ClaimResult> {
+  const { data, error } = await supabase
+    .from('tasks')
+    .update({ assignee_id: userId })
+    .eq('id', taskId)
+    .is('assignee_id', null)
+    .select('id');
+  if (error) throw error;
+  return (data?.length ?? 0) > 0 ? 'claimed' : 'already_claimed';
 }

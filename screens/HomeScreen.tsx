@@ -9,8 +9,8 @@ import { SectionHeader } from '../components/SectionHeader';
 import { AttentionRow } from '../components/home/AttentionRow';
 import { ProjectOverviewCard } from '../components/home/ProjectOverviewCard';
 import { TaskRow } from '../components/home/TaskRow';
+import { WeekStrip } from '../components/home/WeekStrip';
 import { Priority, Task } from '../data/tasks';
-import { CURRENT_USER_ID, TEAM, TEAM_ORDER } from '../data/team';
 import { RequirementState } from '../state/projectState';
 import { useAuth } from '../state/AuthProvider';
 import { useProject } from '../state/ProjectRepository';
@@ -32,8 +32,9 @@ type Props = {
 
 export function HomeScreen({ activeTab, onSelectTab }: Props) {
   const insets = useSafeAreaInsets();
-  const { project, tasks, projectState, setTaskStatus } = useProject();
+  const { project, tasks, projectState, members, setTaskStatus } = useProject();
   const { session, profile, signOut } = useAuth();
+  const currentUserId = session?.user.id;
   const [showAllAttention, setShowAllAttention] = useState(false);
   const [signOutVisible, setSignOutVisible] = useState(false);
   const [updateCheck, setUpdateCheck] = useState<UpdateCheckResult | null>(null);
@@ -59,17 +60,16 @@ export function HomeScreen({ activeTab, onSelectTab }: Props) {
   }
 
   const myOpenTasks = tasks
-    .filter((t) => t.assigneeId === CURRENT_USER_ID && t.status !== 'completed')
+    .filter((t) => t.assigneeId === currentUserId && t.status !== 'completed')
     .sort((a, b) => urgency(a) - urgency(b));
   const nextTasks = myOpenTasks.slice(0, NEXT_LIMIT);
 
   const unmet = projectState.requirementStates
     .filter((r) => r.status !== 'met')
-    .sort((a, b) => risk(a) - risk(b) || b.blockingTasks.length - a.blockingTasks.length);
+    .sort((a, b) => risk(a, currentUserId) - risk(b, currentUserId) || b.blockingTasks.length - a.blockingTasks.length);
   const attention = showAllAttention ? unmet : unmet.slice(0, ATTENTION_PREVIEW);
   const hiddenAttention = unmet.length - ATTENTION_PREVIEW;
 
-  const members = TEAM_ORDER.map((id) => TEAM[id]);
   const goToProjects = () => onSelectTab('projects');
 
   function toggleAttention() {
@@ -151,6 +151,8 @@ export function HomeScreen({ activeTab, onSelectTab }: Props) {
           onOpen={goToProjects}
         />
 
+        <WeekStrip today={today} />
+
         <View style={styles.section}>
           <SectionHeader title="Up next" actionLabel="See all" onAction={goToProjects} />
           <Card>
@@ -201,7 +203,7 @@ export function HomeScreen({ activeTab, onSelectTab }: Props) {
               {attention.map((state, i) => (
                 <View key={state.requirement.id}>
                   {i > 0 ? <CardDivider inset={ATTENTION_DIVIDER_INSET} /> : null}
-                  <AttentionRow state={state} onPress={goToProjects} />
+                  <AttentionRow state={state} currentUserId={currentUserId} onPress={goToProjects} />
                 </View>
               ))}
               {hiddenAttention > 0 ? (
@@ -280,8 +282,8 @@ function urgency(task: Task) {
 }
 
 // Untouched requirements before half-done ones, and your own before anyone else's.
-function risk(state: RequirementState) {
-  const onYou = state.blockingTasks.some((t) => t.assigneeId === CURRENT_USER_ID);
+function risk(state: RequirementState, currentUserId: string | undefined) {
+  const onYou = state.blockingTasks.some((t) => t.assigneeId === currentUserId);
   return (state.status === 'not_started' ? 0 : 2) + (onYou ? 0 : 1);
 }
 

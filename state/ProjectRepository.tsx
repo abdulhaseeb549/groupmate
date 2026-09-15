@@ -1,23 +1,27 @@
 import { createContext, ReactNode, useContext, useEffect, useMemo, useState } from 'react';
 import { ErrorScreen } from '../components/ErrorScreen';
 import { LoadingScreen } from '../components/LoadingScreen';
+import { Member } from '../data/member';
 import { Project } from '../data/project';
 import { Requirement } from '../data/requirements';
 import { Priority, Task, TaskStatus } from '../data/tasks';
 import { TaskRequirement } from '../data/taskRequirements';
 import { TaskDependency } from '../data/taskDependencies';
-import { TeamId } from '../data/team';
+import { OnboardingScreen } from '../screens/OnboardingScreen';
 import { useAuth } from './AuthProvider';
 import { deriveProjectState, ProjectState } from './projectState';
 import { computeSchedule, ProjectSchedule } from './projectSchedule';
 import {
+  claimTask as claimTaskQuery,
   createTask,
   deleteTask,
   fetchProjectData,
   persistMemberHoursPerDay,
   persistTaskAssignee,
   persistTaskStatus,
+  regenerateInviteCode,
   setTaskRequirementLinks,
+  subscribeToTaskChanges,
   updateProjectDueDate,
   updateRequirementLabel,
   updateTaskFields,
@@ -26,7 +30,7 @@ import {
 export type NewTaskFields = {
   title: string;
   sectionRef: string;
-  assigneeId: TeamId;
+  assigneeId: string | null;
   priority: Priority;
   effortHours: number;
   dueLabel?: string;
@@ -48,16 +52,21 @@ type ProjectRepository = {
   requirements: Requirement[];
   taskRequirements: TaskRequirement[];
   taskDependencies: TaskDependency[];
+  members: Member[];
+  membersById: Record<string, Member>;
   projectState: ProjectState;
   schedule: ProjectSchedule;
   setTaskStatus: (taskId: string, status: TaskStatus) => void;
-  reassignTask: (taskId: string, memberId: TeamId) => void;
-  updateMemberHoursPerDay: (memberId: TeamId, hoursPerDay: number) => void;
+  reassignTask: (taskId: string, memberId: string | null) => void;
+  /** Atomic first-claim-wins on an unclaimed task — distinct from reassignTask, which never checks capacity or current assignee. */
+  claimTask: (taskId: string) => Promise<{ error: string | null }>;
+  updateMemberHoursPerDay: (memberId: string, hoursPerDay: number) => void;
   addTask: (fields: NewTaskFields) => Promise<{ error: string | null }>;
   updateTask: (taskId: string, edits: TaskEdits) => Promise<{ error: string | null }>;
   removeTask: (taskId: string) => void;
   renameRequirement: (requirementId: string, label: string) => void;
   updateDueDate: (dueDate: string) => void;
+  regenerateInviteCode: () => Promise<{ error: string | null }>;
   /** Re-fetches from Supabase — used both by the error screen's retry and after replacing the project (e.g. from a new brief). */
   refetch: () => void;
 };
@@ -67,6 +76,7 @@ const ProjectContext = createContext<ProjectRepository | null>(null);
 type FetchState =
   | { status: 'loading' }
   | { status: 'error'; message: string }
+  | { status: 'no_project' }
   | {
       status: 'ready';
       project: Project;
@@ -74,6 +84,7 @@ type FetchState =
       requirements: Requirement[];
       taskRequirements: TaskRequirement[];
       taskDependencies: TaskDependency[];
+      members: Member[];
     };
 
 /**
@@ -97,10 +108,10 @@ export function ProjectProvider({ children }: { children: ReactNode }) {
       .then((data) => {
         if (cancelled) return;
         if (!data.project) {
-          // Shouldn't happen — the signup trigger seeds a project in the
-          // same transaction — but a stale account from before that
-          // migration existed could hit this.
-          setState({ status: 'error', message: "We couldn't find your project. Try signing out and back in." });
+          // The normal steady-state for a fresh signup with no invite code
+          // (see migration 0016) — signup no longer auto-seeds a project,
+          // so this is a real "nothing yet", not a broken account.
+          setState({ status: 'no_project' });
           return;
         }
         setState({
@@ -110,6 +121,7 @@ export function ProjectProvider({ children }: { children: ReactNode }) {
           requirements: data.requirements,
           taskRequirements: data.taskRequirements,
           taskDependencies: data.taskDependencies,
+          members: data.members,
         });
       })
       .catch((err: unknown) => {
@@ -131,6 +143,9 @@ export function ProjectProvider({ children }: { children: ReactNode }) {
   if (state.status === 'error') {
     return <ErrorScreen message={state.message} onRetry={refetch} />;
   }
+  if (state.status === 'no_project') {
+    return <OnboardingScreen onDone={refetch} />;
+  }
 
   return (
     <ProjectProviderReady
@@ -139,6 +154,7 @@ export function ProjectProvider({ children }: { children: ReactNode }) {
       requirements={state.requirements}
       taskRequirements={state.taskRequirements}
       taskDependencies={state.taskDependencies}
+      members={state.members}
       refetch={refetch}
     >
       {children}
@@ -152,6 +168,7 @@ function ProjectProviderReady({
   requirements: initialRequirements,
   taskRequirements: initialTaskRequirements,
   taskDependencies,
+  members,
   refetch,
   children,
 }: {
@@ -160,13 +177,38 @@ function ProjectProviderReady({
   requirements: Requirement[];
   taskRequirements: TaskRequirement[];
   taskDependencies: TaskDependency[];
+  members: Member[];
   refetch: () => void;
   children: ReactNode;
 }) {
+  const { session } = useAuth();
+  const userId = session?.user.id;
   const [tasks, setTasks] = useState<Task[]>(initialTasks);
   const [project, setProject] = useState<Project>(initialProject);
   const [requirements, setRequirements] = useState<Requirement[]>(initialRequirements);
   const [taskRequirements, setTaskRequirements] = useState<TaskRequirement[]>(initialTaskRequirements);
+
+  const membersById = useMemo(
+    () => Object.fromEntries(members.map((m) => [m.id, m])) as Record<string, Member>,
+    [members]
+  );
+
+  // Keeps `tasks` live across every screen (not just chat) when a
+  // teammate claims, reassigns, or edits a task elsewhere — without this,
+  // "someone claimed it" would only ever show up after a manual refetch.
+  useEffect(() => {
+    const unsubscribe = subscribeToTaskChanges(project.id, (event) => {
+      if (event.type === 'delete') {
+        setTasks((prev) => prev.filter((t) => t.id !== event.taskId));
+        return;
+      }
+      setTasks((prev) => {
+        const exists = prev.some((t) => t.id === event.task.id);
+        return exists ? prev.map((t) => (t.id === event.task.id ? event.task : t)) : [...prev, event.task];
+      });
+    });
+    return unsubscribe;
+  }, [project.id]);
 
   const projectState = useMemo(
     () => deriveProjectState(tasks, requirements, taskRequirements, project, new Date()),
@@ -187,12 +229,33 @@ function ProjectProviderReady({
     void persistTaskStatus(taskId, status, completedAt);
   }
 
-  function reassignTask(taskId: string, memberId: TeamId) {
+  function reassignTask(taskId: string, memberId: string | null) {
     setTasks((prev) => prev.map((t) => (t.id === taskId ? { ...t, assigneeId: memberId } : t)));
     void persistTaskAssignee(taskId, memberId);
   }
 
-  function updateMemberHoursPerDay(memberId: TeamId, hoursPerDay: number) {
+  // A genuinely different shape from every setter above: this can lose a
+  // real race (someone else claims the same task first), and that outcome
+  // is 200-with-zero-rows, not an exception — so it needs a three-way
+  // result instead of firing-and-forgetting an optimistic update.
+  async function claimTaskAction(taskId: string): Promise<{ error: string | null }> {
+    if (!userId) return { error: 'Not signed in.' };
+    try {
+      const result = await claimTaskQuery(taskId, userId);
+      if (result === 'already_claimed') {
+        // Resync this task from the server so the UI shows who actually
+        // has it now, instead of leaving a stale "still open" state.
+        refetch();
+        return { error: 'Someone already claimed this task.' };
+      }
+      setTasks((prev) => prev.map((t) => (t.id === taskId ? { ...t, assigneeId: userId } : t)));
+      return { error: null };
+    } catch (err) {
+      return { error: err instanceof Error ? err.message : 'Could not claim this task.' };
+    }
+  }
+
+  function updateMemberHoursPerDay(memberId: string, hoursPerDay: number) {
     const next = { ...project.memberHoursPerDay, [memberId]: hoursPerDay };
     setProject((prev) => ({ ...prev, memberHoursPerDay: next }));
     void persistMemberHoursPerDay(project.id, next);
@@ -276,22 +339,38 @@ function ProjectProviderReady({
     void updateProjectDueDate(project.id, dueDate);
   }
 
+  // Awaited, not optimistic: the new code is server-generated, there's
+  // nothing to show locally until the RPC actually returns it.
+  async function regenerateInviteCodeAction(): Promise<{ error: string | null }> {
+    try {
+      const inviteCode = await regenerateInviteCode(project.id);
+      setProject((prev) => ({ ...prev, inviteCode }));
+      return { error: null };
+    } catch (err) {
+      return { error: err instanceof Error ? err.message : 'Could not generate a new code.' };
+    }
+  }
+
   const value: ProjectRepository = {
     project,
     tasks,
     requirements,
     taskRequirements,
     taskDependencies,
+    members,
+    membersById,
     projectState,
     schedule,
     setTaskStatus,
     reassignTask,
+    claimTask: claimTaskAction,
     updateMemberHoursPerDay,
     addTask,
     updateTask,
     removeTask,
     renameRequirement,
     updateDueDate,
+    regenerateInviteCode: regenerateInviteCodeAction,
     refetch,
   };
 

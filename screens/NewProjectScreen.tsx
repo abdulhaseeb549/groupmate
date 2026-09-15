@@ -15,8 +15,6 @@ import { AttachRow } from '../components/AttachRow';
 import { Card, CardDivider } from '../components/Card';
 import { ConfirmDialog } from '../components/ConfirmDialog';
 import { Icon } from '../components/Icon';
-import { TaskDivision } from '../components/TaskDivision';
-import { TEAM, TEAM_ORDER } from '../data/team';
 import { commitExtractedProject, ExtractedProjectData, parseBrief } from '../state/briefParsing';
 import { useNavigation } from '../state/NavigationProvider';
 import { useProject } from '../state/ProjectRepository';
@@ -31,7 +29,11 @@ type Phase = 'input' | 'loading' | 'review' | 'committing';
 export function NewProjectScreen() {
   const insets = useSafeAreaInsets();
   const { closeNewProject } = useNavigation();
-  const { project, refetch } = useProject();
+  const { project, members, refetch } = useProject();
+  // Replacing the brief deletes the whole project and everything in it —
+  // fine when it's still just its owner, but it would cascade-delete real
+  // teammates' access the moment anyone else has joined.
+  const isShared = members.length > 1;
   const [phase, setPhase] = useState<Phase>('input');
   const [briefText, setBriefText] = useState('');
   const [briefFile, setBriefFile] = useState<PdfFileInput | null>(null);
@@ -117,7 +119,15 @@ export function NewProjectScreen() {
           </Pressable>
         </View>
 
-        {(phase === 'review' || phase === 'committing') && extracted ? (
+        {isShared ? (
+          <View style={styles.intro}>
+            <Text style={[type.pageTitle, styles.ink]}>This project has teammates now.</Text>
+            <Text style={[type.body, styles.muted, styles.subtitle]}>
+              Replacing the brief would delete {project.name} — tasks, requirements, and everyone's access to it —
+              for every member, not just you. Add or edit tasks from the Projects tab instead.
+            </Text>
+          </View>
+        ) : (phase === 'review' || phase === 'committing') && extracted ? (
           <ReviewView
             extracted={extracted}
             project={project}
@@ -212,7 +222,7 @@ export function NewProjectScreen() {
   );
 }
 
-function ReviewView({
+export function ReviewView({
   extracted,
   project,
   today,
@@ -229,17 +239,6 @@ function ReviewView({
   onStartOver: () => void;
   onBuildPlan: () => void;
 }) {
-  const assignees = TEAM_ORDER.map((id) => {
-    const member = TEAM[id];
-    return {
-      initials: member.initials,
-      name: member.name,
-      bg: member.bg,
-      fg: member.fg,
-      tasks: extracted.tasks.filter((t) => t.assignee === id).map((t) => ({ title: t.title })),
-    };
-  });
-
   return (
     <View style={styles.review}>
       <View style={styles.intro}>
@@ -272,9 +271,25 @@ function ReviewView({
       </View>
 
       <View style={styles.section}>
-        <Text style={[type.button, styles.ink]}>How the work divides</Text>
-        <Text style={[type.caption, styles.muted]}>{extracted.tasks.length} tasks across your team of 4</Text>
-        <TaskDivision people={assignees} />
+        <Text style={[type.button, styles.ink]}>
+          {extracted.tasks.length} {extracted.tasks.length === 1 ? 'task' : 'tasks'}
+        </Text>
+        <Text style={[type.caption, styles.muted]}>Unclaimed until someone on your team picks it up</Text>
+        <Card>
+          {extracted.tasks.map((t, i) => (
+            <View key={i}>
+              {i > 0 ? <CardDivider inset={16 + 16 + 10} /> : null}
+              <View style={styles.requirementRow}>
+                <View style={styles.requirementIcon}>
+                  <Icon name={contentIcon(t.title)} size={16} color={colors.muted} strokeWidth={1.8} />
+                </View>
+                <Text style={[type.body, styles.ink, styles.requirementLabel]} numberOfLines={2}>
+                  {t.title}
+                </Text>
+              </View>
+            </View>
+          ))}
+        </Card>
       </View>
 
       {error ? (

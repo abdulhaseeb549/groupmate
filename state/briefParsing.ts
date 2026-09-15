@@ -1,12 +1,10 @@
 import { supabase } from '../lib/supabase';
 import { Priority } from '../data/tasks';
-import { TeamId } from '../data/team';
 import { PdfFileInput } from '../utils/pdfPicker';
 
 export type ExtractedTask = {
   title: string;
   sectionRef: string;
-  assignee: TeamId;
   priority: Priority;
   requirementLabels: string[];
   metadata: string | null;
@@ -87,6 +85,14 @@ export async function commitExtractedProject(extracted: ExtractedProjectData): P
       .single();
     if (projectError) throw projectError;
 
+    // Every read in this app (fetchProjectData) looks the project up
+    // through project_members, not projects.owner_id — without this row
+    // the creator can't see the project they just made.
+    const { error: memberError } = await supabase
+      .from('project_members')
+      .insert({ project_id: project.id, user_id: user.id, role: 'owner' });
+    if (memberError) throw memberError;
+
     const requirementIdByLabel = new Map<string, string>();
     for (const [i, requirement] of extracted.requirements.entries()) {
       const { data: row, error } = await supabase
@@ -106,7 +112,9 @@ export async function commitExtractedProject(extracted: ExtractedProjectData): P
           project_id: project.id,
           title: task.title,
           section_ref: task.sectionRef,
-          assignee_id: task.assignee,
+          // AI-generated tasks land unclaimed — teammates claim them (see
+          // migration 0010's Member model).
+          assignee_id: null,
           priority: task.priority,
           metadata: task.metadata,
           guidance: task.guidance,

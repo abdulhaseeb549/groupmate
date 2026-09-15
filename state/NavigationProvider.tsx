@@ -13,6 +13,12 @@ type NavigationState = {
   studySetupRequested: boolean;
   goToNewQuiz: () => void;
   clearStudySetupRequest: () => void;
+  /** Set by "Share to chat" (TaskDetailModal) — ChatTab reads this to jump
+   *  straight into the group conversation instead of the chat list, then
+   *  clears it. Same one-shot-flag shape as studySetupRequested. */
+  chatOpenRequested: boolean;
+  goToChat: () => void;
+  clearChatOpenRequest: () => void;
 };
 
 const NavigationContext = createContext<NavigationState | null>(null);
@@ -28,10 +34,16 @@ export function NavigationProvider({ children }: { children: ReactNode }) {
   const [activeTab, setActiveTab] = useState<NavTab>('home');
   const [newProjectOpen, setNewProjectOpen] = useState(false);
   const [studySetupRequested, setStudySetupRequested] = useState(false);
+  const [chatOpenRequested, setChatOpenRequested] = useState(false);
 
   function goToNewQuiz() {
     setActiveTab('study');
     setStudySetupRequested(true);
+  }
+
+  function goToChat() {
+    setActiveTab('chat');
+    setChatOpenRequested(true);
   }
 
   return (
@@ -45,6 +57,9 @@ export function NavigationProvider({ children }: { children: ReactNode }) {
         studySetupRequested,
         goToNewQuiz,
         clearStudySetupRequest: () => setStudySetupRequested(false),
+        chatOpenRequested,
+        goToChat,
+        clearChatOpenRequest: () => setChatOpenRequested(false),
       }}
     >
       {children}
