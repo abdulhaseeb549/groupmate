@@ -67,8 +67,10 @@ export function computeMemberLoad(
  * through it, and handing that off mid-stream is disruptive in a way a
  * lightweight suggestion shouldn't casually recommend. A move only
  * surfaces if it demonstrably helps: the overloaded person's load drops,
- * the destination doesn't end up worse off than the source was, and the
- * project's overall schedule risk doesn't get worse.
+ * the destination has real room and doesn't end up over capacity itself
+ * (moving someone's overload onto a previously-fine teammate isn't a fix,
+ * it's just relocating the problem), and the project's overall schedule
+ * risk doesn't get worse.
  */
 export function generateRebalanceSuggestions(
   tasks: Task[],
@@ -107,11 +109,12 @@ export function generateRebalanceSuggestions(
         const fromBefore = currentLoad[fromMember].loadPct;
 
         // Only a real improvement: the overloaded person actually drops, the
-        // destination doesn't end up more strained than the source started
-        // at, and the move doesn't newly put the whole project at risk.
+        // destination has room and stays at or under capacity (never hand an
+        // overload to someone by pushing them over 100% themselves), and the
+        // move doesn't newly put the whole project at risk.
         const improves =
           fromAfter < fromBefore - 0.02 &&
-          toAfter <= Math.max(fromBefore, 1) &&
+          toAfter <= 1 &&
           !(hypotheticalSchedule.projectAtRisk && !currentSchedule.projectAtRisk);
         if (!improves) continue;
 
