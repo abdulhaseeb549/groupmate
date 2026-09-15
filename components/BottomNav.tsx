@@ -6,16 +6,15 @@ import { CreateMenu } from './CreateMenu';
 import { Icon, IconName } from './Icon';
 import { colors, gradients, layout, purpleHalo, type } from '../theme';
 
-export type NavTab = 'home' | 'projects' | 'chat' | 'study';
+export type NavTab = 'home' | 'projects' | 'study';
 
 const TABS: Record<NavTab, { label: string; icon: IconName }> = {
   home: { label: 'Home', icon: 'home' },
   projects: { label: 'Projects', icon: 'folder' },
-  chat: { label: 'Chat', icon: 'chat' },
   study: { label: 'Study', icon: 'book' },
 };
 
-const ORDER: NavTab[] = ['home', 'projects', 'chat', 'study'];
+const ORDER: NavTab[] = ['home', 'projects', 'study'];
 
 function Tab({ id, active, onPress }: { id: NavTab; active: boolean; onPress: () => void }) {
   // Muted rather than faint when inactive: faint fails 4.5:1 as label text.
@@ -44,15 +43,22 @@ export function BottomNav({
   active: NavTab;
   onSelect: (tab: NavTab) => void;
 }) {
-  const [left, right] = [ORDER.slice(0, 2), ORDER.slice(2)];
+  // Split as evenly as ORDER's length allows — each side is a flex:1 zone
+  // (not just "however many tabs happen to be there"), so the create
+  // button stays centered even when the two sides hold an uneven number
+  // of tabs, like the current 2-and-1.
+  const mid = Math.ceil(ORDER.length / 2);
+  const [left, right] = [ORDER.slice(0, mid), ORDER.slice(mid)];
   const insets = useSafeAreaInsets();
   const [createOpen, setCreateOpen] = useState(false);
 
   return (
     <View style={[styles.bar, { bottom: Math.max(insets.bottom, 12) + 16 }]}>
-      {left.map((id) => (
-        <Tab key={id} id={id} active={active === id} onPress={() => onSelect(id)} />
-      ))}
+      <View style={styles.side}>
+        {left.map((id) => (
+          <Tab key={id} id={id} active={active === id} onPress={() => onSelect(id)} />
+        ))}
+      </View>
 
       <Pressable
         onPress={() => setCreateOpen(true)}
@@ -71,9 +77,11 @@ export function BottomNav({
         </LinearGradient>
       </Pressable>
 
-      {right.map((id) => (
-        <Tab key={id} id={id} active={active === id} onPress={() => onSelect(id)} />
-      ))}
+      <View style={[styles.side, styles.sideRight]}>
+        {right.map((id) => (
+          <Tab key={id} id={id} active={active === id} onPress={() => onSelect(id)} />
+        ))}
+      </View>
 
       <CreateMenu visible={createOpen} onClose={() => setCreateOpen(false)} />
     </View>
@@ -97,6 +105,15 @@ const styles = StyleSheet.create({
     shadowRadius: 22,
     shadowOffset: { width: 0, height: 6 },
     elevation: 8,
+  },
+  side: {
+    flex: 1,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'flex-start',
+  },
+  sideRight: {
+    justifyContent: 'flex-end',
   },
   tab: {
     height: layout.navHeight,

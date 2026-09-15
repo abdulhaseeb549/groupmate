@@ -102,7 +102,7 @@ function toRequirement(row: RequirementRow): Requirement {
   return { id: row.id, label: row.label };
 }
 
-/** Everything Home/Projects/Chat need for the signed-in user's one project. */
+/** Everything Home/Projects need for the signed-in user's one project. */
 export async function fetchProjectData(ownerId: string): Promise<ProjectData> {
   const { data: projectRow, error: projectError } = await supabase
     .from('projects')
