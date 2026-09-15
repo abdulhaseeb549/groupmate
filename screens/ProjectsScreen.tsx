@@ -7,14 +7,23 @@ import { BottomNav, NavTab } from '../components/BottomNav';
 import { CapacityModal } from '../components/CapacityModal';
 import { Card } from '../components/Card';
 import { DistributionEditor } from '../components/DistributionEditor';
+import { DueDateModal } from '../components/DueDateModal';
 import { Icon } from '../components/Icon';
 import { ProjectTimeline } from '../components/projects/ProjectTimeline';
 import { RebalanceSuggestions } from '../components/RebalanceSuggestions';
+import { RequirementEditDialog } from '../components/RequirementEditDialog';
+import { Requirement } from '../data/requirements';
 import { CURRENT_USER_ID, TEAM, TEAM_ORDER } from '../data/team';
-import { ProjectHealth } from '../state/projectState';
+import { ProjectHealth, RequirementStatus } from '../state/projectState';
 import { useProject } from '../state/ProjectRepository';
 import { colors, gradients, layout, spacing, type } from '../theme';
 import { formatDueDate } from '../utils/dates';
+
+const REQUIREMENT_STATUS: Record<RequirementStatus, { label: string; bg: string; text: string }> = {
+  not_started: { label: 'Not started', bg: colors.surfaceMuted, text: colors.muted },
+  in_progress: { label: 'In progress', bg: colors.yellowSoft, text: colors.yellowText },
+  met: { label: 'Met', bg: colors.mint, text: colors.mintText },
+};
 
 type Props = {
   activeTab: NavTab;
@@ -34,6 +43,8 @@ export function ProjectsScreen({ activeTab, onSelectTab }: Props) {
   const { project, tasks, projectState, schedule } = useProject();
   const [filter, setFilter] = useState<(typeof FILTERS)[number]>('My tasks');
   const [capacityVisible, setCapacityVisible] = useState(false);
+  const [dueDateVisible, setDueDateVisible] = useState(false);
+  const [editingRequirement, setEditingRequirement] = useState<Requirement | null>(null);
   const members = filter === 'My tasks' ? [CURRENT_USER_ID] : TEAM_ORDER;
   const today = useMemo(() => new Date(), []);
 
@@ -58,9 +69,19 @@ export function ProjectsScreen({ activeTab, onSelectTab }: Props) {
       >
         <View style={styles.header}>
           <Text style={type.pageTitle}>{project.name}</Text>
-          <Text style={[type.body, { color: colors.muted }]}>
-            {project.team} · Due {formatDueDate(project.dueDate, today)}
-          </Text>
+          <View style={styles.dueRow}>
+            <Text style={[type.body, { color: colors.muted }]}>
+              {project.team} · Due {formatDueDate(project.dueDate, today)}
+            </Text>
+            <Pressable
+              onPress={() => setDueDateVisible(true)}
+              hitSlop={8}
+              accessibilityRole="button"
+              accessibilityLabel="Change due date"
+            >
+              <Text style={[type.button, styles.editHoursLink]}>Edit</Text>
+            </Pressable>
+          </View>
         </View>
 
         <View style={styles.statusCard}>
@@ -96,6 +117,32 @@ export function ProjectsScreen({ activeTab, onSelectTab }: Props) {
         <View style={styles.section}>
           <Text style={type.sectionHeading}>Timeline</Text>
           <ProjectTimeline tasks={tasks} schedule={schedule} dueDate={project.dueDate} today={today} />
+        </View>
+
+        <View style={styles.section}>
+          <Text style={type.sectionHeading}>Requirements</Text>
+          <Card>
+            {projectState.requirementStates.map((state, i) => {
+              const requirementStatus = REQUIREMENT_STATUS[state.status];
+              return (
+                <Pressable
+                  key={state.requirement.id}
+                  onPress={() => setEditingRequirement(state.requirement)}
+                  style={[styles.requirementRow, i > 0 && styles.requirementRowDivider]}
+                  accessibilityRole="button"
+                  accessibilityLabel={`Edit ${state.requirement.label}`}
+                >
+                  <Text style={[type.body, styles.requirementLabel]} numberOfLines={2}>
+                    {state.requirement.label}
+                  </Text>
+                  <View style={[styles.requirementPill, { backgroundColor: requirementStatus.bg }]}>
+                    <Text style={[type.badge, { color: requirementStatus.text }]}>{requirementStatus.label}</Text>
+                  </View>
+                  <Icon name="edit" size={14} color={colors.faint} strokeWidth={1.8} />
+                </Pressable>
+              );
+            })}
+          </Card>
         </View>
 
         <View style={styles.section}>
@@ -170,6 +217,8 @@ export function ProjectsScreen({ activeTab, onSelectTab }: Props) {
       <BottomNav active={activeTab} onSelect={onSelectTab} />
 
       <CapacityModal visible={capacityVisible} onClose={() => setCapacityVisible(false)} />
+      <DueDateModal visible={dueDateVisible} onClose={() => setDueDateVisible(false)} />
+      <RequirementEditDialog requirement={editingRequirement} onClose={() => setEditingRequirement(null)} />
     </View>
   );
 }
@@ -195,8 +244,36 @@ const styles = StyleSheet.create({
   header: {
     gap: 4,
   },
+  dueRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+  },
   section: {
     gap: 12,
+  },
+  requirementRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+    minHeight: 44,
+    paddingVertical: 12,
+    paddingHorizontal: 16,
+  },
+  requirementRowDivider: {
+    borderTopWidth: StyleSheet.hairlineWidth,
+    borderTopColor: colors.border,
+  },
+  requirementLabel: {
+    flex: 1,
+    color: colors.ink,
+  },
+  requirementPill: {
+    height: layout.pillHeight,
+    paddingHorizontal: 10,
+    borderRadius: layout.pillRadius,
+    alignItems: 'center',
+    justifyContent: 'center',
   },
   sectionHeaderRow: {
     flexDirection: 'row',
