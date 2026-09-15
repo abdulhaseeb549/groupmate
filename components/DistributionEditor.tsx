@@ -1,10 +1,14 @@
-import { useState } from 'react';
+import { useMemo, useState } from 'react';
 import { Pressable, StyleSheet, Text, View } from 'react-native';
-import Svg, { Path } from 'react-native-svg';
 import { Avatar } from './Avatar';
+import { TaskDetailModal } from './TaskDetailModal';
+import { TaskStatusDot } from './TaskStatusDot';
+import { Icon } from './Icon';
+import { Task } from '../data/tasks';
 import { TEAM, TEAM_ORDER, TeamId } from '../data/team';
 import { useProject } from '../state/ProjectRepository';
 import { colors, type } from '../theme';
+import { formatShortDate } from '../utils/dates';
 
 type Props = {
   /** Which people's groups to render — defaults to everyone. */
@@ -12,17 +16,13 @@ type Props = {
 };
 
 export function DistributionEditor({ members = TEAM_ORDER }: Props) {
-  const [openTaskId, setOpenTaskId] = useState<string | null>(null);
+  const [detailTaskId, setDetailTaskId] = useState<string | null>(null);
   // `tasks`/`blockingRequirementsByTask` come from the full project state
   // regardless of the `members` filter, so blocking status stays correct
   // even when only one person's group shows.
-  const { tasks, projectState, reassignTask } = useProject();
+  const { tasks, projectState } = useProject();
   const { blockingRequirementsByTask } = projectState;
-
-  function reassign(taskId: string, memberId: TeamId) {
-    reassignTask(taskId, memberId);
-    setOpenTaskId(null);
-  }
+  const today = useMemo(() => new Date(), []);
 
   return (
     <View style={styles.container}>
@@ -42,56 +42,70 @@ export function DistributionEditor({ members = TEAM_ORDER }: Props) {
             </View>
 
             <View style={styles.taskList}>
-              {memberTasks.map((t) => {
-                const blocking = blockingRequirementsByTask[t.id] ?? [];
-                return (
-                <View key={t.id}>
-                  <Pressable
-                    style={styles.taskRow}
-                    onPress={() => setOpenTaskId(openTaskId === t.id ? null : t.id)}
-                  >
-                    <View style={styles.taskRef}>
-                      <Text style={[type.metadata, { color: colors.purple }]}>{t.sectionRef}</Text>
-                    </View>
-                    <View style={styles.taskTitleBlock}>
-                      <Text style={[type.body, styles.taskTitle]} numberOfLines={2}>
-                        {t.title}
-                      </Text>
-                      {blocking.length > 0 && (
-                        <Text style={[type.statLabel, styles.blockingTag]} numberOfLines={1}>
-                          Blocks {blocking.map((r) => r.label).join(', ')}
-                        </Text>
-                      )}
-                    </View>
-                    <Svg width={14} height={14} viewBox="0 0 24 24" fill="none">
-                      <Path
-                        d={openTaskId === t.id ? 'M6 15l6-6 6 6' : 'M9 5l7 7-7 7'}
-                        stroke={colors.faint}
-                        strokeWidth={2.2}
-                        strokeLinecap="round"
-                        strokeLinejoin="round"
-                      />
-                    </Svg>
-                  </Pressable>
-
-                  {openTaskId === t.id && (
-                    <View style={styles.reassignRow}>
-                      <Text style={[type.statLabel, { color: colors.muted }]}>Move to</Text>
-                      {TEAM_ORDER.filter((id) => id !== memberId).map((id) => (
-                        <Pressable key={id} onPress={() => reassign(t.id, id)} style={styles.reassignOption}>
-                          <Avatar {...TEAM[id]} size={28} />
-                        </Pressable>
-                      ))}
-                    </View>
-                  )}
-                </View>
-                );
-              })}
+              {memberTasks.map((t) => (
+                <TaskRow
+                  key={t.id}
+                  task={t}
+                  today={today}
+                  blockingLabels={(blockingRequirementsByTask[t.id] ?? []).map((r) => r.label)}
+                  onPress={() => setDetailTaskId(t.id)}
+                />
+              ))}
             </View>
           </View>
         );
       })}
+
+      <TaskDetailModal taskId={detailTaskId} onClose={() => setDetailTaskId(null)} />
     </View>
+  );
+}
+
+function TaskRow({
+  task,
+  today,
+  blockingLabels,
+  onPress,
+}: {
+  task: Task;
+  today: Date;
+  blockingLabels: string[];
+  onPress: () => void;
+}) {
+  const completed = task.status === 'completed';
+  const meta = completed
+    ? `Completed ${task.completedAt ? formatShortDate(new Date(task.completedAt), today) : ''}`
+    : [
+        task.effortHours ? `${Number(task.effortHours.toFixed(1))}h` : null,
+        task.dueLabel ? `Due ${task.dueLabel}` : null,
+        blockingLabels.length > 0 ? `Blocks ${blockingLabels.join(', ')}` : null,
+      ]
+        .filter(Boolean)
+        .join(' · ');
+
+  return (
+    <Pressable
+      style={styles.taskRow}
+      onPress={onPress}
+      accessibilityRole="button"
+      accessibilityLabel={`${task.title}, ${completed ? 'completed' : 'open task'}`}
+    >
+      <TaskStatusDot status={task.status} size={20} />
+      <View style={styles.taskBody}>
+        <Text
+          style={[type.body, styles.taskTitle, completed && styles.taskTitleDone]}
+          numberOfLines={1}
+        >
+          {task.title}
+        </Text>
+        {meta ? (
+          <Text style={[type.statLabel, styles.taskMeta]} numberOfLines={1}>
+            {meta}
+          </Text>
+        ) : null}
+      </View>
+      <Icon name="chevronRight" size={14} color={colors.faint} strokeWidth={2} />
+    </Pressable>
   );
 }
 
@@ -120,42 +134,29 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
   },
   taskList: {
-    gap: 6,
+    gap: 2,
     paddingLeft: 40,
   },
   taskRow: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 9,
+    gap: 10,
     minHeight: 44,
-    paddingVertical: 4,
+    paddingVertical: 6,
   },
-  taskRef: {
-    width: 34,
-  },
-  taskTitleBlock: {
+  taskBody: {
     flex: 1,
-    gap: 2,
+    minWidth: 0,
+    gap: 1,
   },
   taskTitle: {
     color: colors.ink,
-    opacity: 0.7,
   },
-  blockingTag: {
-    color: colors.yellowText,
+  taskTitleDone: {
+    color: colors.muted,
+    textDecorationLine: 'line-through',
   },
-  reassignRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 9,
-    paddingVertical: 8,
-    paddingLeft: 43,
-  },
-  reassignOption: {
-    width: 44,
-    height: 44,
-    borderRadius: 22,
-    alignItems: 'center',
-    justifyContent: 'center',
+  taskMeta: {
+    color: colors.muted,
   },
 });

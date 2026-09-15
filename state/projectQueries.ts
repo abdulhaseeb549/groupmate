@@ -1,6 +1,6 @@
 import { supabase } from '../lib/supabase';
 import { Project } from '../data/project';
-import { Priority, Task } from '../data/tasks';
+import { Priority, Task, TaskStatus } from '../data/tasks';
 import { Requirement } from '../data/requirements';
 import { TaskRequirement } from '../data/taskRequirements';
 import { TaskDependency } from '../data/taskDependencies';
@@ -20,7 +20,8 @@ type TaskRow = {
   title: string;
   section_ref: string;
   assignee_id: string;
-  done: boolean;
+  status: TaskStatus;
+  completed_at: string | null;
   priority: Priority;
   due_label: string | null;
   due_urgent: boolean;
@@ -85,7 +86,8 @@ function toTask(row: TaskRow): Task {
     // A data/team.ts TeamId — safe to assume, since only the seed function
     // (controlled by us) writes this column until teammates are real accounts.
     assigneeId: row.assignee_id as TeamId,
-    done: row.done,
+    status: row.status,
+    completedAt: row.completed_at ?? undefined,
     priority: row.priority,
     dueLabel: row.due_label ?? undefined,
     dueUrgent: row.due_urgent,
@@ -117,7 +119,7 @@ export async function fetchProjectData(ownerId: string): Promise<ProjectData> {
     supabase
       .from('tasks')
       .select(
-        'id, title, section_ref, assignee_id, done, priority, due_label, due_urgent, metadata, guidance, outline, effort_hours'
+        'id, title, section_ref, assignee_id, status, completed_at, priority, due_label, due_urgent, metadata, guidance, outline, effort_hours'
       )
       .eq('project_id', projectRow.id)
       .order('position'),
@@ -153,8 +155,12 @@ export async function fetchProjectData(ownerId: string): Promise<ProjectData> {
   };
 }
 
-export async function persistTaskDone(taskId: string, done: boolean): Promise<void> {
-  const { error } = await supabase.from('tasks').update({ done }).eq('id', taskId);
+export async function persistTaskStatus(
+  taskId: string,
+  status: TaskStatus,
+  completedAt: string | null
+): Promise<void> {
+  const { error } = await supabase.from('tasks').update({ status, completed_at: completedAt }).eq('id', taskId);
   if (error) throw error;
 }
 

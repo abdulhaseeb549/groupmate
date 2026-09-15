@@ -48,7 +48,7 @@ export function ProjectTimeline({ tasks, schedule, dueDate, today }: Props) {
         <View style={styles.spine} />
         {checkpoints.map((task) => {
           const s = schedule.byTaskId[task.id];
-          const met = task.done;
+          const met = task.status === 'completed';
           const atRisk = s.atRisk;
           return (
             <View key={task.id} style={styles.step}>

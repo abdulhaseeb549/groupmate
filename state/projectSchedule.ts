@@ -145,7 +145,7 @@ export function computeSchedule(
       latestFinish: latestFinish.get(t.id)!,
       isCheckpoint: blockedIds.length > 0,
       blocks: blockedIds.map((id) => taskById.get(id)?.title).filter((title): title is string => Boolean(title)),
-      atRisk: !t.done && start > latestStart.get(t.id)!,
+      atRisk: t.status !== 'completed' && start > latestStart.get(t.id)!,
     };
   }
 

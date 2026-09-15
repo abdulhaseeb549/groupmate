@@ -50,14 +50,14 @@ export function deriveProjectState(
   project: Project,
   today: Date
 ): ProjectState {
-  const doneTasks = tasks.filter((t) => t.done).length;
+  const doneTasks = tasks.filter((t) => t.status === 'completed').length;
 
   const requirementStates: RequirementState[] = requirements.map((requirement) => {
     const linkedTaskIds = taskRequirements
       .filter((tr) => tr.requirementId === requirement.id)
       .map((tr) => tr.taskId);
     const linkedTasks = tasks.filter((t) => linkedTaskIds.includes(t.id));
-    const blockingTasks = linkedTasks.filter((t) => !t.done);
+    const blockingTasks = linkedTasks.filter((t) => t.status !== 'completed');
     const doneLinkedCount = linkedTasks.length - blockingTasks.length;
 
     const status: RequirementStatus =

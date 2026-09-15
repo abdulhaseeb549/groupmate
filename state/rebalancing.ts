@@ -14,16 +14,22 @@ export type MemberLoad = {
   loadPct: number;
 };
 
+export type RebalanceImpact = 'low' | 'medium' | 'high';
+
 export type RebalanceSuggestion = {
   taskId: string;
   taskTitle: string;
   fromMember: TeamId;
   toMember: TeamId;
   effortHours: number;
-  /** Why this specific move, in the reader's terms — not "lowest workload." */
+  /** One-line payoff, in the reader's terms — not "lowest workload." */
   reason: string;
-  before: { from: number; to: number };
-  after: { from: number; to: number };
+  /** How much this move is actually worth doing — resolving project risk always counts as high. */
+  impact: RebalanceImpact;
+  before: { fromHours: number; toHours: number; fromPct: number; toPct: number };
+  after: { fromHours: number; toHours: number; fromPct: number; toPct: number };
+  /** Doesn't change between before/after — same people, same due date. */
+  capacityHours: { from: number; to: number };
   /** Whether this move makes the project's overall critical-path risk better, same, or worse. */
   projectRiskBefore: boolean;
   projectRiskAfter: boolean;
@@ -46,7 +52,7 @@ export function computeMemberLoad(
   const result = {} as Record<TeamId, MemberLoad>;
   for (const id of TEAM_ORDER) {
     const loadHours = tasks
-      .filter((t) => t.assigneeId === id && !t.done)
+      .filter((t) => t.assigneeId === id && t.status !== 'completed')
       .reduce((sum, t) => sum + (t.effortHours ?? DEFAULT_EFFORT_HOURS), 0);
     const capacityHours = (memberHoursPerDay[id] ?? 2) * days;
     result[id] = { loadHours, capacityHours, loadPct: capacityHours > 0 ? loadHours / capacityHours : 0 };
@@ -55,13 +61,16 @@ export function computeMemberLoad(
 }
 
 /**
- * Proposes moving specific not-done tasks off overloaded teammates onto
- * someone with real room — validated by actually recomputing the schedule
- * and load for each hypothetical move (reusing computeSchedule, not a
- * separate model of it), not by picking whoever has the fewest tasks.
- * A move only surfaces if it demonstrably helps: the overloaded person's
- * load drops, the destination doesn't end up worse off than the source
- * was, and the project's overall schedule risk doesn't get worse.
+ * Proposes moving specific not-yet-started tasks off overloaded teammates
+ * onto someone with real room — validated by actually recomputing the
+ * schedule and load for each hypothetical move (reusing computeSchedule,
+ * not a separate model of it), not by picking whoever has the fewest
+ * tasks. In-progress work is never proposed: someone's already partway
+ * through it, and handing that off mid-stream is disruptive in a way a
+ * lightweight suggestion shouldn't casually recommend. A move only
+ * surfaces if it demonstrably helps: the overloaded person's load drops,
+ * the destination doesn't end up worse off than the source was, and the
+ * project's overall schedule risk doesn't get worse.
  */
 export function generateRebalanceSuggestions(
   tasks: Task[],
@@ -81,7 +90,7 @@ export function generateRebalanceSuggestions(
 
   for (const fromMember of overloaded) {
     const movableTasks = tasks
-      .filter((t) => t.assigneeId === fromMember && !t.done)
+      .filter((t) => t.assigneeId === fromMember && t.status === 'not_started')
       // Try the highest-effort task first — moving one big piece helps more than several small ones.
       .sort((a, b) => (b.effortHours ?? DEFAULT_EFFORT_HOURS) - (a.effortHours ?? DEFAULT_EFFORT_HOURS));
 
@@ -117,8 +126,23 @@ export function generateRebalanceSuggestions(
             toMember,
             effortHours: task.effortHours ?? DEFAULT_EFFORT_HOURS,
             reason: '',
-            before: { from: fromBefore, to: currentLoad[toMember].loadPct },
-            after: { from: fromAfter, to: toAfter },
+            impact: 'low',
+            before: {
+              fromHours: currentLoad[fromMember].loadHours,
+              toHours: currentLoad[toMember].loadHours,
+              fromPct: fromBefore,
+              toPct: currentLoad[toMember].loadPct,
+            },
+            after: {
+              fromHours: hypotheticalLoad[fromMember].loadHours,
+              toHours: hypotheticalLoad[toMember].loadHours,
+              fromPct: fromAfter,
+              toPct: toAfter,
+            },
+            capacityHours: {
+              from: currentLoad[fromMember].capacityHours,
+              to: currentLoad[toMember].capacityHours,
+            },
             projectRiskBefore: currentSchedule.projectAtRisk,
             projectRiskAfter: hypotheticalSchedule.projectAtRisk,
           };
@@ -126,9 +150,14 @@ export function generateRebalanceSuggestions(
       }
 
       if (best) {
+        const resolvesRisk = currentSchedule.projectAtRisk && !best.projectRiskAfter;
+        const pctDrop = best.before.fromPct - best.after.fromPct;
+        const impact: RebalanceImpact = resolvesRisk || pctDrop >= 0.5 ? 'high' : pctDrop >= 0.2 ? 'medium' : 'low';
+
         candidates.push({
           ...best,
-          reason: `${TEAM[fromMember].name} is overloaded — ${TEAM[best.toMember].name} has real room this cycle.`,
+          impact,
+          reason: `Frees ${formatHours(best.effortHours)} from ${TEAM[fromMember].name}'s overloaded window.`,
         });
         break; // one suggestion per overloaded person per pass is plenty to act on
       }
@@ -136,6 +165,10 @@ export function generateRebalanceSuggestions(
   }
 
   return candidates
-    .sort((a, b) => b.before.from - b.after.from - (a.before.from - a.after.from))
+    .sort((a, b) => b.before.fromPct - b.after.fromPct - (a.before.fromPct - a.after.fromPct))
     .slice(0, maxSuggestions);
+}
+
+function formatHours(hours: number): string {
+  return `${Number(hours.toFixed(1))}h`;
 }

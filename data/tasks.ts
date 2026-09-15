@@ -2,12 +2,16 @@ import { TeamId } from './team';
 
 export type Priority = 'high' | 'medium' | 'low';
 
+export type TaskStatus = 'not_started' | 'in_progress' | 'completed';
+
 export type Task = {
   id: string;
   title: string;
   sectionRef: string;
   assigneeId: TeamId;
-  done: boolean;
+  status: TaskStatus;
+  /** Set only when status is 'completed' — cleared if the task is reopened. */
+  completedAt?: string;
   priority: Priority;
   /** Only set where the narrative calls for a visible deadline chip. */
   dueLabel?: string;

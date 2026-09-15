@@ -32,7 +32,7 @@ type Props = {
 
 export function HomeScreen({ activeTab, onSelectTab }: Props) {
   const insets = useSafeAreaInsets();
-  const { project, tasks, projectState, toggleTaskDone } = useProject();
+  const { project, tasks, projectState, setTaskStatus } = useProject();
   const { session, profile, signOut } = useAuth();
   const [showAllAttention, setShowAllAttention] = useState(false);
   const [signOutVisible, setSignOutVisible] = useState(false);
@@ -59,7 +59,7 @@ export function HomeScreen({ activeTab, onSelectTab }: Props) {
   }
 
   const myOpenTasks = tasks
-    .filter((t) => t.assigneeId === CURRENT_USER_ID && !t.done)
+    .filter((t) => t.assigneeId === CURRENT_USER_ID && t.status !== 'completed')
     .sort((a, b) => urgency(a) - urgency(b));
   const nextTasks = myOpenTasks.slice(0, NEXT_LIMIT);
 
@@ -171,7 +171,7 @@ export function HomeScreen({ activeTab, onSelectTab }: Props) {
                   <TaskRow
                     task={task}
                     context={taskContext(task)}
-                    onComplete={() => toggleTaskDone(task.id)}
+                    onComplete={() => setTaskStatus(task.id, 'completed')}
                   />
                 </View>
               ))

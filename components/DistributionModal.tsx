@@ -27,7 +27,7 @@ export function DistributionModal({ visible, onClose }: Props) {
             </Pressable>
           </View>
           <Text style={[type.body, { color: colors.muted }]}>
-            Tap a task to move it to someone else.
+            Tap a task to start it, finish it, or reassign it.
           </Text>
           <ScrollView style={styles.editorScroll} showsVerticalScrollIndicator={false}>
             <DistributionEditor />

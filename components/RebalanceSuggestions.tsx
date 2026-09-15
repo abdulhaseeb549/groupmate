@@ -1,35 +1,54 @@
 import { useMemo, useState } from 'react';
 import { Pressable, StyleSheet, Text, View } from 'react-native';
-import { Avatar } from './Avatar';
 import { Card } from './Card';
-import { Icon } from './Icon';
 import { TEAM } from '../data/team';
 import { useProject } from '../state/ProjectRepository';
-import { generateRebalanceSuggestions, RebalanceSuggestion } from '../state/rebalancing';
+import { generateRebalanceSuggestions, RebalanceImpact, RebalanceSuggestion } from '../state/rebalancing';
 import { colors, type } from '../theme';
 
 type Props = {
   today: Date;
 };
 
+const IMPACT: Record<RebalanceImpact, { label: string; bg: string; text: string }> = {
+  high: { label: 'High impact', bg: colors.mint, text: colors.mintText },
+  medium: { label: 'Medium impact', bg: colors.yellowSoft, text: colors.yellowText },
+  low: { label: 'Low impact', bg: colors.surfaceMuted, text: colors.muted },
+};
+
 function pct(loadPct: number): string {
   return `${Math.round(loadPct * 100)}%`;
 }
 
-function formatEffort(hours: number): string {
-  return `${Number(hours.toFixed(1))}h`;
+function hours(n: number): string {
+  return Number(n.toFixed(1)).toString();
+}
+
+function barColor(afterPct: number): string {
+  if (afterPct > 1) return colors.red;
+  if (afterPct >= 0.8) return colors.amber;
+  return colors.green;
+}
+
+function riskLine(s: RebalanceSuggestion): string | null {
+  if (s.projectRiskAfter) {
+    return "Project remains at risk after this move — it doesn't remove the deadline risk on its own.";
+  }
+  if (s.projectRiskBefore) {
+    return 'This also brings the project back on track.';
+  }
+  return null;
 }
 
 /**
  * Only ever shows a move that generateRebalanceSuggestions has already
  * validated by re-running the real scheduler — never a "pick whoever's
- * least busy" guess. Dismiss just hides a card for this session; Accept
- * calls the same reassignTask everything else uses, so Workload/Timeline
- * recompute on their own.
+ * least busy" guess. Accept calls the same reassignTask everything else
+ * uses, so Workload/Timeline recompute on their own; Dismiss just hides a
+ * card for this session.
  */
 export function RebalanceSuggestions({ today }: Props) {
   const { tasks, taskDependencies, project, reassignTask } = useProject();
-  const [expandedId, setExpandedId] = useState<string | null>(null);
   const [dismissed, setDismissed] = useState<Set<string>>(new Set());
 
   const suggestions = useMemo(
@@ -42,104 +61,99 @@ export function RebalanceSuggestions({ today }: Props) {
 
   function dismiss(taskId: string) {
     setDismissed((prev) => new Set(prev).add(taskId));
-    setExpandedId((current) => (current === taskId ? null : current));
   }
 
   function accept(s: RebalanceSuggestion) {
     reassignTask(s.taskId, s.toMember);
-    setExpandedId(null);
   }
 
   return (
     <View style={styles.section}>
-      <Text style={type.sectionHeading}>Balancing suggestions</Text>
+      <Text style={type.sectionHeading}>
+        Workload {visible.length === 1 ? 'suggestion' : 'suggestions'} · {visible.length}
+      </Text>
       <View style={styles.list}>
         {visible.map((s) => {
           const from = TEAM[s.fromMember];
           const to = TEAM[s.toMember];
-          const expanded = expandedId === s.taskId;
+          const impact = IMPACT[s.impact];
+          const risk = riskLine(s);
           return (
             <Card key={s.taskId}>
               <View style={styles.card}>
-                <View style={styles.titleRow}>
-                  <Text style={[type.taskTitle, styles.title]} numberOfLines={2}>
-                    {s.taskTitle}
-                  </Text>
-                  <View style={styles.effortPill}>
-                    <Text style={[type.metadata, { color: colors.muted }]}>{formatEffort(s.effortHours)}</Text>
-                  </View>
+                <View style={[styles.impactPill, { backgroundColor: impact.bg }]}>
+                  <Text style={[type.badge, { color: impact.text }]}>{impact.label}</Text>
                 </View>
 
-                <View style={styles.moveRow}>
-                  <View style={styles.person}>
-                    <Avatar {...from} size={30} />
-                    <Text style={[type.caption, styles.personName]} numberOfLines={1}>
-                      {from.name}
-                    </Text>
-                  </View>
-                  <Icon name="chevronRight" size={16} color={colors.faint} strokeWidth={2} />
-                  <View style={styles.person}>
-                    <Avatar {...to} size={30} />
-                    <Text style={[type.caption, styles.personName]} numberOfLines={1}>
-                      {to.name}
-                    </Text>
-                  </View>
+                <Text style={[type.taskTitle, styles.heading]}>
+                  Move <Text style={styles.headingTitle}>"{s.taskTitle}"</Text> to {to.name}
+                </Text>
+
+                <View style={styles.compareRow}>
+                  <PersonImpact name={from.name} before={s.before.fromPct} after={s.after.fromPct} beforeHours={s.before.fromHours} afterHours={s.after.fromHours} capacityHours={s.capacityHours.from} />
+                  <PersonImpact name={to.name} before={s.before.toPct} after={s.after.toPct} beforeHours={s.before.toHours} afterHours={s.after.toHours} capacityHours={s.capacityHours.to} />
                 </View>
 
                 <Text style={[type.caption, styles.reason]}>{s.reason}</Text>
+                {risk ? <Text style={[type.caption, styles.riskText]}>{risk}</Text> : null}
 
-                <View style={styles.impactRow}>
-                  <Text style={[type.statLabel, styles.impactText]}>
-                    {from.name} {pct(s.before.from)} → {pct(s.after.from)}
-                  </Text>
-                  <Text style={[type.statLabel, styles.impactText]}>
-                    {to.name} {pct(s.before.to)} → {pct(s.after.to)}
-                  </Text>
-                </View>
+                <Pressable
+                  onPress={() => accept(s)}
+                  style={styles.acceptButton}
+                  accessibilityRole="button"
+                  accessibilityLabel={`Reassign ${s.taskTitle} from ${from.name} to ${to.name}`}
+                >
+                  <Text style={[type.button, { color: colors.onInk }]}>Accept and reassign</Text>
+                </Pressable>
 
-                {expanded ? (
-                  <View style={styles.detail}>
-                    <Text style={[type.caption, styles.detailText]}>
-                      {s.projectRiskAfter
-                        ? "The project stays at risk either way — this move alone doesn't fix that."
-                        : s.projectRiskBefore
-                          ? 'This also brings the project back on track.'
-                          : 'The project stays on track either way.'}
-                    </Text>
-                    <Pressable
-                      onPress={() => accept(s)}
-                      style={styles.acceptButton}
-                      accessibilityRole="button"
-                      accessibilityLabel={`Reassign ${s.taskTitle} from ${from.name} to ${to.name}`}
-                    >
-                      <Text style={[type.button, { color: colors.onInk }]}>Accept and reassign</Text>
-                    </Pressable>
-                  </View>
-                ) : null}
-
-                <View style={styles.actionRow}>
-                  <Pressable
-                    onPress={() => setExpandedId(expanded ? null : s.taskId)}
-                    style={styles.actionButton}
-                    hitSlop={8}
-                    accessibilityRole="button"
-                  >
-                    <Text style={[type.button, { color: colors.purple }]}>{expanded ? 'Hide' : 'Review'}</Text>
-                  </Pressable>
-                  <Pressable
-                    onPress={() => dismiss(s.taskId)}
-                    style={styles.actionButton}
-                    hitSlop={8}
-                    accessibilityRole="button"
-                  >
-                    <Text style={[type.button, { color: colors.muted }]}>Dismiss</Text>
-                  </Pressable>
-                </View>
+                <Pressable
+                  onPress={() => dismiss(s.taskId)}
+                  style={styles.dismissButton}
+                  hitSlop={8}
+                  accessibilityRole="button"
+                >
+                  <Text style={[type.button, { color: colors.muted }]}>Dismiss</Text>
+                </Pressable>
               </View>
             </Card>
           );
         })}
       </View>
+    </View>
+  );
+}
+
+function PersonImpact({
+  name,
+  before,
+  after,
+  beforeHours,
+  afterHours,
+  capacityHours,
+}: {
+  name: string;
+  before: number;
+  after: number;
+  beforeHours: number;
+  afterHours: number;
+  capacityHours: number;
+}) {
+  // 150% of capacity fills the track — past that the bar just stays full rather than overflowing.
+  const fillPct = Math.min(after / 1.5, 1) * 100;
+  return (
+    <View style={styles.person}>
+      <Text style={[type.caption, styles.personName]} numberOfLines={1}>
+        {name}
+      </Text>
+      <Text style={[type.button, { color: barColor(after) }]}>
+        {pct(before)} → {pct(after)}
+      </Text>
+      <View style={styles.track}>
+        <View style={[styles.fill, { width: `${fillPct}%`, backgroundColor: barColor(after) }]} />
+      </View>
+      <Text style={[type.tinyLabel, styles.hoursText]}>
+        {hours(beforeHours)}h → {hours(afterHours)}h of {hours(capacityHours)}h
+      </Text>
     </View>
   );
 }
@@ -153,55 +167,51 @@ const styles = StyleSheet.create({
   },
   card: {
     padding: 16,
-    gap: 10,
+    gap: 12,
   },
-  titleRow: {
-    flexDirection: 'row',
-    alignItems: 'flex-start',
-    gap: 10,
-  },
-  title: {
-    flex: 1,
-    color: colors.ink,
-  },
-  effortPill: {
+  impactPill: {
+    alignSelf: 'flex-start',
     height: 22,
-    paddingHorizontal: 8,
+    paddingHorizontal: 10,
     borderRadius: 11,
-    backgroundColor: colors.surfaceMuted,
-    alignItems: 'center',
     justifyContent: 'center',
   },
-  moveRow: {
+  heading: {
+    color: colors.ink,
+  },
+  headingTitle: {
+    fontFamily: type.taskTitle.fontFamily,
+  },
+  compareRow: {
     flexDirection: 'row',
-    alignItems: 'center',
-    gap: 10,
+    gap: 20,
   },
   person: {
-    alignItems: 'center',
-    gap: 4,
-    width: 64,
+    flex: 1,
+    gap: 6,
   },
   personName: {
     color: colors.muted,
   },
+  track: {
+    height: 6,
+    borderRadius: 3,
+    backgroundColor: colors.track,
+    overflow: 'hidden',
+  },
+  fill: {
+    height: '100%',
+    borderRadius: 3,
+  },
+  hoursText: {
+    color: colors.faint,
+    fontVariant: ['tabular-nums'],
+  },
   reason: {
     color: colors.muted,
   },
-  impactRow: {
-    flexDirection: 'row',
-    gap: 16,
-  },
-  impactText: {
-    color: colors.ink,
-    fontVariant: ['tabular-nums'],
-  },
-  detail: {
-    gap: 10,
-    paddingTop: 2,
-  },
-  detailText: {
-    color: colors.muted,
+  riskText: {
+    color: colors.redText,
   },
   acceptButton: {
     height: 44,
@@ -210,13 +220,9 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
   },
-  actionRow: {
-    flexDirection: 'row',
-    gap: 24,
-    paddingTop: 2,
-  },
-  actionButton: {
-    paddingVertical: 12,
-    justifyContent: 'center',
+  dismissButton: {
+    alignSelf: 'center',
+    paddingVertical: 10,
+    paddingHorizontal: 12,
   },
 });

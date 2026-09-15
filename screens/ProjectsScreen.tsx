@@ -43,7 +43,7 @@ export function ProjectsScreen({ activeTab, onSelectTab }: Props) {
 
   const workload = TEAM_ORDER.map((id) => {
     const memberTasks = tasks.filter((t) => t.assigneeId === id);
-    const done = memberTasks.filter((t) => t.done).length;
+    const done = memberTasks.filter((t) => t.status === 'completed').length;
     return { member: TEAM[id], done, total: memberTasks.length };
   });
 
@@ -159,7 +159,7 @@ export function ProjectsScreen({ activeTab, onSelectTab }: Props) {
             })}
           </View>
           <Text style={[type.body, { color: colors.muted }]}>
-            Tap a task to move it to someone else. Changes here apply to the whole project.
+            Tap a task to start it, finish it, or reassign it. Changes here apply to the whole project.
           </Text>
           <View style={styles.card}>
             <DistributionEditor members={members} />

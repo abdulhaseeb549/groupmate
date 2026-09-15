@@ -3,7 +3,7 @@ import { ErrorScreen } from '../components/ErrorScreen';
 import { LoadingScreen } from '../components/LoadingScreen';
 import { Project } from '../data/project';
 import { Requirement } from '../data/requirements';
-import { Task } from '../data/tasks';
+import { Task, TaskStatus } from '../data/tasks';
 import { TaskRequirement } from '../data/taskRequirements';
 import { TaskDependency } from '../data/taskDependencies';
 import { TeamId } from '../data/team';
@@ -14,7 +14,7 @@ import {
   fetchProjectData,
   persistMemberHoursPerDay,
   persistTaskAssignee,
-  persistTaskDone,
+  persistTaskStatus,
 } from './projectQueries';
 
 type ProjectRepository = {
@@ -24,7 +24,7 @@ type ProjectRepository = {
   taskDependencies: TaskDependency[];
   projectState: ProjectState;
   schedule: ProjectSchedule;
-  toggleTaskDone: (taskId: string) => void;
+  setTaskStatus: (taskId: string, status: TaskStatus) => void;
   reassignTask: (taskId: string, memberId: TeamId) => void;
   updateMemberHoursPerDay: (memberId: TeamId, hoursPerDay: number) => void;
   /** Re-fetches from Supabase — used both by the error screen's retry and after replacing the project (e.g. from a new brief). */
@@ -145,15 +145,13 @@ function ProjectProviderReady({
     [tasks, taskDependencies, project]
   );
 
-  function toggleTaskDone(taskId: string) {
-    const current = tasks.find((t) => t.id === taskId);
-    if (!current) return;
-    const nextDone = !current.done;
-    setTasks((prev) => prev.map((t) => (t.id === taskId ? { ...t, done: nextDone } : t)));
+  function setTaskStatus(taskId: string, status: TaskStatus) {
+    const completedAt = status === 'completed' ? new Date().toISOString() : null;
+    setTasks((prev) => prev.map((t) => (t.id === taskId ? { ...t, status, completedAt: completedAt ?? undefined } : t)));
     // Fire-and-forget: this prototype has no offline queue yet, so a failed
     // write just leaves the local state out of sync with the database until
     // the next reload, rather than silently reverting mid-interaction.
-    void persistTaskDone(taskId, nextDone);
+    void persistTaskStatus(taskId, status, completedAt);
   }
 
   function reassignTask(taskId: string, memberId: TeamId) {
@@ -174,7 +172,7 @@ function ProjectProviderReady({
     taskDependencies,
     projectState,
     schedule,
-    toggleTaskDone,
+    setTaskStatus,
     reassignTask,
     updateMemberHoursPerDay,
     refetch,
