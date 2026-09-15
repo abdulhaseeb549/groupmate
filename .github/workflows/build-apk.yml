@@ -88,7 +88,14 @@ jobs:
         # the failure instead of manually scrolling a huge collapsed step.
         env:
           NODE_OPTIONS: --max-old-space-size=4096
-        run: ./gradlew assembleRelease --no-daemon --stacktrace 2>&1 | tee build.log
+        # set -o pipefail: without it, `cmd | tee file` reports tee's exit
+        # status (always 0), not gradlew's — the previous run "succeeded"
+        # in GitHub's UI even though Gradle itself printed BUILD FAILED,
+        # which meant the if: failure() step below never fired and the
+        # real cause stayed hidden in the log for another whole round trip.
+        run: |
+          set -o pipefail
+          ./gradlew assembleRelease --no-daemon --stacktrace 2>&1 | tee build.log
 
       - name: Show the real error if the build failed
         if: failure()
@@ -101,11 +108,14 @@ jobs:
           tail -150 build.log
 
       - name: List actual APK output (diagnostic)
+        if: always()
         # The last successful build created no APK asset on the release —
         # softprops/action-gh-release doesn't fail on an unmatched glob by
         # default, it just silently attaches nothing. This prints whatever
         # actually exists so a wrong assumed path is visible immediately
         # instead of discovered by another blind guess-and-push cycle.
+        # if: always() — run this regardless of whether the build step
+        # above passed or failed, since both cases are worth seeing.
         run: find android/app/build/outputs -type f -name '*.apk' -o -type d -name outputs 2>&1 || true
 
       - name: Publish release with APK
