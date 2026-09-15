@@ -32,6 +32,11 @@ function barColor(afterPct: number): string {
   return colors.green;
 }
 
+// 100% isn't overloaded — it's full. Worth flagging as zero-buffer, not urgency.
+function isAtCapacity(afterPct: number): boolean {
+  return Math.round(afterPct * 100) === 100;
+}
+
 type RiskNote = { text: string; color: string };
 
 // Amber, not red: a surfaced suggestion is always a valid move (the engine
@@ -162,6 +167,7 @@ function PersonImpact({
       </Text>
       <Text style={[type.statLabel, { color: barColor(after) }]}>
         {pct(before)} → {pct(after)}
+        {isAtCapacity(after) ? '  ·  at capacity' : ''}
       </Text>
       <View style={styles.track}>
         <View style={[styles.fill, { width: `${fillPct}%`, backgroundColor: barColor(after) }]} />
