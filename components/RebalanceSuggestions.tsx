@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { Pressable, StyleSheet, Text, View } from 'react-native';
 import { Card } from './Card';
 import { TEAM } from '../data/team';
@@ -65,6 +65,20 @@ function riskNote(s: RebalanceSuggestion): RiskNote | null {
 export function RebalanceSuggestions({ today }: Props) {
   const { tasks, taskDependencies, project, reassignTask } = useProject();
   const [dismissed, setDismissed] = useState<Set<string>>(new Set());
+  const [accepting, setAccepting] = useState(false);
+  // Suggestions are only safe as of the tasks snapshot they were computed
+  // from. reassignTask itself doesn't re-check capacity, so two accepts
+  // fired before a re-render could both land on the same person and blow
+  // past the destination cap the engine enforced on each individually. The
+  // ref is the actual guard — synchronous, so it can't be beaten by two
+  // handlers running before React re-renders; the state is just so the
+  // buttons visibly disable. Cleared once `tasks` has genuinely changed.
+  const acceptingRef = useRef(false);
+
+  useEffect(() => {
+    acceptingRef.current = false;
+    setAccepting(false);
+  }, [tasks]);
 
   const suggestions = useMemo(
     () => generateRebalanceSuggestions(tasks, taskDependencies, project.memberHoursPerDay, project.dueDate, today),
@@ -79,6 +93,9 @@ export function RebalanceSuggestions({ today }: Props) {
   }
 
   function accept(s: RebalanceSuggestion) {
+    if (acceptingRef.current) return;
+    acceptingRef.current = true;
+    setAccepting(true);
     reassignTask(s.taskId, s.toMember);
   }
 
@@ -117,7 +134,8 @@ export function RebalanceSuggestions({ today }: Props) {
 
                 <Pressable
                   onPress={() => accept(s)}
-                  style={styles.acceptButton}
+                  disabled={accepting}
+                  style={[styles.acceptButton, accepting && styles.acceptButtonDisabled]}
                   accessibilityRole="button"
                   accessibilityLabel={`Reassign ${s.taskTitle} from ${from.name} to ${to.name}`}
                 >
@@ -126,6 +144,7 @@ export function RebalanceSuggestions({ today }: Props) {
 
                 <Pressable
                   onPress={() => dismiss(s.taskId)}
+                  disabled={accepting}
                   style={styles.dismissButton}
                   hitSlop={8}
                   accessibilityRole="button"
@@ -238,6 +257,9 @@ const styles = StyleSheet.create({
     backgroundColor: colors.purple,
     alignItems: 'center',
     justifyContent: 'center',
+  },
+  acceptButtonDisabled: {
+    opacity: 0.5,
   },
   dismissButton: {
     alignSelf: 'center',
