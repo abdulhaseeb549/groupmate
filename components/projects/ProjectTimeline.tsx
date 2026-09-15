@@ -51,7 +51,7 @@ export function ProjectTimeline({ tasks, schedule, dueDate, today }: Props) {
           const met = task.status === 'completed';
           const atRisk = s.atRisk;
           return (
-            <View key={task.id} style={styles.step}>
+            <View key={task.id} style={[styles.step, !met && styles.stepPending]}>
               <View style={[styles.dot, met && styles.dotMet, atRisk && styles.dotRisk]}>
                 {met ? <Icon name="check" size={10} color={colors.onInk} strokeWidth={3} /> : null}
               </View>
@@ -105,6 +105,11 @@ const styles = StyleSheet.create({
     alignItems: 'flex-start',
     gap: 12,
     paddingVertical: 8,
+  },
+  // Only the completed checkpoint stays at full strength — everything still
+  // ahead recedes, so progress reads as a single dark trail through a faded rest.
+  stepPending: {
+    opacity: 0.5,
   },
   dot: {
     width: DOT,
