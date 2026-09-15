@@ -28,8 +28,6 @@ export type RebalanceSuggestion = {
   impact: RebalanceImpact;
   before: { fromHours: number; toHours: number; fromPct: number; toPct: number };
   after: { fromHours: number; toHours: number; fromPct: number; toPct: number };
-  /** Doesn't change between before/after — same people, same due date. */
-  capacityHours: { from: number; to: number };
   /** Whether this move makes the project's overall critical-path risk better, same, or worse. */
   projectRiskBefore: boolean;
   projectRiskAfter: boolean;
@@ -138,10 +136,6 @@ export function generateRebalanceSuggestions(
               toHours: hypotheticalLoad[toMember].loadHours,
               fromPct: fromAfter,
               toPct: toAfter,
-            },
-            capacityHours: {
-              from: currentLoad[fromMember].capacityHours,
-              to: currentLoad[toMember].capacityHours,
             },
             projectRiskBefore: currentSchedule.projectAtRisk,
             projectRiskAfter: hypotheticalSchedule.projectAtRisk,

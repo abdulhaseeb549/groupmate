@@ -10,10 +10,12 @@ type Props = {
   today: Date;
 };
 
+// Deliberately not "impact" — that read as project-risk impact and
+// contradicted the risk line below it. These describe workload only.
 const IMPACT: Record<RebalanceImpact, { label: string; bg: string; text: string }> = {
-  high: { label: 'High impact', bg: colors.mint, text: colors.mintText },
-  medium: { label: 'Medium impact', bg: colors.yellowSoft, text: colors.yellowText },
-  low: { label: 'Low impact', bg: colors.surfaceMuted, text: colors.muted },
+  high: { label: 'Reduces overload', bg: colors.mint, text: colors.mintText },
+  medium: { label: 'Eases workload', bg: colors.yellowSoft, text: colors.yellowText },
+  low: { label: 'Small adjustment', bg: colors.surfaceMuted, text: colors.muted },
 };
 
 function pct(loadPct: number): string {
@@ -30,12 +32,20 @@ function barColor(afterPct: number): string {
   return colors.green;
 }
 
-function riskLine(s: RebalanceSuggestion): string | null {
+type RiskNote = { text: string; color: string };
+
+// Amber, not red: a surfaced suggestion is always a valid move (the engine
+// already rejected anything that isn't) — red is reserved for actual
+// failure, not for "this alone doesn't clear the deadline risk."
+function riskNote(s: RebalanceSuggestion): RiskNote | null {
   if (s.projectRiskAfter) {
-    return "Project remains at risk after this move — it doesn't remove the deadline risk on its own.";
+    return {
+      text: "The project remains at risk. This move reduces overload but doesn't resolve the deadline risk.",
+      color: colors.yellowText,
+    };
   }
   if (s.projectRiskBefore) {
-    return 'This also brings the project back on track.';
+    return { text: 'This also brings the project back on track.', color: colors.mintText };
   }
   return null;
 }
@@ -77,7 +87,7 @@ export function RebalanceSuggestions({ today }: Props) {
           const from = TEAM[s.fromMember];
           const to = TEAM[s.toMember];
           const impact = IMPACT[s.impact];
-          const risk = riskLine(s);
+          const risk = riskNote(s);
           return (
             <Card key={s.taskId}>
               <View style={styles.card}>
@@ -85,17 +95,20 @@ export function RebalanceSuggestions({ today }: Props) {
                   <Text style={[type.badge, { color: impact.text }]}>{impact.label}</Text>
                 </View>
 
-                <Text style={[type.taskTitle, styles.heading]}>
-                  Move <Text style={styles.headingTitle}>"{s.taskTitle}"</Text> to {to.name}
-                </Text>
+                <View style={styles.headingBlock}>
+                  <Text style={[type.taskTitle, styles.heading]}>Move task to {to.name}</Text>
+                  <Text style={[type.caption, styles.taskName]} numberOfLines={2}>
+                    {s.taskTitle}
+                  </Text>
+                </View>
 
                 <View style={styles.compareRow}>
-                  <PersonImpact name={from.name} before={s.before.fromPct} after={s.after.fromPct} beforeHours={s.before.fromHours} afterHours={s.after.fromHours} capacityHours={s.capacityHours.from} />
-                  <PersonImpact name={to.name} before={s.before.toPct} after={s.after.toPct} beforeHours={s.before.toHours} afterHours={s.after.toHours} capacityHours={s.capacityHours.to} />
+                  <PersonImpact name={from.name} before={s.before.fromPct} after={s.after.fromPct} beforeHours={s.before.fromHours} afterHours={s.after.fromHours} />
+                  <PersonImpact name={to.name} before={s.before.toPct} after={s.after.toPct} beforeHours={s.before.toHours} afterHours={s.after.toHours} />
                 </View>
 
                 <Text style={[type.caption, styles.reason]}>{s.reason}</Text>
-                {risk ? <Text style={[type.caption, styles.riskText]}>{risk}</Text> : null}
+                {risk ? <Text style={[type.caption, { color: risk.color }]}>{risk.text}</Text> : null}
 
                 <Pressable
                   onPress={() => accept(s)}
@@ -129,14 +142,12 @@ function PersonImpact({
   after,
   beforeHours,
   afterHours,
-  capacityHours,
 }: {
   name: string;
   before: number;
   after: number;
   beforeHours: number;
   afterHours: number;
-  capacityHours: number;
 }) {
   // 150% of capacity fills the track — past that the bar just stays full rather than overflowing.
   const fillPct = Math.min(after / 1.5, 1) * 100;
@@ -145,15 +156,16 @@ function PersonImpact({
       <Text style={[type.caption, styles.personName]} numberOfLines={1}>
         {name}
       </Text>
-      <Text style={[type.button, { color: barColor(after) }]}>
+      {/* Hours is the concrete number; percentage is secondary context under it, not the headline. */}
+      <Text style={[type.button, styles.hoursLine]}>
+        {hours(beforeHours)}h → {hours(afterHours)}h
+      </Text>
+      <Text style={[type.statLabel, { color: barColor(after) }]}>
         {pct(before)} → {pct(after)}
       </Text>
       <View style={styles.track}>
         <View style={[styles.fill, { width: `${fillPct}%`, backgroundColor: barColor(after) }]} />
       </View>
-      <Text style={[type.tinyLabel, styles.hoursText]}>
-        {hours(beforeHours)}h → {hours(afterHours)}h of {hours(capacityHours)}h
-      </Text>
     </View>
   );
 }
@@ -176,11 +188,14 @@ const styles = StyleSheet.create({
     borderRadius: 11,
     justifyContent: 'center',
   },
+  headingBlock: {
+    gap: 2,
+  },
   heading: {
     color: colors.ink,
   },
-  headingTitle: {
-    fontFamily: type.taskTitle.fontFamily,
+  taskName: {
+    color: colors.muted,
   },
   compareRow: {
     flexDirection: 'row',
@@ -188,30 +203,28 @@ const styles = StyleSheet.create({
   },
   person: {
     flex: 1,
-    gap: 6,
+    gap: 4,
   },
   personName: {
     color: colors.muted,
+  },
+  hoursLine: {
+    color: colors.ink,
+    fontVariant: ['tabular-nums'],
   },
   track: {
     height: 6,
     borderRadius: 3,
     backgroundColor: colors.track,
     overflow: 'hidden',
+    marginTop: 2,
   },
   fill: {
     height: '100%',
     borderRadius: 3,
   },
-  hoursText: {
-    color: colors.faint,
-    fontVariant: ['tabular-nums'],
-  },
   reason: {
     color: colors.muted,
-  },
-  riskText: {
-    color: colors.redText,
   },
   acceptButton: {
     height: 44,
