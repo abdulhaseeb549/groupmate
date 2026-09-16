@@ -65,7 +65,7 @@ export function ProjectTimeline({ tasks, schedule, dueDate, today }: Props) {
                     : atRisk
                       ? `Should already be underway to stay on track`
                       : `By ${formatShortDate(s.latestFinish, today)}`}
-                  {s.blocks.length > 0 ? ` · unblocks ${s.blocks.join(', ')}` : ''}
+                  {unblocksSuffix(s.blocks)}
                 </Text>
               </View>
             </View>
@@ -76,6 +76,14 @@ export function ProjectTimeline({ tasks, schedule, dueDate, today }: Props) {
       <Text style={[type.metadata, styles.endpoint]}>DUE {formatDueDate(dueDate, today).toUpperCase()}</Text>
     </View>
   );
+}
+
+/** Capped at 2 names: an early checkpoint in a long chain unblocks every task after it, which turned this into a full paragraph running under every single row. */
+function unblocksSuffix(titles: string[]): string {
+  if (titles.length === 0) return '';
+  const shown = titles.slice(0, 2).join(', ');
+  const rest = titles.length - 2;
+  return ` · unblocks ${shown}${rest > 0 ? `, +${rest} more` : ''}`;
 }
 
 const styles = StyleSheet.create({
@@ -125,9 +133,15 @@ const styles = StyleSheet.create({
     backgroundColor: colors.green,
     borderColor: colors.green,
   },
+  // Amber, not red: this is one checkpoint past its own safe-start window,
+  // not the project itself missing its deadline — that stronger, rarer
+  // signal already has its own red banner above this card (ProjectsScreen's
+  // scheduleWarning). Every at-risk row painting the same red it does
+  // compounded into a wall of red down the whole timeline the moment a
+  // project fell behind on more than one thing at once.
   dotRisk: {
-    backgroundColor: colors.red,
-    borderColor: colors.red,
+    backgroundColor: colors.amber,
+    borderColor: colors.amber,
   },
   stepBody: {
     flex: 1,
@@ -142,7 +156,7 @@ const styles = StyleSheet.create({
     color: colors.muted,
   },
   stepRisk: {
-    color: colors.redText,
+    color: colors.yellowText,
   },
   emptyRow: {
     flexDirection: 'row',
