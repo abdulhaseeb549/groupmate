@@ -31,6 +31,16 @@ type Props = {
  * scrollTo. The arrows exist because a card stack with no affordance reads
  * as a single static card — the progress bar alone doesn't say "swipe".
  */
+// A card is inset from the scroller on both sides rather than filling it.
+// At the full viewport width a card's own rounded corner sits exactly on
+// the clip boundary, so the moment it moves the corner is outside the
+// viewport and the edge renders as a straight cut — the card appears to
+// square off while scrolling. Insetting it keeps all four corners inside
+// the clip at every scroll position, and the exposed sliver of the next
+// card is the usual carousel hint that there is one.
+const SIDE_INSET = 14;
+const CARD_GAP = 12;
+
 // Short and eased rather than a spring: this runs beside a scroll the
 // finger is already driving, and a bouncing progress bar next to it
 // reads as two different animations disagreeing.
@@ -48,13 +58,18 @@ export function NotePager({ pages, compact = false }: Props) {
   // tracks the finger rather than snapping when the gesture ends.
   const scrollX = useRef(new Animated.Value(0)).current;
 
+  // What one card occupies, and what one page of scrolling advances by.
+  // Every offset below is in units of `interval`, not of the viewport.
+  const cardWidth = width > 0 ? width - SIDE_INSET * 2 : 0;
+  const interval = cardWidth + CARD_GAP;
+
   function handleLayout(event: LayoutChangeEvent) {
     setWidth(event.nativeEvent.layout.width);
   }
 
   function handleScrollEnd(event: NativeSyntheticEvent<NativeScrollEvent>) {
-    if (width === 0) return;
-    const next = Math.round(event.nativeEvent.contentOffset.x / width);
+    if (interval === 0) return;
+    const next = Math.round(event.nativeEvent.contentOffset.x / interval);
     if (next === index) return;
     // The segments change size as well as colour, so the swap needs to
     // animate or it reads as a jump next to the card that just glided.
@@ -67,7 +82,7 @@ export function NotePager({ pages, compact = false }: Props) {
     if (next === index) return;
     LayoutAnimation.configureNext(SEGMENT_ANIMATION);
     setIndex(next);
-    scroller.current?.scrollTo({ x: next * width, animated: true });
+    scroller.current?.scrollTo({ x: next * interval, animated: true });
   }
 
   if (pages.length === 0) return null;
@@ -77,7 +92,10 @@ export function NotePager({ pages, compact = false }: Props) {
       <Animated.ScrollView
         ref={scroller}
         horizontal
-        pagingEnabled
+        snapToInterval={interval > 0 ? interval : undefined}
+        snapToAlignment="start"
+        decelerationRate="fast"
+        contentContainerStyle={styles.track}
         showsHorizontalScrollIndicator={false}
         onMomentumScrollEnd={handleScrollEnd}
         scrollEventThrottle={16}
@@ -102,20 +120,20 @@ export function NotePager({ pages, compact = false }: Props) {
               style={[
                 styles.card,
                 compact && styles.cardCompact,
-                { width },
-                width > 0 && {
+                { width: cardWidth },
+                interval > 0 && {
                   transform: [
                     {
                       scale: scrollX.interpolate({
-                        inputRange: [(i - 1) * width, i * width, (i + 1) * width],
-                        outputRange: [0.93, 1, 0.93],
+                        inputRange: [(i - 1) * interval, i * interval, (i + 1) * interval],
+                        outputRange: [0.94, 1, 0.94],
                         extrapolate: 'clamp',
                       }),
                     },
                   ],
                   opacity: scrollX.interpolate({
-                    inputRange: [(i - 1) * width, i * width, (i + 1) * width],
-                    outputRange: [0.45, 1, 0.45],
+                    inputRange: [(i - 1) * interval, i * interval, (i + 1) * interval],
+                    outputRange: [0.5, 1, 0.5],
                     extrapolate: 'clamp',
                   }),
                 },
@@ -216,6 +234,13 @@ const styles = StyleSheet.create({
     gap: 10,
     borderWidth: StyleSheet.hairlineWidth,
     borderColor: 'rgba(17,17,17,0.06)',
+    // So whatever does reach the boundary is cut by this rounded rect
+    // rather than by a square one.
+    overflow: 'hidden',
+  },
+  track: {
+    paddingHorizontal: SIDE_INSET,
+    gap: CARD_GAP,
   },
   card: {
     backgroundColor: colors.ink,
