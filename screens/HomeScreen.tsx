@@ -4,6 +4,7 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { BottomNav, NavTab } from '../components/BottomNav';
 import { Card, CardDivider } from '../components/Card';
 import { ConfirmDialog } from '../components/ConfirmDialog';
+import { FadeIn } from '../components/FadeIn';
 import { Icon } from '../components/Icon';
 import { SectionHeader } from '../components/SectionHeader';
 import { AttentionRow } from '../components/home/AttentionRow';
@@ -105,6 +106,7 @@ export function HomeScreen({ activeTab, onSelectTab }: Props) {
         ]}
         showsVerticalScrollIndicator={false}
       >
+        <FadeIn>
         <View style={styles.intro}>
           <View style={styles.header}>
             <Pressable
@@ -156,17 +158,23 @@ export function HomeScreen({ activeTab, onSelectTab }: Props) {
             />
           </View>
         </View>
+        </FadeIn>
 
-        <ProjectOverviewCard
-          project={project}
-          state={projectState}
-          members={members}
-          today={today}
-          onOpen={goToProjects}
-        />
+        <FadeIn delay={60}>
+          <ProjectOverviewCard
+            project={project}
+            state={projectState}
+            members={members}
+            today={today}
+            onOpen={goToProjects}
+          />
+        </FadeIn>
 
-        <WeekStrip today={today} counts={weekCounts} />
+        <FadeIn delay={120}>
+          <WeekStrip today={today} counts={weekCounts} />
+        </FadeIn>
 
+        <FadeIn delay={180}>
         <View style={styles.section}>
           <SectionHeader title="Up next" actionLabel="See all" onAction={goToProjects} />
           <Card>
@@ -194,6 +202,7 @@ export function HomeScreen({ activeTab, onSelectTab }: Props) {
             )}
           </Card>
         </View>
+        </FadeIn>
 
         {projectState.health === 'ready' ? (
           <View style={styles.readyBanner}>

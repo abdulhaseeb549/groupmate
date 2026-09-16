@@ -3,6 +3,7 @@ import { Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Avatar } from '../components/Avatar';
 import { BottomNav, NavTab } from '../components/BottomNav';
+import { FadeIn } from '../components/FadeIn';
 import { Icon } from '../components/Icon';
 import { InviteModal } from '../components/InviteModal';
 import { Conversation } from '../state/messages';
@@ -38,11 +39,14 @@ export function ChatListScreen({ activeTab, onSelectTab, onOpenConversation }: P
         ]}
         showsVerticalScrollIndicator={false}
       >
-        <View style={styles.header}>
-          <Text style={type.pageTitle}>Chats</Text>
-          <Text style={[type.body, styles.muted]}>{project.name}</Text>
-        </View>
+        <FadeIn>
+          <View style={styles.header}>
+            <Text style={type.pageTitle}>Chats</Text>
+            <Text style={[type.body, styles.muted]}>{project.name}</Text>
+          </View>
+        </FadeIn>
 
+        <FadeIn delay={70}>
         <View style={styles.list}>
           <Pressable
             onPress={() => onOpenConversation({ type: 'group' })}
@@ -110,6 +114,7 @@ export function ChatListScreen({ activeTab, onSelectTab, onOpenConversation }: P
             <Icon name="chevronRight" size={16} color={colors.faint} strokeWidth={2} />
           </Pressable>
         </View>
+        </FadeIn>
       </ScrollView>
 
       <BottomNav active={activeTab} onSelect={onSelectTab} />
