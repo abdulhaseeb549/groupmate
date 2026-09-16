@@ -1,8 +1,9 @@
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { Image, Linking, LayoutAnimation, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { BottomNav, NavTab } from '../components/BottomNav';
 import { Card, CardDivider } from '../components/Card';
+import { ActivitySheet } from '../components/ActivitySheet';
 import { ConfirmDialog } from '../components/ConfirmDialog';
 import { FadeIn } from '../components/FadeIn';
 import { Icon } from '../components/Icon';
@@ -15,6 +16,8 @@ import { Priority, Task } from '../data/tasks';
 import { RequirementState } from '../state/projectState';
 import { useAuth } from '../state/AuthProvider';
 import { useChatUnread } from '../state/chatUnread';
+import { loadLastSeen, markActivitySeen } from '../state/activity';
+import { useNavigation } from '../state/NavigationProvider';
 import { useProject } from '../state/ProjectRepository';
 import { colors, layout, radius, type } from '../theme';
 import { checkForUpdate, UpdateCheckResult } from '../utils/checkForUpdate';
@@ -36,10 +39,15 @@ export function HomeScreen({ activeTab, onSelectTab }: Props) {
   const insets = useSafeAreaInsets();
   const { project, tasks, projectState, members, schedule, setTaskStatus } = useProject();
   const { session, profile, signOut } = useAuth();
-  const { hasUnread } = useChatUnread();
+  const { hasUnread, summaries } = useChatUnread();
+  const { goToChat } = useNavigation();
   const currentUserId = session?.user.id;
   const [showAllAttention, setShowAllAttention] = useState(false);
   const [signOutVisible, setSignOutVisible] = useState(false);
+  const [activityOpen, setActivityOpen] = useState(false);
+  // Null until the stored stamp has loaded — before that nothing can be
+  // called unseen, or the dot would flash on every cold start.
+  const [lastSeen, setLastSeen] = useState<string | null | undefined>(undefined);
   const [updateCheck, setUpdateCheck] = useState<UpdateCheckResult | null>(null);
   const [checkingUpdate, setCheckingUpdate] = useState(false);
   const today = useMemo(() => new Date(), []);
@@ -48,6 +56,35 @@ export function HomeScreen({ activeTab, onSelectTab }: Props) {
   // still loading right after first sign-in.
   const firstName = (profile?.fullName ?? session?.user.email?.split('@')[0] ?? '').split(' ')[0];
   const initials = profile?.initials ?? '··';
+
+  useEffect(() => {
+    if (!currentUserId) return;
+    let cancelled = false;
+    void loadLastSeen(project.id, currentUserId).then((stamp) => {
+      if (!cancelled) setLastSeen(stamp);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [project.id, currentUserId]);
+
+  // The dot used to be painted on unconditionally, under a bell that had
+  // no onPress: it announced things had happened and led nowhere. It now
+  // means one specific thing — something arrived that this device has not
+  // opened the activity list since.
+  const newestActivity = Object.values(summaries)
+    .filter((summary) => summary.lastAuthorId !== currentUserId)
+    .reduce<string>((newest, summary) => (summary.lastAt > newest ? summary.lastAt : newest), '');
+  const hasUnseen =
+    lastSeen !== undefined && (hasUnread || (newestActivity !== '' && (!lastSeen || newestActivity > lastSeen)));
+
+  function openActivity() {
+    setActivityOpen(true);
+    if (currentUserId) {
+      void markActivitySeen(project.id, currentUserId);
+      setLastSeen(new Date().toISOString());
+    }
+  }
 
   function handleSignOut() {
     setSignOutVisible(false);
@@ -129,12 +166,13 @@ export function HomeScreen({ activeTab, onSelectTab }: Props) {
               </Pressable>
             </View>
             <Pressable
+              onPress={openActivity}
               accessibilityRole="button"
-              accessibilityLabel="Notifications"
+              accessibilityLabel={hasUnseen ? 'Activity, new items' : 'Activity'}
               style={({ pressed }) => [styles.bell, pressed && styles.pressed]}
             >
               <Icon name="bell" size={20} color={colors.ink} />
-              <View style={styles.bellDot} />
+              {hasUnseen ? <View style={styles.bellDot} /> : null}
             </Pressable>
           </View>
 
@@ -258,6 +296,12 @@ export function HomeScreen({ activeTab, onSelectTab }: Props) {
       </ScrollView>
 
       <BottomNav active={activeTab} onSelect={onSelectTab} chatUnread={hasUnread} />
+
+      <ActivitySheet
+        visible={activityOpen}
+        onClose={() => setActivityOpen(false)}
+        onOpenConversation={goToChat}
+      />
 
       <ConfirmDialog
         visible={signOutVisible}

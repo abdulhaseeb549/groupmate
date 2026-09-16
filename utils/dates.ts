@@ -41,3 +41,31 @@ export function formatTime(date: Date): string {
   const minutes = date.getMinutes().toString().padStart(2, '0');
   return `${hours12}:${minutes} ${hours24 < 12 ? 'AM' : 'PM'}`;
 }
+
+/**
+ * Compact "how long ago" for activity rows — the unit a feed wants, where
+ * an exact timestamp is noise and the reader only needs to know whether
+ * something is from minutes ago or last week.
+ *
+ * Deliberately stops at weeks: past that, the relative form stops being
+ * easier to read than a date, so it hands over to one.
+ */
+export function formatRelative(iso: string, now: Date = new Date()): string {
+  const then = new Date(iso);
+  const seconds = Math.max(0, Math.round((now.getTime() - then.getTime()) / 1000));
+  if (seconds < 60) return 'now';
+
+  const minutes = Math.round(seconds / 60);
+  if (minutes < 60) return `${minutes}m`;
+
+  const hours = Math.round(minutes / 60);
+  if (hours < 24) return `${hours}h`;
+
+  const days = Math.round(hours / 24);
+  if (days < 7) return `${days}d`;
+
+  const weeks = Math.round(days / 7);
+  if (weeks < 5) return `${weeks}w`;
+
+  return then.toLocaleDateString(undefined, { day: 'numeric', month: 'short' });
+}
