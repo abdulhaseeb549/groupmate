@@ -12,6 +12,7 @@ import {
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { AttachRow } from '../components/AttachRow';
+import { BriefReview } from '../components/BriefReview';
 import { Card } from '../components/Card';
 import { ConfirmDialog } from '../components/ConfirmDialog';
 import { Icon, IconName } from '../components/Icon';
@@ -21,7 +22,6 @@ import { useAuth } from '../state/AuthProvider';
 import { joinProjectByCode } from '../state/projectQueries';
 import { colors, layout, type } from '../theme';
 import { pickPdf, PdfFileInput } from '../utils/pdfPicker';
-import { ReviewView } from './NewProjectScreen';
 
 const MIN_LENGTH = 40;
 type Mode = 'intro' | 'create' | 'join';
@@ -251,12 +251,12 @@ function CreateProjectFlow({ onBack, onDone }: { onBack: () => void; onDone: () 
         </View>
 
         {(phase === 'review' || phase === 'committing') && extracted ? (
-          <ReviewView
+          <BriefReview
             extracted={extracted}
-            project={{ name: extracted.projectName }}
             today={new Date()}
             error={error}
             committing={phase === 'committing'}
+            buildLabel="Create my project →"
             onStartOver={() => {
               setExtracted(null);
               setError(null);

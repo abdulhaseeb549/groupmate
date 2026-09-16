@@ -12,15 +12,13 @@ import {
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { AttachRow } from '../components/AttachRow';
-import { Card, CardDivider } from '../components/Card';
+import { BriefReview } from '../components/BriefReview';
 import { ConfirmDialog } from '../components/ConfirmDialog';
 import { Icon } from '../components/Icon';
 import { commitExtractedProject, ExtractedProjectData, parseBrief } from '../state/briefParsing';
 import { useNavigation } from '../state/NavigationProvider';
 import { useProject } from '../state/ProjectRepository';
 import { colors, layout, type } from '../theme';
-import { contentIcon } from '../utils/contentIcon';
-import { formatDueDate } from '../utils/dates';
 import { pickPdf, PdfFileInput } from '../utils/pdfPicker';
 
 const MIN_LENGTH = 40;
@@ -128,9 +126,8 @@ export function NewProjectScreen() {
             </Text>
           </View>
         ) : (phase === 'review' || phase === 'committing') && extracted ? (
-          <ReviewView
+          <BriefReview
             extracted={extracted}
-            project={project}
             today={today}
             error={error}
             committing={phase === 'committing'}
@@ -222,112 +219,6 @@ export function NewProjectScreen() {
   );
 }
 
-export function ReviewView({
-  extracted,
-  project,
-  today,
-  error,
-  committing,
-  onStartOver,
-  onBuildPlan,
-}: {
-  extracted: ExtractedProjectData;
-  project: { name: string };
-  today: Date;
-  error: string | null;
-  committing: boolean;
-  onStartOver: () => void;
-  onBuildPlan: () => void;
-}) {
-  return (
-    <View style={styles.review}>
-      <View style={styles.intro}>
-        <Text style={[type.caption, styles.muted]}>Here's what I found — nothing's changed yet</Text>
-        <Text style={[type.pageTitle, styles.ink]} numberOfLines={2}>
-          {extracted.projectName}
-        </Text>
-        <Text style={[type.body, styles.muted]}>
-          {extracted.course} · Due {formatDueDate(extracted.dueDate, today)}
-        </Text>
-      </View>
-
-      <View style={styles.section}>
-        <Text style={[type.button, styles.ink]}>
-          {extracted.requirements.length} {extracted.requirements.length === 1 ? 'requirement' : 'requirements'}
-        </Text>
-        <Card>
-          {extracted.requirements.map((r, i) => (
-            <View key={r.label}>
-              {i > 0 ? <CardDivider inset={16 + 16 + 10} /> : null}
-              <View style={styles.requirementRow}>
-                <View style={styles.requirementIcon}>
-                  <Icon name={contentIcon(r.label)} size={16} color={colors.muted} strokeWidth={1.8} />
-                </View>
-                <Text style={[type.body, styles.ink, styles.requirementLabel]}>{r.label}</Text>
-              </View>
-            </View>
-          ))}
-        </Card>
-      </View>
-
-      <View style={styles.section}>
-        <Text style={[type.button, styles.ink]}>
-          {extracted.tasks.length} {extracted.tasks.length === 1 ? 'task' : 'tasks'}
-        </Text>
-        <Text style={[type.caption, styles.muted]}>Unclaimed until someone on your team picks it up</Text>
-        <Card>
-          {extracted.tasks.map((t, i) => (
-            <View key={i}>
-              {i > 0 ? <CardDivider inset={16 + 16 + 10} /> : null}
-              <View style={styles.requirementRow}>
-                <View style={styles.requirementIcon}>
-                  <Icon name={contentIcon(t.title)} size={16} color={colors.muted} strokeWidth={1.8} />
-                </View>
-                <Text style={[type.body, styles.ink, styles.requirementLabel]} numberOfLines={2}>
-                  {t.title}
-                </Text>
-              </View>
-            </View>
-          ))}
-        </Card>
-      </View>
-
-      {error ? (
-        <View style={styles.errorBox}>
-          <Icon name="exclamation" size={16} color={colors.redText} strokeWidth={2.2} />
-          <Text style={[type.caption, styles.errorText]}>{error}</Text>
-        </View>
-      ) : null}
-
-      <View style={styles.reviewActions}>
-        <Pressable
-          onPress={onStartOver}
-          disabled={committing}
-          accessibilityRole="button"
-          style={({ pressed }) => [styles.secondaryButton, pressed && styles.pressed]}
-        >
-          <Text style={[type.button, styles.ink]}>Start over</Text>
-        </Pressable>
-        <Pressable
-          onPress={onBuildPlan}
-          disabled={committing}
-          accessibilityRole="button"
-          style={({ pressed }) => [styles.submit, styles.buildButton, pressed && !committing && styles.submitPressed]}
-        >
-          {committing ? (
-            <>
-              <ActivityIndicator color={colors.onInk} />
-              <Text style={[type.button, styles.submitLabel]}>Building your plan…</Text>
-            </>
-          ) : (
-            <Text style={[type.button, styles.submitLabel]}>Build my plan →</Text>
-          )}
-        </Pressable>
-      </View>
-    </View>
-  );
-}
-
 const styles = StyleSheet.create({
   screen: {
     flex: 1,
@@ -410,40 +301,5 @@ const styles = StyleSheet.create({
   },
   submitLabel: {
     color: colors.onInk,
-  },
-  review: {
-    gap: 22,
-  },
-  section: {
-    gap: 8,
-  },
-  requirementRow: {
-    flexDirection: 'row',
-    alignItems: 'flex-start',
-    gap: 10,
-    minHeight: 44,
-    paddingVertical: 14,
-    paddingHorizontal: 16,
-  },
-  requirementIcon: {
-    marginTop: 3,
-  },
-  requirementLabel: {
-    flex: 1,
-  },
-  reviewActions: {
-    flexDirection: 'row',
-    gap: 10,
-  },
-  secondaryButton: {
-    flex: 1,
-    height: 52,
-    borderRadius: 16,
-    backgroundColor: colors.surfaceMuted,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  buildButton: {
-    flex: 2,
   },
 });
