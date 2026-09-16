@@ -140,11 +140,13 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
     backgroundColor: purpleHalo,
+    // No elevation here on purpose: Android draws an elevation shadow as a
+    // rectangle behind this translucent disc, which turned the soft halo
+    // into a hard boxy ring. The button inside carries the lift instead.
     shadowColor: colors.purple,
     shadowOpacity: 0.3,
     shadowRadius: 18,
     shadowOffset: { width: 0, height: 10 },
-    elevation: 10,
   },
   createButton: {
     width: layout.createButtonSize,

@@ -4,10 +4,8 @@ import {
   Animated,
   Dimensions,
   FlatList,
-  KeyboardAvoidingView,
   Linking,
   Modal,
-  Platform,
   Pressable,
   StyleSheet,
   Text,
@@ -18,6 +16,7 @@ import { LinearGradient } from 'expo-linear-gradient';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Avatar } from '../components/Avatar';
 import { Icon, IconName } from '../components/Icon';
+import { KeyboardAvoider } from '../components/KeyboardAvoider';
 import { TaskDetailModal } from '../components/TaskDetailModal';
 import { TaskStatusDot } from '../components/TaskStatusDot';
 import { Member } from '../data/member';
@@ -229,7 +228,7 @@ export function ChatScreen({ conversation, onBack }: Props) {
 
   return (
     <>
-      <KeyboardAvoidingView style={styles.screen} behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
+      <KeyboardAvoider style={styles.screen}>
         <View style={[styles.header, { paddingTop: Math.max(insets.top, 40) + 10 }]}>
           <Pressable
             onPress={onBack}
@@ -361,7 +360,7 @@ export function ChatScreen({ conversation, onBack }: Props) {
             </LinearGradient>
           </Pressable>
         </View>
-      </KeyboardAvoidingView>
+      </KeyboardAvoider>
 
       <TaskDetailModal taskId={openTaskId} onClose={() => setOpenTaskId(null)} onClaimed={handleClaimed} />
       <TaskClaimedModal task={claimedTask} onClose={() => setClaimedTask(null)} onView={setOpenTaskId} />

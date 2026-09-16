@@ -52,7 +52,9 @@ export function ProjectOverviewCard({ project, state, members, today, onOpen }: 
           </View>
           <View style={[styles.pill, { backgroundColor: health.bg }]}>
             <View style={[styles.pillDot, { backgroundColor: health.dot }]} />
-            <Text style={[type.badge, { color: health.text }]}>{health.label}</Text>
+            <Text style={[type.badge, { color: health.text }]} numberOfLines={1}>
+              {health.label}
+            </Text>
           </View>
           {/* Muted, not faint: faint all but disappears on the pale purple. */}
           <Icon name="chevronRight" size={18} color={colors.muted} strokeWidth={2} />
@@ -155,9 +157,14 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     gap: 6,
-    height: layout.pillHeight,
+    // See ProjectsScreen's healthPill: a fixed height clipped the label to a
+    // half-visible second line at large system font scales. This row also
+    // holds a flex:1 title, so the pill has to refuse to shrink as well.
+    minHeight: layout.pillHeight,
+    paddingVertical: 3,
     paddingHorizontal: 10,
     borderRadius: layout.pillRadius,
+    flexShrink: 0,
   },
   pillDot: {
     width: 6,

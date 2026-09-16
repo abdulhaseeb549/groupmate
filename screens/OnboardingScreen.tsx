@@ -1,8 +1,6 @@
 import { useEffect, useState } from 'react';
 import {
   ActivityIndicator,
-  KeyboardAvoidingView,
-  Platform,
   Pressable,
   ScrollView,
   StyleSheet,
@@ -16,6 +14,7 @@ import { BriefReview } from '../components/BriefReview';
 import { Card } from '../components/Card';
 import { ConfirmDialog } from '../components/ConfirmDialog';
 import { Icon, IconName } from '../components/Icon';
+import { KeyboardAvoider } from '../components/KeyboardAvoider';
 import { supabase } from '../lib/supabase';
 import { commitExtractedProject, ExtractedProjectData, parseBrief } from '../state/briefParsing';
 import { useAuth } from '../state/AuthProvider';
@@ -229,7 +228,7 @@ function CreateProjectFlow({ onBack, onDone }: { onBack: () => void; onDone: () 
   }
 
   return (
-    <KeyboardAvoidingView style={styles.screen} behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
+    <KeyboardAvoider style={styles.screen}>
       <ScrollView
         contentContainerStyle={[
           styles.content,
@@ -335,7 +334,7 @@ function CreateProjectFlow({ onBack, onDone }: { onBack: () => void; onDone: () 
           </>
         )}
       </ScrollView>
-    </KeyboardAvoidingView>
+    </KeyboardAvoider>
   );
 }
 
@@ -385,7 +384,7 @@ function JoinProjectFlow({ onBack, onDone }: { onBack: () => void; onDone: () =>
   }
 
   return (
-    <KeyboardAvoidingView style={styles.screen} behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
+    <KeyboardAvoider style={styles.screen}>
       <ScrollView
         contentContainerStyle={[
           styles.content,
@@ -462,7 +461,7 @@ function JoinProjectFlow({ onBack, onDone }: { onBack: () => void; onDone: () =>
           )}
         </Pressable>
       </ScrollView>
-    </KeyboardAvoidingView>
+    </KeyboardAvoider>
   );
 }
 

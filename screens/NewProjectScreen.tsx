@@ -1,8 +1,6 @@
 import { useMemo, useState } from 'react';
 import {
   ActivityIndicator,
-  KeyboardAvoidingView,
-  Platform,
   Pressable,
   ScrollView,
   StyleSheet,
@@ -15,6 +13,7 @@ import { AttachRow } from '../components/AttachRow';
 import { BriefReview } from '../components/BriefReview';
 import { ConfirmDialog } from '../components/ConfirmDialog';
 import { Icon } from '../components/Icon';
+import { KeyboardAvoider } from '../components/KeyboardAvoider';
 import { commitExtractedProject, ExtractedProjectData, parseBrief } from '../state/briefParsing';
 import { useNavigation } from '../state/NavigationProvider';
 import { useProject } from '../state/ProjectRepository';
@@ -99,7 +98,7 @@ export function NewProjectScreen() {
   }
 
   return (
-    <KeyboardAvoidingView style={styles.screen} behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
+    <KeyboardAvoider style={styles.screen}>
       <ScrollView
         contentContainerStyle={[styles.content, { paddingTop: Math.max(insets.top, 32) + 14, paddingBottom: insets.bottom + 32 }]}
         keyboardShouldPersistTaps="handled"
@@ -215,7 +214,7 @@ export function NewProjectScreen() {
         onConfirm={confirmCommit}
         onCancel={() => setConfirming(false)}
       />
-    </KeyboardAvoidingView>
+    </KeyboardAvoider>
   );
 }
 

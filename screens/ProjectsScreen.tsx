@@ -94,7 +94,9 @@ export function ProjectsScreen({ activeTab, onSelectTab }: Props) {
           <View style={styles.statusTop}>
             <View style={[styles.healthPill, { backgroundColor: health.bg }]}>
               <View style={[styles.healthDot, { backgroundColor: health.dot }]} />
-              <Text style={[type.badge, { color: health.text }]}>{health.label}</Text>
+              <Text style={[type.badge, { color: health.text }]} numberOfLines={1}>
+                {health.label}
+              </Text>
             </View>
             <Text style={[type.caption, { color: colors.muted }]}>{daysLabel}</Text>
           </View>
@@ -378,9 +380,14 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     gap: 6,
-    height: layout.pillHeight,
+    // minHeight + padding rather than a fixed height, and no shrinking: at a
+    // large system font scale "On track" was wrapping to a second line and
+    // getting clipped by the fixed 24px box.
+    minHeight: layout.pillHeight,
+    paddingVertical: 3,
     paddingHorizontal: 10,
     borderRadius: layout.pillRadius,
+    flexShrink: 0,
   },
   healthDot: {
     width: 6,

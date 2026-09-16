@@ -1,8 +1,6 @@
 import { useEffect, useState } from 'react';
 import {
   ActivityIndicator,
-  KeyboardAvoidingView,
-  Platform,
   Pressable,
   ScrollView,
   StyleSheet,
@@ -13,6 +11,7 @@ import {
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { GoogleMark } from '../components/GoogleMark';
 import { Icon } from '../components/Icon';
+import { KeyboardAvoider } from '../components/KeyboardAvoider';
 import { supabase } from '../lib/supabase';
 import { useAuth } from '../state/AuthProvider';
 import { colors, layout, type } from '../theme';
@@ -102,10 +101,7 @@ export function AuthScreen() {
   }
 
   return (
-    <KeyboardAvoidingView
-      style={styles.screen}
-      behavior={Platform.OS === 'ios' ? 'padding' : undefined}
-    >
+    <KeyboardAvoider style={styles.screen}>
       <ScrollView
         contentContainerStyle={[
           styles.content,
@@ -254,7 +250,7 @@ export function AuthScreen() {
           </Pressable>
         </View>
       </ScrollView>
-    </KeyboardAvoidingView>
+    </KeyboardAvoider>
   );
 }
 

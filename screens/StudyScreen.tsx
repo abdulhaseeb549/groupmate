@@ -1,9 +1,7 @@
 import { useEffect, useState } from 'react';
 import {
   ActivityIndicator,
-  KeyboardAvoidingView,
   LayoutAnimation,
-  Platform,
   Pressable,
   ScrollView,
   StyleSheet,
@@ -17,6 +15,7 @@ import { BottomNav, NavTab } from '../components/BottomNav';
 import { Card, CardDivider } from '../components/Card';
 import { ConfirmDialog } from '../components/ConfirmDialog';
 import { Icon } from '../components/Icon';
+import { KeyboardAvoider } from '../components/KeyboardAvoider';
 import { useAuth } from '../state/AuthProvider';
 import { useNavigation } from '../state/NavigationProvider';
 import {
@@ -420,7 +419,7 @@ function SetupView({
   onGenerate: () => void;
 }) {
   return (
-    <KeyboardAvoidingView style={styles.flex} behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
+    <KeyboardAvoider style={styles.flex}>
       <ScrollView
         contentContainerStyle={[
           styles.content,
@@ -533,7 +532,7 @@ function SetupView({
           )}
         </Pressable>
       </ScrollView>
-    </KeyboardAvoidingView>
+    </KeyboardAvoider>
   );
 }
 
