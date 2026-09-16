@@ -442,8 +442,8 @@ const styles = StyleSheet.create({
     flex: 1,
   },
   mascot: {
-    width: 85,
-    height: 85 / 1.2,
+    width: 112,
+    height: 112 / 1.2,
   },
   section: {
     gap: 12,
