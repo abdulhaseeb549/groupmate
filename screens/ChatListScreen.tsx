@@ -1,8 +1,10 @@
+import { useState } from 'react';
 import { Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Avatar } from '../components/Avatar';
 import { BottomNav, NavTab } from '../components/BottomNav';
 import { Icon } from '../components/Icon';
+import { InviteModal } from '../components/InviteModal';
 import { Conversation } from '../state/messages';
 import { useAuth } from '../state/AuthProvider';
 import { useProject } from '../state/ProjectRepository';
@@ -25,6 +27,7 @@ export function ChatListScreen({ activeTab, onSelectTab, onOpenConversation }: P
   const { session } = useAuth();
   const currentUserId = session?.user.id;
   const teammates = members.filter((m) => m.id !== currentUserId);
+  const [inviteOpen, setInviteOpen] = useState(false);
 
   return (
     <View style={styles.screen}>
@@ -82,17 +85,35 @@ export function ChatListScreen({ activeTab, onSelectTab, onOpenConversation }: P
             </Pressable>
           ))}
 
-          {teammates.length === 0 ? (
-            <View style={styles.emptyBox}>
-              <Text style={[type.caption, styles.muted, styles.centerText]}>
-                Invite a teammate to start a direct message with them.
+          {/* The only way anyone else gets into this project — and so into
+              this list — is an invite code, so the way to send one lives
+              here rather than only behind the "+" menu. */}
+          <Pressable
+            onPress={() => setInviteOpen(true)}
+            accessibilityRole="button"
+            accessibilityLabel="Invite teammates"
+            style={({ pressed }) => [styles.row, pressed && styles.rowPressed]}
+          >
+            <View style={styles.inviteTile}>
+              <Icon name="plus" size={20} color={colors.purple} strokeWidth={2.2} />
+            </View>
+            <View style={styles.rowText}>
+              <Text style={[type.taskTitle, styles.action]} numberOfLines={1}>
+                Invite teammates
+              </Text>
+              <Text style={[type.caption, styles.muted]} numberOfLines={1}>
+                {teammates.length === 0
+                  ? 'Share a code so they can join and message you'
+                  : 'Share your project code with someone else'}
               </Text>
             </View>
-          ) : null}
+            <Icon name="chevronRight" size={16} color={colors.faint} strokeWidth={2} />
+          </Pressable>
         </View>
       </ScrollView>
 
       <BottomNav active={activeTab} onSelect={onSelectTab} />
+      <InviteModal visible={inviteOpen} onClose={() => setInviteOpen(false)} />
     </View>
   );
 }
@@ -114,9 +135,6 @@ const styles = StyleSheet.create({
   },
   ink: {
     color: colors.ink,
-  },
-  centerText: {
-    textAlign: 'center',
   },
   list: {
     backgroundColor: colors.surface,
@@ -143,13 +161,24 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
   },
+  // Dashed, unlike the filled member tiles: this row is an action, not a
+  // conversation you can open.
+  inviteTile: {
+    width: 42,
+    height: 42,
+    borderRadius: 21,
+    borderWidth: 1.5,
+    borderColor: colors.purpleSoft,
+    borderStyle: 'dashed',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  action: {
+    color: colors.purple,
+  },
   rowText: {
     flex: 1,
     minWidth: 0,
     gap: 1,
-  },
-  emptyBox: {
-    paddingVertical: 24,
-    paddingHorizontal: 12,
   },
 });

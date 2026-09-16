@@ -26,7 +26,9 @@ export function InviteModal({ visible, onClose }: Props) {
   async function share() {
     try {
       await Share.share({
-        message: `Join my "${project.name}" group on GroupMate — use invite code ${project.inviteCode} when you sign up.`,
+        message:
+          `Join my "${project.name}" group on GroupMate with invite code ${project.inviteCode} — ` +
+          `enter it when you sign up, or tap "Join a project" if you already have an account.`,
       });
     } catch {
       // User dismissed the share sheet — nothing to handle.
@@ -49,7 +51,8 @@ export function InviteModal({ visible, onClose }: Props) {
           <Pressable style={styles.card} onPress={(e) => e.stopPropagation()}>
             <Text style={[type.projectTitle, styles.ink]}>Invite teammates</Text>
             <Text style={[type.body, styles.muted]}>
-              Anyone with this code can join {project.name} when they sign up.
+              Anyone with this code can join {project.name} — at sign-up, or from "Join a project" if they already
+              have an account. Once they're in, they'll show up in your chats.
             </Text>
 
             <View style={styles.codeBox}>
