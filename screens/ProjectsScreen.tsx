@@ -14,6 +14,7 @@ import { RebalanceSuggestions } from '../components/RebalanceSuggestions';
 import { RequirementEditDialog } from '../components/RequirementEditDialog';
 import { Requirement } from '../data/requirements';
 import { ProjectHealth, RequirementStatus } from '../state/projectState';
+import { ProjectSwitcher } from '../components/ProjectSwitcher';
 import { useAuth } from '../state/AuthProvider';
 import { useChatUnread } from '../state/chatUnread';
 import { useProject } from '../state/ProjectRepository';
@@ -43,12 +44,13 @@ const HEALTH: Record<ProjectHealth, { label: string; bg: string; dot: string; te
 
 export function ProjectsScreen({ activeTab, onSelectTab }: Props) {
   const insets = useSafeAreaInsets();
-  const { project, tasks, projectState, schedule, members } = useProject();
+  const { project, tasks, projectState, schedule, members, projects } = useProject();
   const { session } = useAuth();
   const { hasUnread } = useChatUnread();
   const currentUserId = session?.user.id;
   const [filter, setFilter] = useState<(typeof FILTERS)[number]>('My tasks');
   const [capacityVisible, setCapacityVisible] = useState(false);
+  const [switcherVisible, setSwitcherVisible] = useState(false);
   const [dueDateVisible, setDueDateVisible] = useState(false);
   const [editingRequirement, setEditingRequirement] = useState<Requirement | null>(null);
   const [section, setSection] = useState<Section>('Timeline');
@@ -76,7 +78,19 @@ export function ProjectsScreen({ activeTab, onSelectTab }: Props) {
         showsVerticalScrollIndicator={false}
       >
         <View style={styles.header}>
-          <Text style={type.pageTitle}>{project.name}</Text>
+          <Pressable
+            onPress={() => setSwitcherVisible(true)}
+            accessibilityRole="button"
+            accessibilityLabel={`${project.name}, switch project`}
+            style={({ pressed }) => [styles.titleRow, pressed && styles.titlePressed]}
+          >
+            <Text style={type.pageTitle} numberOfLines={1}>
+              {project.name}
+            </Text>
+            {projects.length > 1 ? (
+              <Icon name="chevronDown" size={18} color={colors.muted} strokeWidth={2} />
+            ) : null}
+          </Pressable>
           <View style={styles.dueRow}>
             <Text style={[type.body, { color: colors.muted }]}>
               {project.team} · Due {formatDueDate(project.dueDate, today)}
@@ -249,6 +263,7 @@ export function ProjectsScreen({ activeTab, onSelectTab }: Props) {
 
       <BottomNav active={activeTab} onSelect={onSelectTab} chatUnread={hasUnread} />
 
+      <ProjectSwitcher visible={switcherVisible} onClose={() => setSwitcherVisible(false)} />
       <CapacityModal visible={capacityVisible} onClose={() => setCapacityVisible(false)} />
       <DueDateModal visible={dueDateVisible} onClose={() => setDueDateVisible(false)} />
       <RequirementEditDialog requirement={editingRequirement} onClose={() => setEditingRequirement(null)} />
@@ -273,6 +288,18 @@ const styles = StyleSheet.create({
   scrollContent: {
     paddingHorizontal: layout.screenPadding,
     gap: spacing.xl,
+  },
+  titleRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    // Keeps the tap target a comfortable height without shifting the
+    // title off the screen padding.
+    paddingVertical: 4,
+    marginVertical: -4,
+  },
+  titlePressed: {
+    opacity: 0.6,
   },
   header: {
     gap: 4,

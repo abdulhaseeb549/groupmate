@@ -60,6 +60,16 @@ type ProfileRow = {
   avatar_fg: string;
 };
 
+/** A project as it appears in the switcher — enough to identify and pick it, without loading its tasks. */
+export type ProjectSummary = {
+  id: string;
+  name: string;
+  course: string;
+  dueDate: string;
+  role: 'owner' | 'member';
+  memberCount: number;
+};
+
 export type ProjectData = {
   /** Null only if a signed-in user somehow has no seeded project yet — see the migration's seed_demo_project(). */
   project: Project | null;
@@ -107,27 +117,90 @@ function toRequirement(row: RequirementRow): Requirement {
   return { id: row.id, label: row.label };
 }
 
-/** Everything Home/Projects need for the signed-in user's one project. */
-export async function fetchProjectData(userId: string): Promise<ProjectData> {
+/**
+ * One row per project this user belongs to — what the project switcher
+ * lists. Cheap enough to refetch alongside the active project's full data:
+ * three queries regardless of how many projects there are.
+ */
+export async function fetchProjectSummaries(userId: string): Promise<ProjectSummary[]> {
+  const { data: membershipRows, error: membershipError } = await supabase
+    .from('project_members')
+    .select('project_id, role, joined_at')
+    .eq('user_id', userId)
+    .order('joined_at');
+  if (membershipError) throw membershipError;
+
+  const rows = (membershipRows ?? []) as { project_id: string; role: 'owner' | 'member'; joined_at: string }[];
+  if (rows.length === 0) return [];
+
+  const projectIds = rows.map((r) => r.project_id);
+  const [{ data: projectRows, error: projectError }, { data: allMembers, error: countError }] = await Promise.all([
+    supabase.from('projects').select('id, name, course, due_date').in('id', projectIds),
+    supabase.from('project_members').select('project_id').in('project_id', projectIds),
+  ]);
+  if (projectError) throw projectError;
+  if (countError) throw countError;
+
+  const byId = new Map((projectRows ?? []).map((p) => [p.id as string, p as { id: string; name: string; course: string; due_date: string }]));
+  const memberCounts = new Map<string, number>();
+  for (const row of (allMembers ?? []) as { project_id: string }[]) {
+    memberCounts.set(row.project_id, (memberCounts.get(row.project_id) ?? 0) + 1);
+  }
+
+  // Membership order (joined_at) rather than project order: your oldest
+  // project stays first in the list even if someone renames theirs.
+  return rows
+    .map((row) => {
+      const project = byId.get(row.project_id);
+      if (!project) return null;
+      return {
+        id: project.id,
+        name: project.name,
+        course: project.course,
+        dueDate: project.due_date,
+        role: row.role,
+        memberCount: memberCounts.get(project.id) ?? 1,
+      };
+    })
+    .filter((p): p is ProjectSummary => p !== null);
+}
+
+/**
+ * Everything Home/Projects need for one project.
+ *
+ * activeProjectId picks which — it is verified against this user's own
+ * memberships before use, so a stale stored id (a project they left, or
+ * one that was deleted) falls back rather than returning nothing. With no
+ * id, the earliest-joined project wins: this used to be .limit(1) with no
+ * ordering, which Postgres does not guarantee, so a user in two projects
+ * could get either one on any given launch.
+ */
+export async function fetchProjectData(userId: string, activeProjectId?: string | null): Promise<ProjectData> {
   // Looked up via project_members, not projects.owner_id: since migration
   // 0011, a user can be a member of a project they didn't create (joined
   // via invite code) and owns no project row at all — owner_id would find
   // nothing for them.
-  const { data: membershipRow, error: membershipError } = await supabase
+  const { data: membershipRows, error: membershipError } = await supabase
     .from('project_members')
     .select('project_id')
     .eq('user_id', userId)
-    .limit(1)
-    .maybeSingle();
+    .order('joined_at');
   if (membershipError) throw membershipError;
-  if (!membershipRow) {
+
+  const memberships = (membershipRows ?? []) as { project_id: string }[];
+  if (memberships.length === 0) {
     return { project: null, tasks: [], requirements: [], taskRequirements: [], taskDependencies: [], members: [] };
   }
+
+  const selectedId =
+    activeProjectId && memberships.some((m) => m.project_id === activeProjectId)
+      ? activeProjectId
+      : memberships[0].project_id;
 
   const { data: projectRow, error: projectError } = await supabase
     .from('projects')
     .select('id, name, team, course, due_date, member_hours_per_day, invite_code')
-    .eq('id', membershipRow.project_id)
+    .eq('id', selectedId)
     .maybeSingle();
   if (projectError) throw projectError;
   if (!projectRow) {

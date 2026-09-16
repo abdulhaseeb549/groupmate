@@ -11,6 +11,7 @@ import { TaskRequirement } from '../data/taskRequirements';
 import { TaskDependency } from '../data/taskDependencies';
 import { NoProjectShell } from '../screens/NoProjectShell';
 import { useAuth } from './AuthProvider';
+import { loadActiveProjectId, saveActiveProjectId } from './activeProject';
 import { ChatUnreadProvider } from './chatUnread';
 import { useNavigation } from './NavigationProvider';
 import { deriveProjectState, ProjectState } from './projectState';
@@ -20,6 +21,7 @@ import {
   createTask,
   deleteTask,
   fetchProjectData,
+  fetchProjectSummaries,
   persistMemberHoursPerDay,
   persistTaskAssignee,
   persistTaskStatus,
@@ -31,6 +33,7 @@ import {
   updateRequirementLabel,
   updateTaskFields,
 } from './projectQueries';
+import type { ProjectSummary } from './projectQueries';
 
 export type NewTaskFields = {
   title: string;
@@ -74,6 +77,10 @@ type ProjectRepository = {
   regenerateInviteCode: () => Promise<{ error: string | null }>;
   /** Re-fetches from Supabase — used both by the error screen's retry and after replacing the project (e.g. from a new brief). */
   refetch: () => void;
+  /** Every project this user belongs to, oldest membership first — what the switcher lists. */
+  projects: ProjectSummary[];
+  /** Switches which project the app is showing, and remembers it for next launch. */
+  switchProject: (projectId: string) => void;
 };
 
 const ProjectContext = createContext<ProjectRepository | null>(null);
@@ -90,6 +97,7 @@ type FetchState =
       taskRequirements: TaskRequirement[];
       taskDependencies: TaskDependency[];
       members: Member[];
+      projects: ProjectSummary[];
     };
 
 /**
@@ -109,9 +117,27 @@ export function ProjectProvider({ children }: { children: ReactNode }) {
     let cancelled = false;
     setState({ status: 'loading' });
 
-    fetchProjectData(userId)
-      .then((data) => {
+    // Read from storage on every fetch, never cached in state:
+    // commitExtractedProject writes it from outside this provider, so a
+    // project created during onboarding has to be picked up by the
+    // refetch that follows it.
+    (async () => {
+      const storedId = await loadActiveProjectId(userId);
+      const [data, projects] = await Promise.all([
+        fetchProjectData(userId, storedId),
+        fetchProjectSummaries(userId),
+      ]);
+      return { data, projects, storedId };
+    })()
+      .then(({ data, projects, storedId }) => {
         if (cancelled) return;
+        // Stored id was absent or stale (a project that was deleted, or one
+        // this user is no longer in) — fetchProjectData fell back, so write
+        // down what actually loaded. Not via state: that would re-run this
+        // effect and loop.
+        if (data.project && data.project.id !== storedId) {
+          void saveActiveProjectId(userId, data.project.id);
+        }
         if (!data.project) {
           // The normal steady-state for a fresh signup with no invite code
           // (see migration 0016) — signup no longer auto-seeds a project,
@@ -127,6 +153,7 @@ export function ProjectProvider({ children }: { children: ReactNode }) {
           taskRequirements: data.taskRequirements,
           taskDependencies: data.taskDependencies,
           members: data.members,
+          projects,
         });
       })
       .catch((err: unknown) => {
@@ -142,6 +169,14 @@ export function ProjectProvider({ children }: { children: ReactNode }) {
 
   const refetch = () => setRetryCount((n) => n + 1);
 
+  function switchProject(projectId: string) {
+    if (!userId) return;
+    // Awaited before the refetch, not fired alongside it: the effect reads
+    // this value back out of storage, so racing them could reload the
+    // project you just switched away from.
+    void saveActiveProjectId(userId, projectId).then(refetch);
+  }
+
   if (state.status === 'loading') {
     return <LoadingScreen />;
   }
@@ -154,12 +189,18 @@ export function ProjectProvider({ children }: { children: ReactNode }) {
 
   return (
     <ProjectProviderReady
+      // Remounts the whole subtree on a project switch, so no screen can
+      // keep stale per-project state (an open chat thread, a task filter)
+      // across two different projects.
+      key={state.project.id}
       project={state.project}
       initialTasks={state.tasks}
       requirements={state.requirements}
       taskRequirements={state.taskRequirements}
       taskDependencies={state.taskDependencies}
       members={state.members}
+      projects={state.projects}
+      switchProject={switchProject}
       refetch={refetch}
     >
       {children}
@@ -174,6 +215,8 @@ function ProjectProviderReady({
   taskRequirements: initialTaskRequirements,
   taskDependencies,
   members: initialMembers,
+  projects,
+  switchProject,
   refetch,
   children,
 }: {
@@ -183,6 +226,8 @@ function ProjectProviderReady({
   taskRequirements: TaskRequirement[];
   taskDependencies: TaskDependency[];
   members: Member[];
+  projects: ProjectSummary[];
+  switchProject: (projectId: string) => void;
   refetch: () => void;
   children: ReactNode;
 }) {
@@ -405,6 +450,8 @@ function ProjectProviderReady({
     updateDueDate,
     regenerateInviteCode: regenerateInviteCodeAction,
     refetch,
+    projects,
+    switchProject,
   };
 
   return (

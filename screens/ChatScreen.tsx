@@ -471,22 +471,14 @@ function MessageRow({
   return (
     <MessageEntry animate={isNew} onSettled={onSettled}>
       <View style={[styles.row, isOwn && styles.rowOwn]}>
-        {!isOwn ? (
-          <View style={styles.avatarSlot}>
-            {showHeader ? (
-              author ? (
-                <Avatar {...author} size={28} />
-              ) : (
-                <View style={styles.avatarPlaceholder} />
-              )
-            ) : null}
-          </View>
-        ) : null}
         <View style={[styles.bubbleColumn, isOwn && styles.bubbleColumnOwn]}>
           {showHeader ? (
-            <Text style={[type.metadata, styles.author, isOwn && styles.authorOwn]} numberOfLines={1}>
-              {name} · {time}
-            </Text>
+            <View style={[styles.authorRow, isOwn && styles.authorRowOwn]}>
+              {!isOwn && author ? <Avatar {...author} size={18} /> : null}
+              <Text style={[type.metadata, styles.author]} numberOfLines={1}>
+                {name} · {time}
+              </Text>
+            </View>
           ) : null}
           <View ref={bubbleRef} collapsable={false}>
             {message.sharedTaskId !== null ? (
@@ -971,19 +963,23 @@ const styles = StyleSheet.create({
     gap: 10,
   },
   row: {
-    flexDirection: 'row',
-    gap: 8,
-    maxWidth: '86%',
+    // Both sides now sit at exactly layout.screenPadding from their own
+    // edge — the list's padding is the only inset either one gets.
+    alignSelf: 'flex-start',
+    // 78% rather than 86%: a bubble that nearly spans the screen stops
+    // reading as a side, which is the thing that tells you who spoke.
+    maxWidth: '78%',
   },
   rowOwn: {
     alignSelf: 'flex-end',
   },
-  avatarSlot: {
-    width: 28,
+  authorRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
   },
-  avatarPlaceholder: {
-    width: 28,
-    height: 28,
+  authorRowOwn: {
+    justifyContent: 'flex-end',
   },
   bubbleColumn: {
     gap: 3,
@@ -994,11 +990,7 @@ const styles = StyleSheet.create({
   },
   author: {
     color: colors.muted,
-    marginLeft: 2,
-  },
-  authorOwn: {
-    marginLeft: 0,
-    marginRight: 2,
+    flexShrink: 1,
   },
   bubble: {
     borderRadius: 18,

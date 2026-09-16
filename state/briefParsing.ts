@@ -1,4 +1,5 @@
 import { supabase } from '../lib/supabase';
+import { saveActiveProjectId } from './activeProject';
 import { Priority } from '../data/tasks';
 import { PdfFileInput } from '../utils/pdfPicker';
 
@@ -57,10 +58,17 @@ export async function parseBrief(input: ParseBriefInput): Promise<ParseBriefResu
 }
 
 /**
- * Persists a reviewed, user-confirmed extraction as this user's one
- * project — replacing whatever they had before. Runs client-side (not in
- * the Edge Function) through the same owner-scoped RLS policies as every
- * other write in the app; there's no privileged step here.
+ * Persists a reviewed, user-confirmed extraction as a new project, and
+ * makes it the active one. Runs client-side (not in the Edge Function)
+ * through the same membership-scoped RLS policies as every other write in
+ * the app; there's no privileged step here.
+ *
+ * This used to delete every project the caller owned before inserting,
+ * which is what made one-project-per-user true — project_members has
+ * always had a composite (project_id, user_id) key and could hold as many
+ * as you like. Creating is now purely additive: the delete would destroy a
+ * project you were still working on and, because it cascades, everything
+ * your teammates had in it too.
  */
 export async function commitExtractedProject(extracted: ExtractedProjectData): Promise<{ error: string | null }> {
   try {
@@ -68,9 +76,6 @@ export async function commitExtractedProject(extracted: ExtractedProjectData): P
       data: { user },
     } = await supabase.auth.getUser();
     if (!user) return { error: 'Not authenticated.' };
-
-    const { error: deleteError } = await supabase.from('projects').delete().eq('owner_id', user.id);
-    if (deleteError) throw deleteError;
 
     const { data: project, error: projectError } = await supabase
       .from('projects')
@@ -149,6 +154,11 @@ export async function commitExtractedProject(extracted: ExtractedProjectData): P
       const { error: dependencyError } = await supabase.from('task_dependencies').insert(dependencyRows);
       if (dependencyError) throw dependencyError;
     }
+
+    // Land in the project you just made rather than whichever one sorts
+    // first. Written here rather than by the calling screen because
+    // onboarding creates projects from outside any ProjectProvider.
+    await saveActiveProjectId(user.id, project.id);
 
     return { error: null };
   } catch (err) {

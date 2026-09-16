@@ -11,7 +11,6 @@ import {
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { AttachRow } from '../components/AttachRow';
 import { BriefReview } from '../components/BriefReview';
-import { ConfirmDialog } from '../components/ConfirmDialog';
 import { Icon } from '../components/Icon';
 import { KeyboardAvoider } from '../components/KeyboardAvoider';
 import { commitExtractedProject, ExtractedProjectData, parseBrief } from '../state/briefParsing';
@@ -26,17 +25,13 @@ type Phase = 'input' | 'loading' | 'review' | 'committing';
 export function NewProjectScreen() {
   const insets = useSafeAreaInsets();
   const { closeNewProject } = useNavigation();
-  const { project, members, refetch } = useProject();
-  // Replacing the brief deletes the whole project and everything in it —
-  // fine when it's still just its owner, but it would cascade-delete real
-  // teammates' access the moment anyone else has joined.
-  const isShared = members.length > 1;
+  const { refetch } = useProject();
+
   const [phase, setPhase] = useState<Phase>('input');
   const [briefText, setBriefText] = useState('');
   const [briefFile, setBriefFile] = useState<PdfFileInput | null>(null);
   const [syllabusFile, setSyllabusFile] = useState<PdfFileInput | null>(null);
   const [extracted, setExtracted] = useState<ExtractedProjectData | null>(null);
-  const [confirming, setConfirming] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const today = useMemo(() => new Date(), []);
 
@@ -75,9 +70,10 @@ export function NewProjectScreen() {
     setPhase('review');
   }
 
-  async function confirmCommit() {
+  // No confirmation step: this adds a project alongside the ones you
+  // already have, so there is nothing to lose by going ahead.
+  async function commit() {
     if (!extracted) return;
-    setConfirming(false);
     setPhase('committing');
     const result = await commitExtractedProject(extracted);
     if (result.error) {
@@ -116,22 +112,14 @@ export function NewProjectScreen() {
           </Pressable>
         </View>
 
-        {isShared ? (
-          <View style={styles.intro}>
-            <Text style={[type.pageTitle, styles.ink]}>This project has teammates now.</Text>
-            <Text style={[type.body, styles.muted, styles.subtitle]}>
-              Replacing the brief would delete {project.name} — tasks, requirements, and everyone's access to it —
-              for every member, not just you. Add or edit tasks from the Projects tab instead.
-            </Text>
-          </View>
-        ) : (phase === 'review' || phase === 'committing') && extracted ? (
+        {(phase === 'review' || phase === 'committing') && extracted ? (
           <BriefReview
             extracted={extracted}
             today={today}
             error={error}
             committing={phase === 'committing'}
             onStartOver={startOver}
-            onBuildPlan={() => setConfirming(true)}
+            onBuildPlan={commit}
           />
         ) : (
           <>
@@ -205,15 +193,6 @@ export function NewProjectScreen() {
         )}
       </ScrollView>
 
-      <ConfirmDialog
-        visible={confirming}
-        title="Replace your current project?"
-        message={`Your existing ${project.name} tasks and requirements will be replaced with this plan. This can't be undone.`}
-        confirmLabel="Build my plan"
-        destructive
-        onConfirm={confirmCommit}
-        onCancel={() => setConfirming(false)}
-      />
     </KeyboardAvoider>
   );
 }
