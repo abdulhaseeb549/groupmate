@@ -15,6 +15,7 @@ import { RequirementEditDialog } from '../components/RequirementEditDialog';
 import { Requirement } from '../data/requirements';
 import { ProjectHealth, RequirementStatus } from '../state/projectState';
 import { useAuth } from '../state/AuthProvider';
+import { useChatUnread } from '../state/chatUnread';
 import { useProject } from '../state/ProjectRepository';
 import { colors, gradients, layout, spacing, type } from '../theme';
 import { formatDueDate } from '../utils/dates';
@@ -44,6 +45,7 @@ export function ProjectsScreen({ activeTab, onSelectTab }: Props) {
   const insets = useSafeAreaInsets();
   const { project, tasks, projectState, schedule, members } = useProject();
   const { session } = useAuth();
+  const { hasUnread } = useChatUnread();
   const currentUserId = session?.user.id;
   const [filter, setFilter] = useState<(typeof FILTERS)[number]>('My tasks');
   const [capacityVisible, setCapacityVisible] = useState(false);
@@ -245,7 +247,7 @@ export function ProjectsScreen({ activeTab, onSelectTab }: Props) {
         ) : null}
       </ScrollView>
 
-      <BottomNav active={activeTab} onSelect={onSelectTab} />
+      <BottomNav active={activeTab} onSelect={onSelectTab} chatUnread={hasUnread} />
 
       <CapacityModal visible={capacityVisible} onClose={() => setCapacityVisible(false)} />
       <DueDateModal visible={dueDateVisible} onClose={() => setDueDateVisible(false)} />

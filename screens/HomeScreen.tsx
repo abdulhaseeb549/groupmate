@@ -14,6 +14,7 @@ import { WeekStrip, weekDates } from '../components/home/WeekStrip';
 import { Priority, Task } from '../data/tasks';
 import { RequirementState } from '../state/projectState';
 import { useAuth } from '../state/AuthProvider';
+import { useChatUnread } from '../state/chatUnread';
 import { useProject } from '../state/ProjectRepository';
 import { colors, layout, type } from '../theme';
 import { checkForUpdate, UpdateCheckResult } from '../utils/checkForUpdate';
@@ -35,6 +36,7 @@ export function HomeScreen({ activeTab, onSelectTab }: Props) {
   const insets = useSafeAreaInsets();
   const { project, tasks, projectState, members, schedule, setTaskStatus } = useProject();
   const { session, profile, signOut } = useAuth();
+  const { hasUnread } = useChatUnread();
   const currentUserId = session?.user.id;
   const [showAllAttention, setShowAllAttention] = useState(false);
   const [signOutVisible, setSignOutVisible] = useState(false);
@@ -255,7 +257,7 @@ export function HomeScreen({ activeTab, onSelectTab }: Props) {
         ) : null}
       </ScrollView>
 
-      <BottomNav active={activeTab} onSelect={onSelectTab} />
+      <BottomNav active={activeTab} onSelect={onSelectTab} chatUnread={hasUnread} />
 
       <ConfirmDialog
         visible={signOutVisible}

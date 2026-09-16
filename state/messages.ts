@@ -154,10 +154,12 @@ export function subscribeToMessages(
   projectId: string,
   onInsert: (message: Message) => void,
   /** True once the channel is actually live, false if it drops or errors. The chat header's dot reflects this instead of assuming a connection. */
-  onLive?: (live: boolean) => void
+  onLive?: (live: boolean) => void,
+  /** Realtime topics are unique per socket, so two components watching the same project at once (the open thread and the unread tracker) must not ask for the same one. */
+  subscriberId: string = "default"
 ): () => void {
   const channel = supabase
-    .channel(`project:${projectId}:messages`)
+    .channel(`project:${projectId}:messages:${subscriberId}`)
     .on(
       'postgres_changes',
       { event: 'INSERT', schema: 'public', table: 'messages', filter: `project_id=eq.${projectId}` },
@@ -229,4 +231,78 @@ export function subscribeToReactions(projectId: string, onChange: (event: Reacti
   return () => {
     void supabase.removeChannel(channel);
   };
+}
+
+/** Stable identity for a conversation — the storage key for its read state and the lookup key for its summary. */
+export function conversationKey(conversation: Conversation): string {
+  return conversation.type === 'group' ? 'group' : `dm:${conversation.otherUserId}`;
+}
+
+export type ConversationSummary = {
+  key: string;
+  conversation: Conversation;
+  /** One line for the chat-list row — the message text, or what it was if it carried no text. */
+  preview: string;
+  lastAt: string;
+  lastAuthorId: string;
+};
+
+// One scan covers every conversation in a student project's chat many
+// times over; paginating would buy nothing but a second round trip.
+const SUMMARY_SCAN_LIMIT = 300;
+
+/** What a message reduces to in a list row when it isn't plain text. */
+export function messagePreview(message: Message): string {
+  if (message.body) return message.body;
+  if (message.attachmentName) return message.attachmentName;
+  if (message.sharedTaskId) return 'Shared a task';
+  return 'Message';
+}
+
+/** Which conversation a message belongs to, from the reader's point of view. */
+export function conversationOf(message: Message, currentUserId: string): Conversation {
+  if (message.recipientId === null) return { type: 'group' };
+  return {
+    type: 'dm',
+    otherUserId: message.authorId === currentUserId ? message.recipientId : message.authorId,
+  };
+}
+
+/**
+ * Last activity per conversation in a single query, keyed by
+ * conversationKey. RLS (0013) already narrows the rows to the group chat
+ * plus DMs this user is a participant in, so no per-conversation query is
+ * needed — the reduce below just keeps the newest row per thread.
+ *
+ * This is what lets the chat list show a real preview and an unread dot
+ * instead of a static "Direct message" label on every row.
+ */
+export async function fetchConversationSummaries(
+  projectId: string,
+  currentUserId: string
+): Promise<Record<string, ConversationSummary>> {
+  const { data, error } = await supabase
+    .from('messages')
+    .select(SELECT_COLUMNS)
+    .eq('project_id', projectId)
+    .order('created_at', { ascending: false })
+    .limit(SUMMARY_SCAN_LIMIT);
+  if (error) throw error;
+
+  const summaries: Record<string, ConversationSummary> = {};
+  for (const row of data ?? []) {
+    const message = toMessage(row as MessageRow);
+    const conversation = conversationOf(message, currentUserId);
+    const key = conversationKey(conversation);
+    // Newest-first, so the first row seen for a thread is its latest.
+    if (summaries[key]) continue;
+    summaries[key] = {
+      key,
+      conversation,
+      preview: messagePreview(message),
+      lastAt: message.createdAt,
+      lastAuthorId: message.authorId,
+    };
+  }
+  return summaries;
 }

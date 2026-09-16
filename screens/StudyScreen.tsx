@@ -17,6 +17,7 @@ import { ConfirmDialog } from '../components/ConfirmDialog';
 import { Icon } from '../components/Icon';
 import { KeyboardAvoider } from '../components/KeyboardAvoider';
 import { useAuth } from '../state/AuthProvider';
+import { useChatUnread } from '../state/chatUnread';
 import { useNavigation } from '../state/NavigationProvider';
 import {
   commitQuiz,
@@ -52,6 +53,7 @@ function capitalize(s: string) {
 export function StudyScreen({ activeTab, onSelectTab }: Props) {
   const insets = useSafeAreaInsets();
   const { session } = useAuth();
+  const { hasUnread } = useChatUnread();
   const userId = session?.user.id;
   const { studySetupRequested, clearStudySetupRequest } = useNavigation();
 
@@ -268,7 +270,7 @@ export function StudyScreen({ activeTab, onSelectTab }: Props) {
         />
       ) : null}
 
-      {phase === 'list' || phase === 'setup' ? <BottomNav active={activeTab} onSelect={onSelectTab} /> : null}
+      {phase === 'list' || phase === 'setup' ? <BottomNav active={activeTab} onSelect={onSelectTab} chatUnread={hasUnread} /> : null}
 
       <ConfirmDialog
         visible={deleteTarget !== null}

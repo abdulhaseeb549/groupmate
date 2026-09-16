@@ -6,8 +6,9 @@ import { BottomNav, NavTab } from '../components/BottomNav';
 import { FadeIn } from '../components/FadeIn';
 import { Icon } from '../components/Icon';
 import { InviteModal } from '../components/InviteModal';
-import { Conversation } from '../state/messages';
+import { Conversation, conversationKey } from '../state/messages';
 import { useAuth } from '../state/AuthProvider';
+import { useChatUnread } from '../state/chatUnread';
 import { useProject } from '../state/ProjectRepository';
 import { colors, layout, type } from '../theme';
 
@@ -26,9 +27,25 @@ export function ChatListScreen({ activeTab, onSelectTab, onOpenConversation }: P
   const insets = useSafeAreaInsets();
   const { project, members } = useProject();
   const { session } = useAuth();
+  const { summaries, isUnread, hasUnread } = useChatUnread();
   const currentUserId = session?.user.id;
-  const teammates = members.filter((m) => m.id !== currentUserId);
   const [inviteOpen, setInviteOpen] = useState(false);
+
+  // Most recently active first, like any chat app — a teammate who just
+  // messaged you shouldn't be buried under one who never has. Ties (nobody
+  // has messaged yet) fall back to name so the order stays stable.
+  const teammates = members
+    .filter((m) => m.id !== currentUserId)
+    .slice()
+    .sort((a, b) => {
+      const aAt = summaries[conversationKey({ type: 'dm', otherUserId: a.id })]?.lastAt ?? '';
+      const bAt = summaries[conversationKey({ type: 'dm', otherUserId: b.id })]?.lastAt ?? '';
+      if (aAt !== bAt) return bAt.localeCompare(aAt);
+      return a.name.localeCompare(b.name);
+    });
+
+  const groupSummary = summaries[conversationKey({ type: 'group' })];
+  const groupUnread = isUnread({ type: 'group' });
 
   return (
     <View style={styles.screen}>
@@ -61,33 +78,48 @@ export function ChatListScreen({ activeTab, onSelectTab, onOpenConversation }: P
               <Text style={[type.taskTitle, styles.ink]} numberOfLines={1}>
                 Team chat
               </Text>
-              <Text style={[type.caption, styles.muted]} numberOfLines={1}>
-                {members.length} {members.length === 1 ? 'member' : 'members'}
+              <Text
+                style={[type.caption, groupUnread ? styles.unreadText : styles.muted]}
+                numberOfLines={1}
+              >
+                {groupSummary
+                  ? groupSummary.preview
+                  : `${members.length} ${members.length === 1 ? 'member' : 'members'}`}
               </Text>
             </View>
+            {groupUnread ? <View style={styles.unreadDot} /> : null}
             <Icon name="chevronRight" size={16} color={colors.faint} strokeWidth={2} />
           </Pressable>
 
-          {teammates.map((member) => (
-            <Pressable
-              key={member.id}
-              onPress={() => onOpenConversation({ type: 'dm', otherUserId: member.id })}
-              accessibilityRole="button"
-              accessibilityLabel={`Direct message with ${member.name}`}
-              style={({ pressed }) => [styles.row, pressed && styles.rowPressed]}
-            >
-              <Avatar {...member} size={42} />
-              <View style={styles.rowText}>
-                <Text style={[type.taskTitle, styles.ink]} numberOfLines={1}>
-                  {member.name}
-                </Text>
-                <Text style={[type.caption, styles.muted]} numberOfLines={1}>
-                  Direct message
-                </Text>
-              </View>
-              <Icon name="chevronRight" size={16} color={colors.faint} strokeWidth={2} />
-            </Pressable>
-          ))}
+          {teammates.map((member) => {
+            const conversation: Conversation = { type: 'dm', otherUserId: member.id };
+            const summary = summaries[conversationKey(conversation)];
+            const unread = isUnread(conversation);
+            return (
+              <Pressable
+                key={member.id}
+                onPress={() => onOpenConversation(conversation)}
+                accessibilityRole="button"
+                accessibilityLabel={`Direct message with ${member.name}${unread ? ', unread' : ''}`}
+                style={({ pressed }) => [styles.row, pressed && styles.rowPressed]}
+              >
+                <Avatar {...member} size={42} />
+                <View style={styles.rowText}>
+                  <Text style={[type.taskTitle, styles.ink]} numberOfLines={1}>
+                    {member.name}
+                  </Text>
+                  <Text
+                    style={[type.caption, unread ? styles.unreadText : styles.muted]}
+                    numberOfLines={1}
+                  >
+                    {summary ? summary.preview : 'Direct message'}
+                  </Text>
+                </View>
+                {unread ? <View style={styles.unreadDot} /> : null}
+                <Icon name="chevronRight" size={16} color={colors.faint} strokeWidth={2} />
+              </Pressable>
+            );
+          })}
 
           {/* The only way anyone else gets into this project — and so into
               this list — is an invite code, so the way to send one lives
@@ -117,7 +149,7 @@ export function ChatListScreen({ activeTab, onSelectTab, onOpenConversation }: P
         </FadeIn>
       </ScrollView>
 
-      <BottomNav active={activeTab} onSelect={onSelectTab} />
+      <BottomNav active={activeTab} onSelect={onSelectTab} chatUnread={hasUnread} />
       <InviteModal visible={inviteOpen} onClose={() => setInviteOpen(false)} />
     </View>
   );
@@ -185,5 +217,16 @@ const styles = StyleSheet.create({
     flex: 1,
     minWidth: 0,
     gap: 1,
+  },
+  unreadDot: {
+    width: 9,
+    height: 9,
+    borderRadius: 4.5,
+    backgroundColor: colors.red,
+  },
+  // Ink, not a colour: the dot already carries the "new" signal, and the
+  // preview still has to read as message text.
+  unreadText: {
+    color: colors.ink,
   },
 });

@@ -373,6 +373,98 @@ export function subscribeToTaskChanges(projectId: string, onChange: (event: Task
   };
 }
 
+/**
+ * One roster entry, resolved the way fetchProjectData resolves the whole
+ * list — project_members for the role, profiles for the identity, joined
+ * client-side because the two are parallel FKs to auth.users rather than
+ * to each other. Null if either half isn't readable yet.
+ */
+export async function fetchMember(projectId: string, userId: string): Promise<Member | null> {
+  const [{ data: memberRow, error: memberError }, { data: profileRow, error: profileError }] = await Promise.all([
+    supabase
+      .from('project_members')
+      .select('user_id, role')
+      .eq('project_id', projectId)
+      .eq('user_id', userId)
+      .maybeSingle(),
+    supabase
+      .from('profiles')
+      .select('id, full_name, initials, avatar_bg, avatar_fg')
+      .eq('id', userId)
+      .maybeSingle(),
+  ]);
+  if (memberError) throw memberError;
+  if (profileError) throw profileError;
+  if (!memberRow || !profileRow) return null;
+
+  const profile = profileRow as ProfileRow;
+  return {
+    id: profile.id,
+    initials: profile.initials,
+    name: profile.full_name,
+    bg: profile.avatar_bg,
+    fg: profile.avatar_fg,
+    role: (memberRow as MemberRow).role,
+  };
+}
+
+/**
+ * Live roster updates — the counterpart to subscribeToTaskChanges, added
+ * with migration 0017 because its absence was the single cause of two
+ * separate-looking bugs: a teammate joining showed up nowhere, and their
+ * direct message had no thread to land in (the chat list builds one DM row
+ * per known member, so an unknown sender is an unreachable conversation).
+ *
+ * The INSERT payload carries only project_members' own columns, so the
+ * joiner's identity needs a follow-up read. That read is retried once: the
+ * membership row and the profiles row become visible to this client
+ * independently, and losing a join to a few hundred milliseconds of skew
+ * would resurrect the exact bug this subscription exists to fix.
+ *
+ * Returns an unsubscribe function.
+ */
+export function subscribeToMemberChanges(
+  projectId: string,
+  onJoin: (member: Member) => void,
+  onLeave?: (userId: string) => void
+): () => void {
+  async function resolveJoin(userId: string) {
+    for (const delayMs of [0, 800]) {
+      if (delayMs) await new Promise((resolve) => setTimeout(resolve, delayMs));
+      try {
+        const member = await fetchMember(projectId, userId);
+        if (member) {
+          onJoin(member);
+          return;
+        }
+      } catch {
+        // Fall through to the retry; a hard failure just leaves this client
+        // on the roster it already has until its next full refetch.
+      }
+    }
+  }
+
+  const channel = supabase
+    .channel(`project:${projectId}:members`)
+    .on(
+      'postgres_changes',
+      { event: 'INSERT', schema: 'public', table: 'project_members', filter: `project_id=eq.${projectId}` },
+      (payload) => {
+        void resolveJoin((payload.new as MemberRow).user_id);
+      }
+    )
+    .on(
+      'postgres_changes',
+      { event: 'DELETE', schema: 'public', table: 'project_members', filter: `project_id=eq.${projectId}` },
+      (payload) => onLeave?.((payload.old as MemberRow).user_id)
+    )
+    .subscribe();
+
+  return () => {
+    void supabase.removeChannel(channel);
+  };
+}
+
 export type ClaimResult = 'claimed' | 'already_claimed';
 
 /**

@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import {
   ActivityIndicator,
+  Image,
   Pressable,
   ScrollView,
   StyleSheet,
@@ -10,10 +11,11 @@ import {
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { AttachRow } from '../components/AttachRow';
+import { BottomNav, NavTab } from '../components/BottomNav';
 import { BriefReview } from '../components/BriefReview';
 import { Card } from '../components/Card';
 import { ConfirmDialog } from '../components/ConfirmDialog';
-import { Icon, IconName } from '../components/Icon';
+import { Icon } from '../components/Icon';
 import { KeyboardAvoider } from '../components/KeyboardAvoider';
 import { supabase } from '../lib/supabase';
 import { commitExtractedProject, ExtractedProjectData, parseBrief } from '../state/briefParsing';
@@ -32,15 +34,16 @@ type InviteLookup =
   | { status: 'found'; projectName: string }
   | { status: 'not_found' };
 
-const STEPS: { icon: IconName; title: string; body: string }[] = [
-  { icon: 'document', title: 'Understand', body: 'We read your brief and pull out every requirement.' },
-  { icon: 'calendar', title: 'Plan', body: 'Tasks get scoped, prioritized, and scheduled to your due date.' },
-  { icon: 'users', title: 'Collaborate', body: 'Your team claims tasks and tracks progress together.' },
-];
-
 type Props = {
   /** Called after a project is successfully created or joined — the caller re-fetches, which naturally replaces this screen once a project exists. */
   onDone: () => void;
+  /** Supplied by NoProjectShell: the intro is the Home tab of the no-project state, so it carries the tab bar like any other tab. Omit both to render it standalone. */
+  activeTab?: NavTab;
+  onSelectTab?: (tab: NavTab) => void;
+  /** Opens straight into create or join — used by the "+" menu, which has no NewProjectScreen to fall back on before a project exists. */
+  startMode?: Mode;
+  /** Called when one of those forced modes is backed out of, so the shell can drop the request that opened it. */
+  onExitMode?: () => void;
 };
 
 /**
@@ -49,7 +52,7 @@ type Props = {
  * migration 0016). Two ways in: read a brief into a brand-new project, or
  * join a teammate's with their invite code.
  */
-export function OnboardingScreen({ onDone }: Props) {
+export function OnboardingScreen({ onDone, activeTab, onSelectTab, startMode, onExitMode }: Props) {
   const insets = useSafeAreaInsets();
   const { profile, session, signOut } = useAuth();
   const [mode, setMode] = useState<Mode>('intro');
@@ -60,22 +63,35 @@ export function OnboardingScreen({ onDone }: Props) {
   useEffect(() => {
     if (incomingCode) setMode('join');
   }, [incomingCode]);
+  useEffect(() => {
+    if (startMode) setMode(startMode);
+  }, [startMode]);
+
+  function backToIntro() {
+    setMode('intro');
+    onExitMode?.();
+  }
   const initials = profile?.initials ?? '··';
   const firstName = (profile?.fullName ?? session?.user.email?.split('@')[0] ?? '').split(' ')[0];
 
   if (mode === 'create') {
-    return <CreateProjectFlow onBack={() => setMode('intro')} onDone={onDone} />;
+    return <CreateProjectFlow onBack={backToIntro} onDone={onDone} />;
   }
   if (mode === 'join') {
-    return <JoinProjectFlow onBack={() => setMode('intro')} onDone={onDone} initialCode={incomingCode ?? undefined} />;
+    return <JoinProjectFlow onBack={backToIntro} onDone={onDone} initialCode={incomingCode ?? undefined} />;
   }
+
+  const hasNav = activeTab !== undefined && onSelectTab !== undefined;
 
   return (
     <View style={styles.screen}>
       <ScrollView
         contentContainerStyle={[
           styles.content,
-          { paddingTop: Math.max(insets.top, 32) + 14, paddingBottom: insets.bottom + 40 },
+          {
+            paddingTop: Math.max(insets.top, 32) + 14,
+            paddingBottom: (hasNav ? 130 : 40) + insets.bottom,
+          },
         ]}
         showsVerticalScrollIndicator={false}
       >
@@ -108,11 +124,18 @@ export function OnboardingScreen({ onDone }: Props) {
 
         <Card>
           <View style={styles.briefCard}>
-            <View style={styles.briefIconTile}>
-              <Icon name="document" size={22} color={colors.purple} strokeWidth={1.8} />
+            <View style={styles.briefTop}>
+              <View style={styles.briefText}>
+                <Text style={[type.projectTitle, styles.ink]}>Add your project brief</Text>
+                <Text style={[type.caption, styles.muted]}>PDF, doc, or pasted text</Text>
+              </View>
+              <Image
+                source={require('../assets/Mascot-png.png')}
+                style={styles.briefMascot}
+                resizeMode="contain"
+                accessibilityIgnoresInvertColors
+              />
             </View>
-            <Text style={[type.projectTitle, styles.ink]}>Add your project brief</Text>
-            <Text style={[type.caption, styles.muted]}>PDF, doc, or pasted text</Text>
             <Pressable
               onPress={() => setMode('create')}
               accessibilityRole="button"
@@ -133,36 +156,35 @@ export function OnboardingScreen({ onDone }: Props) {
           <Text style={[type.button, styles.purple]}>Join a project</Text>
         </Pressable>
 
-        <View style={styles.stepsRow}>
-          {STEPS.map((step) => (
-            <View key={step.title} style={styles.step}>
-              <View style={styles.stepIconTile}>
-                <Icon name={step.icon} size={17} color={colors.purple} strokeWidth={1.8} />
-              </View>
-              <Text style={[type.button, styles.ink]}>{step.title}</Text>
-              <Text style={[type.tinyLabel, styles.muted]}>{step.body}</Text>
+        {/* Study needs notes, not a project — StudyScreen never touched
+            useProject(). The card here used to advertise it as "unlocks
+            once your project exists", which wasn't true, and it wasn't
+            pressable either. */}
+        {hasNav ? (
+          <Pressable
+            onPress={() => onSelectTab('study')}
+            accessibilityRole="button"
+            style={({ pressed }) => [styles.studyCard, pressed && styles.pressed]}
+          >
+            <View style={styles.studyIconTile}>
+              <Icon name="book" size={20} color={colors.yellowText} strokeWidth={1.8} />
             </View>
-          ))}
-        </View>
-
-        <View style={styles.exploreSection}>
-          <Text style={[type.metadata, styles.eyebrow]}>EXPLORE</Text>
-          <View style={styles.exploreRow}>
-            <View style={styles.exploreCard}>
-              <Icon name="book" size={18} color={colors.muted} strokeWidth={1.8} />
-              <Text style={[type.taskTitle, styles.ink]}>Study tools</Text>
-              <Text style={[type.tinyLabel, styles.muted]}>Unlocks once your project exists</Text>
-            </View>
-            <View style={styles.exploreCard}>
-              <Icon name="flame" size={18} color={colors.muted} strokeWidth={1.8} />
-              <Text style={[type.taskTitle, styles.ink]}>Tip</Text>
-              <Text style={[type.tinyLabel, styles.muted]}>
-                Split work by section, not by hours — it's easier to claim.
+            <View style={styles.studyText}>
+              <Text style={[type.taskTitle, styles.ink]}>Make a practice quiz</Text>
+              <Text style={[type.caption, styles.muted]}>
+                From your notes or a PDF — no project needed.
               </Text>
             </View>
-          </View>
-        </View>
+            <Icon name="chevronRight" size={16} color={colors.faint} strokeWidth={2} />
+          </Pressable>
+        ) : null}
+
+        <Text style={[type.caption, styles.tip]}>
+          Split work by section, not by hours — it's easier to claim.
+        </Text>
       </ScrollView>
+
+      {hasNav ? <BottomNav active={activeTab} onSelect={onSelectTab} canInvite={false} /> : null}
 
       <ConfirmDialog
         visible={signOutVisible}
@@ -546,16 +568,22 @@ const styles = StyleSheet.create({
   briefCard: {
     padding: 18,
     gap: 4,
-    alignItems: 'flex-start',
   },
-  briefIconTile: {
-    width: layout.iconTile,
-    height: layout.iconTile,
-    borderRadius: layout.iconTileRadius,
-    backgroundColor: colors.purpleSoft,
+  briefTop: {
+    flexDirection: 'row',
     alignItems: 'center',
-    justifyContent: 'center',
-    marginBottom: 6,
+    gap: 10,
+  },
+  briefText: {
+    flex: 1,
+    minWidth: 0,
+    gap: 3,
+  },
+  // The home hero's 1.2:1 source ratio, sized to sit beside two lines of
+  // text without pushing them onto three.
+  briefMascot: {
+    width: 74,
+    height: 74 / 1.2,
   },
   primaryButton: {
     flexDirection: 'row',
@@ -578,38 +606,35 @@ const styles = StyleSheet.create({
     borderWidth: 1.5,
     borderColor: colors.border,
   },
-  stepsRow: {
+  studyCard: {
     flexDirection: 'row',
-    gap: 12,
-  },
-  step: {
-    flex: 1,
-    gap: 5,
-  },
-  stepIconTile: {
-    width: 36,
-    height: 36,
-    borderRadius: 12,
-    backgroundColor: colors.purpleSoft,
     alignItems: 'center',
-    justifyContent: 'center',
-    marginBottom: 2,
-  },
-  exploreSection: {
-    gap: 10,
-  },
-  exploreRow: {
-    flexDirection: 'row',
     gap: 12,
-  },
-  exploreCard: {
-    flex: 1,
-    gap: 5,
     padding: 14,
     borderRadius: 18,
     backgroundColor: colors.surface,
     borderWidth: StyleSheet.hairlineWidth,
     borderColor: 'rgba(17,17,17,0.06)',
+  },
+  // Yellow, not purple: purple stays on the one primary action on this
+  // screen, and this matches the "+" menu's Study tile.
+  studyIconTile: {
+    width: layout.iconTile,
+    height: layout.iconTile,
+    borderRadius: layout.iconTileRadius,
+    backgroundColor: colors.yellowSoft,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  studyText: {
+    flex: 1,
+    minWidth: 0,
+    gap: 2,
+  },
+  tip: {
+    color: colors.muted,
+    textAlign: 'center',
+    paddingHorizontal: 12,
   },
   header: {
     flexDirection: 'row',

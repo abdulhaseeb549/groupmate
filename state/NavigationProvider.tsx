@@ -1,5 +1,6 @@
 import { createContext, ReactNode, useContext, useState } from 'react';
 import { NavTab } from '../components/BottomNav';
+import { Conversation } from './messages';
 
 type NavigationState = {
   activeTab: NavTab;
@@ -13,11 +14,14 @@ type NavigationState = {
   studySetupRequested: boolean;
   goToNewQuiz: () => void;
   clearStudySetupRequest: () => void;
-  /** Set by "Share to chat" (TaskDetailModal) — ChatTab reads this to jump
-   *  straight into the group conversation instead of the chat list, then
-   *  clears it. Same one-shot-flag shape as studySetupRequested. */
-  chatOpenRequested: boolean;
-  goToChat: () => void;
+  /** Set by "Share to chat" (TaskDetailModal) and by the joined-toast tap —
+   *  ChatTab reads this to land straight in a conversation instead of the
+   *  chat list, then clears it. Same one-shot shape as studySetupRequested,
+   *  but carrying which conversation rather than a bare boolean: a task
+   *  share always means the group, while a teammate who just joined means
+   *  the 1:1 with them. */
+  requestedConversation: Conversation | null;
+  goToChat: (conversation?: Conversation) => void;
   clearChatOpenRequest: () => void;
 };
 
@@ -34,16 +38,16 @@ export function NavigationProvider({ children }: { children: ReactNode }) {
   const [activeTab, setActiveTab] = useState<NavTab>('home');
   const [newProjectOpen, setNewProjectOpen] = useState(false);
   const [studySetupRequested, setStudySetupRequested] = useState(false);
-  const [chatOpenRequested, setChatOpenRequested] = useState(false);
+  const [requestedConversation, setRequestedConversation] = useState<Conversation | null>(null);
 
   function goToNewQuiz() {
     setActiveTab('study');
     setStudySetupRequested(true);
   }
 
-  function goToChat() {
+  function goToChat(conversation: Conversation = { type: 'group' }) {
     setActiveTab('chat');
-    setChatOpenRequested(true);
+    setRequestedConversation(conversation);
   }
 
   return (
@@ -57,9 +61,9 @@ export function NavigationProvider({ children }: { children: ReactNode }) {
         studySetupRequested,
         goToNewQuiz,
         clearStudySetupRequest: () => setStudySetupRequested(false),
-        chatOpenRequested,
+        requestedConversation,
         goToChat,
-        clearChatOpenRequest: () => setChatOpenRequested(false),
+        clearChatOpenRequest: () => setRequestedConversation(null),
       }}
     >
       {children}

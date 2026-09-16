@@ -1,14 +1,18 @@
 import { createContext, ReactNode, useContext, useEffect, useMemo, useState } from 'react';
+import { View } from 'react-native';
 import { ErrorScreen } from '../components/ErrorScreen';
 import { LoadingScreen } from '../components/LoadingScreen';
+import { MemberJoinedToast } from '../components/MemberJoinedToast';
 import { Member } from '../data/member';
 import { Project } from '../data/project';
 import { Requirement } from '../data/requirements';
 import { Priority, Task, TaskStatus } from '../data/tasks';
 import { TaskRequirement } from '../data/taskRequirements';
 import { TaskDependency } from '../data/taskDependencies';
-import { OnboardingScreen } from '../screens/OnboardingScreen';
+import { NoProjectShell } from '../screens/NoProjectShell';
 import { useAuth } from './AuthProvider';
+import { ChatUnreadProvider } from './chatUnread';
+import { useNavigation } from './NavigationProvider';
 import { deriveProjectState, ProjectState } from './projectState';
 import { computeSchedule, ProjectSchedule } from './projectSchedule';
 import {
@@ -21,6 +25,7 @@ import {
   persistTaskStatus,
   regenerateInviteCode,
   setTaskRequirementLinks,
+  subscribeToMemberChanges,
   subscribeToTaskChanges,
   updateProjectDueDate,
   updateRequirementLabel,
@@ -144,7 +149,7 @@ export function ProjectProvider({ children }: { children: ReactNode }) {
     return <ErrorScreen message={state.message} onRetry={refetch} />;
   }
   if (state.status === 'no_project') {
-    return <OnboardingScreen onDone={refetch} />;
+    return <NoProjectShell onDone={refetch} />;
   }
 
   return (
@@ -168,7 +173,7 @@ function ProjectProviderReady({
   requirements: initialRequirements,
   taskRequirements: initialTaskRequirements,
   taskDependencies,
-  members,
+  members: initialMembers,
   refetch,
   children,
 }: {
@@ -182,11 +187,16 @@ function ProjectProviderReady({
   children: ReactNode;
 }) {
   const { session } = useAuth();
+  const { goToChat } = useNavigation();
   const userId = session?.user.id;
   const [tasks, setTasks] = useState<Task[]>(initialTasks);
   const [project, setProject] = useState<Project>(initialProject);
   const [requirements, setRequirements] = useState<Requirement[]>(initialRequirements);
   const [taskRequirements, setTaskRequirements] = useState<TaskRequirement[]>(initialTaskRequirements);
+  const [members, setMembers] = useState<Member[]>(initialMembers);
+  // Who arrived while the app was open. This is the only signal a join
+  // produces — without it, someone joining is completely silent.
+  const [justJoined, setJustJoined] = useState<Member | null>(null);
 
   const membersById = useMemo(
     () => Object.fromEntries(members.map((m) => [m.id, m])) as Record<string, Member>,
@@ -207,6 +217,29 @@ function ProjectProviderReady({
         return exists ? prev.map((t) => (t.id === event.task.id ? event.task : t)) : [...prev, event.task];
       });
     });
+    return unsubscribe;
+  }, [project.id]);
+
+  // The roster used to be fetched once and never again, which was the one
+  // cause behind two different-looking bugs: a teammate joining showed up
+  // nowhere, and their direct message was unreachable — ChatListScreen
+  // derives a DM row per known member, so a sender missing from this array
+  // has no thread to appear in, however readable their message is (0013).
+  // Needs project_members in the Realtime publication (migration 0017).
+  useEffect(() => {
+    const unsubscribe = subscribeToMemberChanges(
+      project.id,
+      (member) => {
+        setMembers((prev) => {
+          if (prev.some((m) => m.id === member.id)) return prev;
+          // Announce only genuinely new arrivals, so a reconnect that
+          // replays an existing row doesn't re-toast someone.
+          setJustJoined(member);
+          return [...prev, member];
+        });
+      },
+      (departedUserId) => setMembers((prev) => prev.filter((m) => m.id !== departedUserId))
+    );
     return unsubscribe;
   }, [project.id]);
 
@@ -374,7 +407,31 @@ function ProjectProviderReady({
     refetch,
   };
 
-  return <ProjectContext.Provider value={value}>{children}</ProjectContext.Provider>;
+  return (
+    <ProjectContext.Provider value={value}>
+      <ChatUnreadProvider projectId={project.id} userId={userId}>
+        {/* Wrapping view, not a fragment: the toast positions absolutely and
+            needs a full-height parent it can anchor to from any screen. */}
+        <View style={{ flex: 1 }}>
+          {children}
+          <MemberJoinedToast
+            member={justJoined}
+            onDismiss={() => setJustJoined(null)}
+            onOpenChat={(member) => goToChat({ type: 'dm', otherUserId: member.id })}
+          />
+        </View>
+      </ChatUnreadProvider>
+    </ProjectContext.Provider>
+  );
+}
+
+/**
+ * The same context without the throw — for components that legitimately
+ * render both inside a project and before one exists (the bottom nav and
+ * its "+" menu appear on every screen, including the no-project shell).
+ */
+export function useOptionalProject(): ProjectRepository | null {
+  return useContext(ProjectContext);
 }
 
 export function useProject(): ProjectRepository {

@@ -17,7 +17,18 @@ const TABS: Record<NavTab, { label: string; icon: IconName }> = {
 
 const ORDER: NavTab[] = ['home', 'projects', 'chat', 'study'];
 
-function Tab({ id, active, onPress }: { id: NavTab; active: boolean; onPress: () => void }) {
+function Tab({
+  id,
+  active,
+  badge,
+  onPress,
+}: {
+  id: NavTab;
+  active: boolean;
+  /** Draws an unread dot on the icon — set for Chat when a message arrived you haven't opened. */
+  badge?: boolean;
+  onPress: () => void;
+}) {
   // Muted rather than faint when inactive: faint fails 4.5:1 as label text.
   const tint = active ? colors.purple : colors.muted;
   return (
@@ -28,7 +39,10 @@ function Tab({ id, active, onPress }: { id: NavTab; active: boolean; onPress: ()
       style={styles.tab}
     >
       <View style={[styles.tabContent, active && styles.tabContentActive]}>
-        <Icon name={TABS[id].icon} size={20} color={tint} strokeWidth={active ? 1.9 : 1.7} />
+        <View>
+          <Icon name={TABS[id].icon} size={20} color={tint} strokeWidth={active ? 1.9 : 1.7} />
+          {badge ? <View style={[styles.badge, active && styles.badgeOnActive]} /> : null}
+        </View>
         <Text style={[active ? type.navigationActive : type.navigation, { color: tint }]}>
           {TABS[id].label}
         </Text>
@@ -40,9 +54,15 @@ function Tab({ id, active, onPress }: { id: NavTab; active: boolean; onPress: ()
 export function BottomNav({
   active,
   onSelect,
+  canInvite = true,
+  chatUnread = false,
 }: {
   active: NavTab;
   onSelect: (tab: NavTab) => void;
+  /** False before a project exists — there is nothing to invite anyone to, and the invite sheet reads the project. */
+  canInvite?: boolean;
+  /** Unread dot on the Chat tab, so a direct message is noticed from anywhere rather than only when you happen to open Chat. */
+  chatUnread?: boolean;
 }) {
   // Split as evenly as ORDER's length allows — each side is a flex:1 zone
   // (not just "however many tabs happen to be there"), so the create
@@ -57,7 +77,13 @@ export function BottomNav({
     <View style={[styles.bar, { bottom: Math.max(insets.bottom, 12) + 16 }]}>
       <View style={styles.side}>
         {left.map((id) => (
-          <Tab key={id} id={id} active={active === id} onPress={() => onSelect(id)} />
+          <Tab
+            key={id}
+            id={id}
+            active={active === id}
+            badge={id === 'chat' && chatUnread}
+            onPress={() => onSelect(id)}
+          />
         ))}
       </View>
 
@@ -80,11 +106,17 @@ export function BottomNav({
 
       <View style={styles.side}>
         {right.map((id) => (
-          <Tab key={id} id={id} active={active === id} onPress={() => onSelect(id)} />
+          <Tab
+            key={id}
+            id={id}
+            active={active === id}
+            badge={id === 'chat' && chatUnread}
+            onPress={() => onSelect(id)}
+          />
         ))}
       </View>
 
-      <CreateMenu visible={createOpen} onClose={() => setCreateOpen(false)} />
+      <CreateMenu visible={createOpen} canInvite={canInvite} onClose={() => setCreateOpen(false)} />
     </View>
   );
 }
@@ -131,6 +163,22 @@ const styles = StyleSheet.create({
   },
   tabContentActive: {
     backgroundColor: colors.purpleSoft,
+  },
+  // Ringed in the bar's own surface so the dot stays legible where it
+  // overlaps the icon's strokes.
+  badge: {
+    position: 'absolute',
+    top: -2,
+    right: -3,
+    width: 9,
+    height: 9,
+    borderRadius: 4.5,
+    backgroundColor: colors.red,
+    borderWidth: 2,
+    borderColor: colors.surface,
+  },
+  badgeOnActive: {
+    borderColor: colors.purpleSoft,
   },
   createHalo: {
     width: 58,

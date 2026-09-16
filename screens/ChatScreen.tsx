@@ -167,7 +167,10 @@ export function ChatScreen({ conversation, onBack }: Props) {
       },
       (isLive) => {
         if (!cancelled) setLive(isLive);
-      }
+      },
+      // Distinct from the unread tracker's subscription, which watches the
+      // same project at the same time.
+      'thread'
     );
 
     return () => {

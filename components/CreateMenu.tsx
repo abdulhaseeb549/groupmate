@@ -6,10 +6,13 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { InviteModal } from './InviteModal';
 import { QuickAction } from './QuickAction';
 import { useNavigation } from '../state/NavigationProvider';
+import { useOptionalProject } from '../state/ProjectRepository';
 import { colors, layout } from '../theme';
 
 type Props = {
   visible: boolean;
+  /** False before a project exists: there's nothing to invite anyone to, and InviteModal reads useProject(), which has no value yet. */
+  canInvite?: boolean;
   onClose: () => void;
 };
 
@@ -18,9 +21,14 @@ type Props = {
  * backdrop (no sheet/card chrome around them) and pop in from roughly
  * where the button sits, rather than sliding up as a generic sheet.
  */
-export function CreateMenu({ visible, onClose }: Props) {
+export function CreateMenu({ visible, canInvite = true, onClose }: Props) {
   const insets = useSafeAreaInsets();
   const { openNewProject, goToNewQuiz } = useNavigation();
+  // Derived, not just trusted from the prop: this menu is nested inside a
+  // BottomNav that every screen renders for itself, so one screen
+  // forgetting canInvite={false} would otherwise mount InviteModal without
+  // a ProjectProvider and crash the tab. Belt and braces on purpose.
+  const showInvite = canInvite && useOptionalProject() !== null;
   const [inviteVisible, setInviteVisible] = useState(false);
 
   function handleNewProject() {
@@ -115,23 +123,25 @@ export function CreateMenu({ visible, onClose }: Props) {
             </Svg>
           }
         />
-        <QuickAction
-          label="Invite"
-          bg={colors.mint}
-          shadowColor={colors.mintText}
-          onPress={handleInvite}
-          icon={
-            <Svg width={18} height={18} viewBox="0 0 24 24" fill="none">
-              <Path
-                d="M9 12.2a3.6 3.6 0 1 0 0-7.2 3.6 3.6 0 0 0 0 7.2zM2.8 19c.7-3.3 3.2-5 6.2-5s5.5 1.7 6.2 5M16.3 6.3a3.3 3.3 0 0 1 0 6M19 19c-.3-2.6-1.3-4-2.9-4.7"
-                stroke={colors.mintText}
-                strokeWidth={1.6}
-                strokeLinecap="round"
-                strokeLinejoin="round"
-              />
-            </Svg>
-          }
-        />
+        {showInvite ? (
+          <QuickAction
+            label="Invite"
+            bg={colors.mint}
+            shadowColor={colors.mintText}
+            onPress={handleInvite}
+            icon={
+              <Svg width={18} height={18} viewBox="0 0 24 24" fill="none">
+                <Path
+                  d="M9 12.2a3.6 3.6 0 1 0 0-7.2 3.6 3.6 0 0 0 0 7.2zM2.8 19c.7-3.3 3.2-5 6.2-5s5.5 1.7 6.2 5M16.3 6.3a3.3 3.3 0 0 1 0 6M19 19c-.3-2.6-1.3-4-2.9-4.7"
+                  stroke={colors.mintText}
+                  strokeWidth={1.6}
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                />
+              </Svg>
+            }
+          />
+        ) : null}
         <QuickAction
           label="More"
           bg={colors.border}
@@ -148,7 +158,7 @@ export function CreateMenu({ visible, onClose }: Props) {
       </Animated.View>
     </Modal>
 
-      <InviteModal visible={inviteVisible} onClose={() => setInviteVisible(false)} />
+      {showInvite ? <InviteModal visible={inviteVisible} onClose={() => setInviteVisible(false)} /> : null}
     </>
   );
 }
