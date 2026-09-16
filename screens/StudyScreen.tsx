@@ -345,7 +345,7 @@ function ListView({
     >
       <FadeIn>
         <View style={styles.intro}>
-          <Text style={[type.pageTitle, styles.ink]}>Study</Text>
+          <Text style={[type.hero, styles.ink]}>Study</Text>
           <Text style={[type.body, styles.muted]}>
             One upload, two ways to revise — questions to test yourself, pointers to remember.
           </Text>

@@ -139,7 +139,7 @@ export function NotePager({ pages, compact = false }: Props) {
                 },
               ]}
             >
-              <Text style={[type.metadata, styles.eyebrow]} numberOfLines={1}>
+              <Text style={[type.metadata, styles.eyebrow, styles.eyebrowSize]} numberOfLines={1}>
                 {page.eyebrow}
               </Text>
               <Text style={[type.pageTitle, styles.heading]} numberOfLines={compact ? 3 : 4}>
@@ -266,6 +266,13 @@ const styles = StyleSheet.create({
   eyebrow: {
     color: 'rgba(255,255,255,0.62)',
     letterSpacing: 0.8,
+  },
+  // A size step up from type.metadata's 12px — the tag was reading as fine
+  // print against the 28px heading right under it. Overridden locally
+  // rather than on the shared token, which 13 other files also use.
+  eyebrowSize: {
+    fontSize: 13,
+    lineHeight: 17,
   },
   heading: {
     color: colors.onInk,

@@ -113,8 +113,13 @@ export function OnboardingScreen({ onDone, activeTab, onSelectTab, startMode, on
         </View>
 
         <View style={styles.hero}>
-          <Text style={[type.pageTitle, styles.ink]} accessibilityRole="header">
-            {firstName ? `Hi ${firstName}. ` : ''}Turn your assignment into a <Text style={styles.purple}>clear plan</Text>.
+          {/* Split from the title below rather than one run-on sentence —
+              matches HomeScreen's own "Hello, {firstName}" + big headline
+              pattern, so the two first-launch and every-launch screens read
+              as the same product instead of two different ones. */}
+          {firstName ? <Text style={[type.greeting, styles.muted]}>Hi {firstName}</Text> : null}
+          <Text style={[type.hero, styles.ink]} accessibilityRole="header">
+            Turn your assignment into a <Text style={styles.purple}>clear plan</Text>.
           </Text>
           <Text style={[type.body, styles.muted]}>
             Paste your brief or drop the PDF — GroupMate finds the requirements and turns them into tasks your team
@@ -295,8 +300,8 @@ function CreateProjectFlow({ onBack, onDone }: { onBack: () => void; onDone: () 
         ) : (
           <>
             <View style={styles.intro}>
-              <Text style={[type.pageTitle, styles.ink]}>Drop the brief.</Text>
-              <Text style={[type.pageTitle, styles.ink]}>
+              <Text style={[type.hero, styles.ink]}>Drop the brief.</Text>
+              <Text style={[type.hero, styles.ink]}>
                 I'll <Text style={styles.purple}>read it.</Text>
               </Text>
               <Text style={[type.body, styles.muted, styles.subtitle]}>

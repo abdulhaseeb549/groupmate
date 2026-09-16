@@ -124,8 +124,8 @@ export function NewProjectScreen() {
         ) : (
           <>
             <View style={styles.intro}>
-              <Text style={[type.pageTitle, styles.ink]}>Drop the brief.</Text>
-              <Text style={[type.pageTitle, styles.ink]}>
+              <Text style={[type.hero, styles.ink]}>Drop the brief.</Text>
+              <Text style={[type.hero, styles.ink]}>
                 I'll <Text style={styles.purple}>read it.</Text>
               </Text>
               <Text style={[type.body, styles.muted, styles.subtitle]}>
