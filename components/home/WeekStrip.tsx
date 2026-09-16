@@ -101,11 +101,15 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
   },
-  // Ink, not purple. Today is a state, not something you can press — the
-  // days are explicitly not pressable — and a filled purple block is the
-  // loudest thing on the screen for a fact about the calendar.
+  // The brand colour, which is also the platform convention for today (iOS
+  // Calendar marks it with the tint, not with black). The earlier objection
+  // to purple here was really an objection to its area: the old version
+  // filled a 66px box, and a saturated block that size for a fact about the
+  // calendar did outweigh everything around it. At 34px it reads as a mark
+  // rather than a surface, and ink at this contrast was simply heavier than
+  // the one thing it is pointing at deserves.
   numberToday: {
-    backgroundColor: colors.ink,
+    backgroundColor: colors.purple,
   },
   num: {
     color: colors.ink,
