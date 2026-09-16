@@ -238,8 +238,11 @@ const styles = StyleSheet.create({
     // rather than by a square one.
     overflow: 'hidden',
   },
+  // The same inset on all four sides of a card. It was SIDE_INSET left and
+  // right but only the outer container's 10px on top, so a card sat visibly
+  // closer to the top edge of its frame than to either side.
   track: {
-    paddingHorizontal: SIDE_INSET,
+    padding: SIDE_INSET,
     gap: CARD_GAP,
   },
   card: {
@@ -249,7 +252,11 @@ const styles = StyleSheet.create({
     // A floor, not the height: cross-axis stretch raises every card to
     // the tallest, so this only matters when every card is short.
     minHeight: 250,
-    justifyContent: 'flex-end',
+    // Top, not bottom. Every card is stretched to the tallest one's height,
+    // so bottom-aligning pushed a shorter card's text down by however much
+    // shorter it was — swiping between two cards moved the eyebrow and
+    // heading up and down instead of keeping them in one place.
+    justifyContent: 'flex-start',
     gap: 10,
   },
   cardCompact: {
