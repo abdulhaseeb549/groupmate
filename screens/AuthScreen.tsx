@@ -15,6 +15,7 @@ import { KeyboardAvoider } from '../components/KeyboardAvoider';
 import { supabase } from '../lib/supabase';
 import { useAuth } from '../state/AuthProvider';
 import { colors, layout, type } from '../theme';
+import { useIncomingInviteCode } from '../utils/inviteLink';
 
 type Mode = 'signIn' | 'signUp';
 type InviteLookup =
@@ -36,6 +37,15 @@ export function AuthScreen() {
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [signedUp, setSignedUp] = useState(false);
+
+  // Opened from a shared invite link: jump to Create account with the code
+  // already filled in, since joining is the only reason to follow one.
+  const incomingCode = useIncomingInviteCode();
+  useEffect(() => {
+    if (!incomingCode) return;
+    setInviteCode(incomingCode);
+    setMode('signUp');
+  }, [incomingCode]);
 
   const isSignUp = mode === 'signUp';
   const canSubmit =

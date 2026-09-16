@@ -20,6 +20,7 @@ import { commitExtractedProject, ExtractedProjectData, parseBrief } from '../sta
 import { useAuth } from '../state/AuthProvider';
 import { joinProjectByCode } from '../state/projectQueries';
 import { colors, layout, type } from '../theme';
+import { useIncomingInviteCode } from '../utils/inviteLink';
 import { pickPdf, PdfFileInput } from '../utils/pdfPicker';
 
 const MIN_LENGTH = 40;
@@ -53,6 +54,12 @@ export function OnboardingScreen({ onDone }: Props) {
   const { profile, session, signOut } = useAuth();
   const [mode, setMode] = useState<Mode>('intro');
   const [signOutVisible, setSignOutVisible] = useState(false);
+  // Someone already signed in who taps an invite link goes straight to the
+  // join step rather than landing on the hero and hunting for the button.
+  const incomingCode = useIncomingInviteCode();
+  useEffect(() => {
+    if (incomingCode) setMode('join');
+  }, [incomingCode]);
   const initials = profile?.initials ?? '··';
   const firstName = (profile?.fullName ?? session?.user.email?.split('@')[0] ?? '').split(' ')[0];
 
@@ -60,7 +67,7 @@ export function OnboardingScreen({ onDone }: Props) {
     return <CreateProjectFlow onBack={() => setMode('intro')} onDone={onDone} />;
   }
   if (mode === 'join') {
-    return <JoinProjectFlow onBack={() => setMode('intro')} onDone={onDone} />;
+    return <JoinProjectFlow onBack={() => setMode('intro')} onDone={onDone} initialCode={incomingCode ?? undefined} />;
   }
 
   return (
@@ -339,9 +346,18 @@ function CreateProjectFlow({ onBack, onDone }: { onBack: () => void; onDone: () 
 }
 
 /** The "Join a project" path — an invite code, previewed before submitting, then a security-definer RPC join (see migration 0016). */
-function JoinProjectFlow({ onBack, onDone }: { onBack: () => void; onDone: () => void }) {
+function JoinProjectFlow({
+  onBack,
+  onDone,
+  initialCode,
+}: {
+  onBack: () => void;
+  onDone: () => void;
+  /** Prefilled when the app was opened from an invite link. */
+  initialCode?: string;
+}) {
   const insets = useSafeAreaInsets();
-  const [code, setCode] = useState('');
+  const [code, setCode] = useState(initialCode ?? '');
   const [lookup, setLookup] = useState<InviteLookup>({ status: 'idle' });
   const [joining, setJoining] = useState(false);
   const [error, setError] = useState<string | null>(null);

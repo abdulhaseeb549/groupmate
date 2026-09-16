@@ -10,6 +10,11 @@ type Props = {
   onClose: () => void;
 };
 
+/** Deep link that opens the app straight into joining this project (see app.json's scheme). */
+export function inviteLink(code: string): string {
+  return `groupmate://join/${code}`;
+}
+
 /**
  * Shows the project's invite code and lets its owner share it or generate a
  * fresh one. No clipboard library is in this app yet, so "share" goes
@@ -25,10 +30,14 @@ export function InviteModal({ visible, onClose }: Props) {
 
   async function share() {
     try {
+      // A tappable link, not just the code: on a phone that has GroupMate the
+      // groupmate:// scheme opens it straight into joining, and on one that
+      // doesn't the message still carries the code to type in by hand. Sent
+      // through the OS share sheet so it lands in WhatsApp, SMS, anywhere.
       await Share.share({
         message:
-          `Join my "${project.name}" group on GroupMate with invite code ${project.inviteCode} — ` +
-          `enter it when you sign up, or tap "Join a project" if you already have an account.`,
+          `Join my "${project.name}" group on GroupMate:\n${inviteLink(project.inviteCode)}\n\n` +
+          `No app yet? Install it, then enter code ${project.inviteCode} when you sign up.`,
       });
     } catch {
       // User dismissed the share sheet — nothing to handle.

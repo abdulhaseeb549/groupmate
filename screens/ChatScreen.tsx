@@ -37,7 +37,7 @@ import {
   subscribeToMessages,
   subscribeToReactions,
 } from '../state/messages';
-import { pickFile } from '../utils/filePicker';
+import { pickDocument, pickMedia } from '../utils/filePicker';
 import { useProject } from '../state/ProjectRepository';
 import { colors, gradients, layout, type } from '../theme';
 import { formatTime } from '../utils/dates';
@@ -59,11 +59,14 @@ type PickerAnchor = {
 
 const REACTION_PALETTE = ['❤️', '👍', '🎉', '👏', '😄'];
 
-const ATTACH_KINDS: { label: string; icon: IconName; mime: string }[] = [
-  { label: 'Files', icon: 'document', mime: '*/*' },
-  { label: 'Images', icon: 'image', mime: 'image/*' },
-  { label: 'Audio', icon: 'audio', mime: 'audio/*' },
-  { label: 'Video', icon: 'video', mime: 'video/*' },
+/** Photos and video go to the gallery grid; the rest to the document browser. */
+type AttachKind = { label: string; icon: IconName; source: { via: 'media'; kind: 'image' | 'video' } | { via: 'document'; mime: string } };
+
+const ATTACH_KINDS: AttachKind[] = [
+  { label: 'Files', icon: 'document', source: { via: 'document', mime: '*/*' } },
+  { label: 'Images', icon: 'image', source: { via: 'media', kind: 'image' } },
+  { label: 'Audio', icon: 'audio', source: { via: 'document', mime: 'audio/*' } },
+  { label: 'Video', icon: 'video', source: { via: 'media', kind: 'video' } },
 ];
 
 /**
@@ -206,10 +209,11 @@ export function ChatScreen({ conversation, onBack }: Props) {
     setSending(false);
   }
 
-  async function handleAttach(mime: string) {
+  async function handleAttach(source: AttachKind['source']) {
     if (attaching || !currentUserId) return;
     setAttachError(null);
-    const { file, error } = await pickFile(mime);
+    const { file, error } =
+      source.via === 'media' ? await pickMedia(source.kind) : await pickDocument(source.mime);
     if (error) {
       setAttachError(error);
       return;
@@ -321,7 +325,7 @@ export function ChatScreen({ conversation, onBack }: Props) {
           {ATTACH_KINDS.map((kind) => (
             <Pressable
               key={kind.label}
-              onPress={() => handleAttach(kind.mime)}
+              onPress={() => handleAttach(kind.source)}
               disabled={attaching}
               accessibilityRole="button"
               accessibilityLabel={`Attach ${kind.label.toLowerCase()}`}
@@ -348,16 +352,25 @@ export function ChatScreen({ conversation, onBack }: Props) {
             disabled={!canSend}
             accessibilityRole="button"
             accessibilityLabel="Send"
+            accessibilityState={{ disabled: !canSend }}
             style={({ pressed }) => [styles.sendButton, pressed && canSend && styles.sendButtonPressed]}
           >
-            <LinearGradient
-              colors={gradients.purpleDeep}
-              start={{ x: 0.25, y: 0 }}
-              end={{ x: 0.75, y: 1 }}
-              style={[styles.sendGradient, !canSend && styles.sendGradientDisabled]}
-            >
-              <Icon name="chevronUp" size={18} color={colors.onInk} strokeWidth={2.4} />
-            </LinearGradient>
+            {canSend ? (
+              <LinearGradient
+                colors={gradients.purpleDeep}
+                start={{ x: 0.25, y: 0 }}
+                end={{ x: 0.75, y: 1 }}
+                style={styles.sendFill}
+              >
+                <Icon name="send" size={17} color={colors.onInk} strokeWidth={1.9} />
+              </LinearGradient>
+            ) : (
+              // A flat neutral circle, not the gradient at 0.4 opacity: faded
+              // purple read as a half-painted blob rather than a disabled button.
+              <View style={[styles.sendFill, styles.sendFillDisabled]}>
+                <Icon name="send" size={17} color={colors.faint} strokeWidth={1.9} />
+              </View>
+            )}
           </Pressable>
         </View>
       </KeyboardAvoider>
@@ -560,6 +573,9 @@ function ReactionPills({
   );
 }
 
+/** The composer's send button, and the input's resting height — kept equal so the two bottom-align exactly. */
+const SEND_SIZE = 46;
+
 const PICKER_ITEM = 40;
 const PICKER_GAP = 6;
 const PICKER_PAD = 8;
@@ -684,6 +700,10 @@ function TaskShareCard({
 
   const assignee = task.assigneeId ? membersById[task.assigneeId] : null;
   const priority = PRIORITY[task.priority];
+  // Anyone in the project can take an unclaimed task — claiming is
+  // first-come-first-served (see ProjectRepository's claimTask), so this is
+  // everyone, not a shortlist.
+  const claimers = Object.values(membersById);
 
   return (
     <Pressable
@@ -696,10 +716,14 @@ function TaskShareCard({
     >
       <View style={styles.taskCardHeader}>
         <TaskStatusDot status={task.status} size={18} />
-        <Text style={[type.taskTitle, styles.ink, styles.taskCardTitle]} numberOfLines={2}>
-          {task.title}
+        <Text style={[type.metadata, styles.taskCardEyebrow]} numberOfLines={1}>
+          {task.assigneeId === null ? 'UP FOR GRABS' : 'SHARED TASK'}
         </Text>
       </View>
+
+      <Text style={[type.taskTitle, styles.ink, styles.taskCardTitle]} numberOfLines={2}>
+        {task.title}
+      </Text>
 
       <View style={styles.taskCardMeta}>
         <View style={[styles.taskCardPriority, { backgroundColor: priority.bg }]}>
@@ -721,15 +745,27 @@ function TaskShareCard({
       </View>
 
       {task.assigneeId === null ? (
-        <Pressable
-          onPress={handleClaim}
-          disabled={claiming}
-          style={({ pressed }) => [styles.taskCardClaim, (claiming || pressed) && styles.taskCardClaimDisabled]}
-          accessibilityRole="button"
-          accessibilityLabel={`Claim ${task.title}`}
-        >
-          <Text style={[type.button, styles.onInk]}>{claiming ? 'Claiming…' : 'Claim this task'}</Text>
-        </Pressable>
+        <View style={styles.taskCardFooter}>
+          {/* Who could take this, the way the reference card stacks faces
+              beside its action — real teammates, not decoration. */}
+          <View style={styles.taskCardFaces}>
+            {claimers.slice(0, 3).map((m, i) => (
+              <Avatar key={m.id} {...m} size={22} borderColor={colors.surface} style={i > 0 ? styles.faceOverlap : undefined} />
+            ))}
+            {claimers.length > 3 ? (
+              <Text style={[type.tinyLabel, styles.muted, styles.facesMore]}>+{claimers.length - 3}</Text>
+            ) : null}
+          </View>
+          <Pressable
+            onPress={handleClaim}
+            disabled={claiming}
+            style={({ pressed }) => [styles.taskCardClaim, (claiming || pressed) && styles.taskCardClaimDisabled]}
+            accessibilityRole="button"
+            accessibilityLabel={`Claim ${task.title}`}
+          >
+            <Text style={[type.button, styles.onInk]}>{claiming ? 'Claiming…' : 'Claim it'}</Text>
+          </Pressable>
+        </View>
       ) : (
         <View style={styles.taskCardAssignee}>
           {assignee ? <Avatar {...assignee} size={20} /> : null}
@@ -999,11 +1035,33 @@ const styles = StyleSheet.create({
   },
   taskCardHeader: {
     flexDirection: 'row',
-    alignItems: 'flex-start',
+    alignItems: 'center',
     gap: 8,
   },
-  taskCardTitle: {
+  taskCardEyebrow: {
     flex: 1,
+    color: colors.muted,
+    letterSpacing: 0.5,
+  },
+  taskCardTitle: {
+    marginTop: -2,
+  },
+  taskCardFooter: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    gap: 10,
+    marginTop: 2,
+  },
+  taskCardFaces: {
+    flexDirection: 'row',
+    alignItems: 'center',
+  },
+  faceOverlap: {
+    marginLeft: -8,
+  },
+  facesMore: {
+    marginLeft: 6,
   },
   taskCardMeta: {
     flexDirection: 'row',
@@ -1028,8 +1086,9 @@ const styles = StyleSheet.create({
     color: colors.redText,
   },
   taskCardClaim: {
-    height: 40,
-    borderRadius: 20,
+    height: 36,
+    paddingHorizontal: 18,
+    borderRadius: 18,
     backgroundColor: colors.purple,
     alignItems: 'center',
     justifyContent: 'center',
@@ -1111,13 +1170,17 @@ const styles = StyleSheet.create({
     gap: 10,
     paddingHorizontal: layout.screenPadding,
   },
+  // Height is pinned to SEND_SIZE rather than left to line-height so the
+  // input and the send button are exactly the same height and bottom-align
+  // cleanly; it only grows past that once the text actually wraps.
   input: {
     flex: 1,
-    minHeight: 46,
+    minHeight: SEND_SIZE,
     maxHeight: 120,
-    borderRadius: 23,
+    borderRadius: SEND_SIZE / 2,
     paddingHorizontal: 18,
-    paddingVertical: 12,
+    paddingTop: 13,
+    paddingBottom: 13,
     backgroundColor: colors.surface,
     borderWidth: 1.5,
     borderColor: colors.border,
@@ -1126,21 +1189,21 @@ const styles = StyleSheet.create({
     fontSize: type.body.fontSize,
   },
   sendButton: {
-    width: 46,
-    height: 46,
-    borderRadius: 23,
+    width: SEND_SIZE,
+    height: SEND_SIZE,
+    borderRadius: SEND_SIZE / 2,
     overflow: 'hidden',
   },
   sendButtonPressed: {
     transform: [{ scale: 0.92 }],
   },
-  sendGradient: {
+  sendFill: {
     flex: 1,
     alignItems: 'center',
     justifyContent: 'center',
   },
-  sendGradientDisabled: {
-    opacity: 0.4,
+  sendFillDisabled: {
+    backgroundColor: colors.surfaceMuted,
   },
   claimedBackdrop: {
     flex: 1,
