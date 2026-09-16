@@ -22,7 +22,10 @@ export function weekDates(today: Date): Date[] {
  * (projectSchedule's latestFinish — the last day a task can finish without
  * pushing the project past its due date), not from an invented per-task
  * deadline. Days are not pressable: there's no per-day view to open, and a
- * tappable-looking day that does nothing is worse than a plain one.
+ * tappable-looking day that does nothing is worse than a plain one — which
+ * is also why no day carries a card of its own. Seven bordered, filled
+ * boxes in a row read as seven objects competing with the real cards above
+ * and below; the strip is one object, so only today is marked.
  */
 export function WeekStrip({ today, counts }: Props) {
   const dates = weekDates(today);
@@ -43,14 +46,16 @@ export function WeekStrip({ today, counts }: Props) {
           return (
             <View
               key={i}
-              style={[styles.pill, isToday && styles.pillActive]}
+              style={styles.day}
               accessible
               accessibilityLabel={`${date.toDateString()}${count > 0 ? `, ${count} due` : ''}${isToday ? ', today' : ''}`}
             >
-              <Text style={[type.tinyLabel, isToday ? styles.letterActive : styles.letter]}>{DAY_LETTERS[i]}</Text>
-              <Text style={[type.button, isToday ? styles.numActive : styles.num]}>{date.getDate()}</Text>
+              <Text style={[type.tinyLabel, styles.letter]}>{DAY_LETTERS[i]}</Text>
+              <View style={[styles.number, isToday && styles.numberToday]}>
+                <Text style={[type.projectTitle, isToday ? styles.numToday : styles.num]}>{date.getDate()}</Text>
+              </View>
               <View style={styles.dotSlot}>
-                {count > 0 ? <View style={[styles.dot, isToday && styles.dotActive]} /> : null}
+                {count > 0 ? <View style={styles.dot} /> : null}
               </View>
             </View>
           );
@@ -78,33 +83,34 @@ const styles = StyleSheet.create({
   },
   row: {
     flexDirection: 'row',
-    gap: 8,
   },
-  pill: {
+  day: {
     flex: 1,
-    height: 66,
-    borderRadius: 16,
     alignItems: 'center',
-    justifyContent: 'center',
-    gap: 2,
-    backgroundColor: colors.surface,
-    borderWidth: StyleSheet.hairlineWidth,
-    borderColor: 'rgba(17,17,17,0.06)',
-  },
-  pillActive: {
-    backgroundColor: colors.purple,
-    borderColor: colors.purple,
+    gap: 5,
   },
   letter: {
     color: colors.faint,
   },
-  letterActive: {
-    color: 'rgba(255,255,255,0.7)',
+  // The number leads, not the letter: at 14px against an 11px label there
+  // was no hierarchy and the row read as one flat texture.
+  number: {
+    width: 34,
+    height: 34,
+    borderRadius: 17,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  // Ink, not purple. Today is a state, not something you can press — the
+  // days are explicitly not pressable — and a filled purple block is the
+  // loudest thing on the screen for a fact about the calendar.
+  numberToday: {
+    backgroundColor: colors.ink,
   },
   num: {
     color: colors.ink,
   },
-  numActive: {
+  numToday: {
     color: colors.onInk,
   },
   // Fixed-height slot so a day with a deadline dot doesn't sit taller than one without.
@@ -112,13 +118,12 @@ const styles = StyleSheet.create({
     height: 6,
     justifyContent: 'center',
   },
+  // Amber, the palette's "needs attention" — a deadline is a status, and
+  // this is the one thing in the strip actually worth looking at.
   dot: {
     width: 5,
     height: 5,
     borderRadius: 2.5,
-    backgroundColor: colors.purple,
-  },
-  dotActive: {
-    backgroundColor: colors.onInk,
+    backgroundColor: colors.amber,
   },
 });
