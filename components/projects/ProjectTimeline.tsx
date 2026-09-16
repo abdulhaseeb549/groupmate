@@ -2,7 +2,7 @@ import { StyleSheet, Text, View } from 'react-native';
 import { Icon } from '../Icon';
 import { Task } from '../../data/tasks';
 import { ProjectSchedule } from '../../state/projectSchedule';
-import { colors, type } from '../../theme';
+import { colors, radius, type } from '../../theme';
 import { formatDueDate, formatShortDate } from '../../utils/dates';
 
 type Props = {
@@ -81,7 +81,7 @@ export function ProjectTimeline({ tasks, schedule, dueDate, today }: Props) {
 const styles = StyleSheet.create({
   card: {
     backgroundColor: colors.surface,
-    borderRadius: 24,
+    borderRadius: radius.card,
     padding: 16,
     gap: 10,
   },

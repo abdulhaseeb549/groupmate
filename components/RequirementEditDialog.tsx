@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react';
 import { Modal, Pressable, StyleSheet, Text, TextInput, View } from 'react-native';
 import { Requirement } from '../data/requirements';
 import { useProject } from '../state/ProjectRepository';
-import { colors, layout, type } from '../theme';
+import { colors, layout, radius, type } from '../theme';
 
 type Props = {
   requirement: Requirement | null;
@@ -82,7 +82,7 @@ const styles = StyleSheet.create({
     width: '100%',
     maxWidth: 340,
     backgroundColor: colors.surface,
-    borderRadius: 22,
+    borderRadius: radius.card,
     padding: 20,
     gap: 14,
   },

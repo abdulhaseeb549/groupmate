@@ -21,7 +21,7 @@ import { supabase } from '../lib/supabase';
 import { commitExtractedProject, ExtractedProjectData, parseBrief } from '../state/briefParsing';
 import { useAuth } from '../state/AuthProvider';
 import { joinProjectByCode } from '../state/projectQueries';
-import { colors, layout, type } from '../theme';
+import { colors, layout, radius, type } from '../theme';
 import { useIncomingInviteCode } from '../utils/inviteLink';
 import { pickPdf, PdfFileInput } from '../utils/pdfPicker';
 
@@ -510,7 +510,7 @@ const styles = StyleSheet.create({
   },
   content: {
     paddingHorizontal: layout.screenPadding,
-    gap: 22,
+    gap: layout.sectionGap,
   },
   ink: {
     color: colors.ink,
@@ -566,7 +566,7 @@ const styles = StyleSheet.create({
     gap: 10,
   },
   briefCard: {
-    padding: 18,
+    padding: layout.cardPadding,
     gap: 4,
   },
   briefTop: {
@@ -610,8 +610,8 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     gap: 12,
-    padding: 14,
-    borderRadius: 18,
+    padding: layout.cardPadding,
+    borderRadius: radius.card,
     backgroundColor: colors.surface,
     borderWidth: StyleSheet.hairlineWidth,
     borderColor: 'rgba(17,17,17,0.06)',

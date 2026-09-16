@@ -13,7 +13,7 @@ import {
 } from 'react-native';
 import { Icon } from '../Icon';
 import { NotePage } from '../../state/studyQuiz';
-import { colors, type } from '../../theme';
+import { colors, layout, radius, type } from '../../theme';
 
 type Props = {
   pages: NotePage[];
@@ -229,7 +229,7 @@ function Arrow({
 const styles = StyleSheet.create({
   outer: {
     backgroundColor: colors.surface,
-    borderRadius: 24,
+    borderRadius: radius.card,
     padding: 10,
     gap: 10,
     borderWidth: StyleSheet.hairlineWidth,
@@ -254,7 +254,7 @@ const styles = StyleSheet.create({
   },
   cardCompact: {
     minHeight: 190,
-    padding: 18,
+    padding: layout.cardPadding,
   },
   eyebrow: {
     color: 'rgba(255,255,255,0.62)',

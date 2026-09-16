@@ -1,8 +1,8 @@
 import { ReactNode } from 'react';
 import { StyleProp, StyleSheet, View, ViewStyle } from 'react-native';
-import { colors } from '../theme';
+import { colors, radius } from '../theme';
 
-const RADIUS = 22;
+const RADIUS = radius.card;
 
 type Props = {
   children: ReactNode;

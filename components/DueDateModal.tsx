@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react';
 import { Modal, Pressable, StyleSheet, Text, TextInput, View } from 'react-native';
 import { Icon } from './Icon';
 import { useProject } from '../state/ProjectRepository';
-import { colors, type } from '../theme';
+import { colors, radius, type } from '../theme';
 
 type Props = {
   visible: boolean;
@@ -149,7 +149,7 @@ const styles = StyleSheet.create({
     width: '100%',
     maxWidth: 340,
     backgroundColor: colors.surface,
-    borderRadius: 22,
+    borderRadius: radius.card,
     padding: 20,
     gap: 6,
   },

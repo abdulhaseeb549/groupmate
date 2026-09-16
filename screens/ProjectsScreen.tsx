@@ -18,7 +18,7 @@ import { ProjectSwitcher } from '../components/ProjectSwitcher';
 import { useAuth } from '../state/AuthProvider';
 import { useChatUnread } from '../state/chatUnread';
 import { useProject } from '../state/ProjectRepository';
-import { colors, gradients, layout, spacing, type } from '../theme';
+import { colors, gradients, layout, radius, spacing, type } from '../theme';
 import { formatDueDate } from '../utils/dates';
 
 const REQUIREMENT_STATUS: Record<RequirementStatus, { label: string; bg: string; text: string }> = {
@@ -287,7 +287,7 @@ const styles = StyleSheet.create({
   },
   scrollContent: {
     paddingHorizontal: layout.screenPadding,
-    gap: spacing.xl,
+    gap: layout.sectionGap,
   },
   titleRow: {
     flexDirection: 'row',
@@ -378,12 +378,12 @@ const styles = StyleSheet.create({
   },
   card: {
     backgroundColor: colors.surface,
-    borderRadius: 24,
+    borderRadius: radius.card,
     padding: 16,
   },
   statusCard: {
     backgroundColor: colors.purpleSoft,
-    borderRadius: 20,
+    borderRadius: radius.card,
     padding: 16,
     gap: 12,
   },

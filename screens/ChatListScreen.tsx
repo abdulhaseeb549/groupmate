@@ -10,7 +10,7 @@ import { Conversation, conversationKey } from '../state/messages';
 import { useAuth } from '../state/AuthProvider';
 import { useChatUnread } from '../state/chatUnread';
 import { useProject } from '../state/ProjectRepository';
-import { colors, layout, type } from '../theme';
+import { colors, layout, radius, type } from '../theme';
 
 type Props = {
   activeTab: NavTab;
@@ -162,7 +162,7 @@ const styles = StyleSheet.create({
   },
   content: {
     paddingHorizontal: layout.screenPadding,
-    gap: 20,
+    gap: layout.sectionGap,
   },
   header: {
     gap: 4,
@@ -175,7 +175,7 @@ const styles = StyleSheet.create({
   },
   list: {
     backgroundColor: colors.surface,
-    borderRadius: 24,
+    borderRadius: radius.card,
     paddingHorizontal: 12,
   },
   row: {

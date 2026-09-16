@@ -39,7 +39,7 @@ import {
 } from '../state/messages';
 import { pickDocument, pickMedia } from '../utils/filePicker';
 import { useProject } from '../state/ProjectRepository';
-import { colors, gradients, layout, type } from '../theme';
+import { colors, gradients, layout, radius, type } from '../theme';
 import { formatTime } from '../utils/dates';
 
 type Props = {
@@ -1211,7 +1211,7 @@ const styles = StyleSheet.create({
     width: '100%',
     maxWidth: 320,
     backgroundColor: colors.surface,
-    borderRadius: 24,
+    borderRadius: radius.card,
     padding: 24,
     alignItems: 'center',
     gap: 6,

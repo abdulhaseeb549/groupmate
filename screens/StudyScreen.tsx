@@ -37,7 +37,7 @@ import {
   QuizSummary,
   recordBestScore,
 } from '../state/studyQuiz';
-import { colors, layout, type } from '../theme';
+import { colors, layout, radius, type } from '../theme';
 import { pickPdf, PdfFileInput } from '../utils/pdfPicker';
 
 const MIN_LENGTH = 40;
@@ -795,7 +795,7 @@ const styles = StyleSheet.create({
   },
   content: {
     paddingHorizontal: layout.screenPadding,
-    gap: 18,
+    gap: layout.sectionGap,
   },
   header: {
     flexDirection: 'row',
@@ -827,8 +827,8 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     gap: 12,
-    padding: 14,
-    borderRadius: 20,
+    padding: layout.cardPadding,
+    borderRadius: radius.card,
     backgroundColor: colors.surface,
     borderWidth: StyleSheet.hairlineWidth,
     borderColor: 'rgba(17,17,17,0.06)',
@@ -858,8 +858,8 @@ const styles = StyleSheet.create({
   },
   pointersEmpty: {
     gap: 4,
-    padding: 18,
-    borderRadius: 20,
+    padding: layout.cardPadding,
+    borderRadius: radius.card,
     backgroundColor: colors.surface,
     borderWidth: StyleSheet.hairlineWidth,
     borderColor: 'rgba(17,17,17,0.06)',
@@ -905,7 +905,7 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     gap: 12,
     backgroundColor: colors.surface,
-    borderRadius: 22,
+    borderRadius: radius.card,
     padding: 16,
   },
   emptyTile: {
@@ -1046,7 +1046,7 @@ const styles = StyleSheet.create({
     alignItems: 'flex-start',
     gap: 8,
     borderRadius: 14,
-    padding: 14,
+    padding: layout.cardPadding,
   },
   explainCorrect: {
     backgroundColor: colors.mint,

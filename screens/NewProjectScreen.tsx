@@ -204,7 +204,7 @@ const styles = StyleSheet.create({
   },
   content: {
     paddingHorizontal: layout.screenPadding,
-    gap: 18,
+    gap: layout.sectionGap,
   },
   header: {
     flexDirection: 'row',

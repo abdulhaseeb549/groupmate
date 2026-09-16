@@ -16,7 +16,7 @@ import { RequirementState } from '../state/projectState';
 import { useAuth } from '../state/AuthProvider';
 import { useChatUnread } from '../state/chatUnread';
 import { useProject } from '../state/ProjectRepository';
-import { colors, layout, type } from '../theme';
+import { colors, layout, radius, type } from '../theme';
 import { checkForUpdate, UpdateCheckResult } from '../utils/checkForUpdate';
 import { formatLongDate } from '../utils/dates';
 
@@ -319,7 +319,7 @@ const styles = StyleSheet.create({
   },
   content: {
     paddingHorizontal: layout.screenPadding,
-    gap: 28,
+    gap: layout.sectionGap,
   },
   intro: {
     gap: 20,
@@ -437,7 +437,7 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     gap: 12,
     backgroundColor: colors.mint,
-    borderRadius: 20,
+    borderRadius: radius.card,
     padding: 16,
   },
   readyIconTile: {

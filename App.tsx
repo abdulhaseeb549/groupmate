@@ -20,6 +20,7 @@ import {
   Manrope_600SemiBold,
   Manrope_700Bold,
   colors,
+  displayFonts,
 } from './theme';
 
 function AppShell() {
@@ -67,6 +68,7 @@ export default function App() {
     Manrope_500Medium,
     Manrope_600SemiBold,
     Manrope_700Bold,
+    ...displayFonts,
   });
 
   if (!fontsLoaded) {

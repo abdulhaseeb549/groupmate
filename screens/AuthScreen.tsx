@@ -295,7 +295,7 @@ const styles = StyleSheet.create({
     flexGrow: 1,
     paddingHorizontal: layout.screenPadding,
     justifyContent: 'center',
-    gap: 28,
+    gap: layout.sectionGap,
   },
   ink: {
     color: colors.ink,

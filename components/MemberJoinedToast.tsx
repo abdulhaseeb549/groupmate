@@ -4,7 +4,7 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Avatar } from './Avatar';
 import { Icon } from './Icon';
 import { Member } from '../data/member';
-import { colors, type } from '../theme';
+import { colors, radius, type } from '../theme';
 
 const VISIBLE_MS = 4200;
 
@@ -108,7 +108,7 @@ const styles = StyleSheet.create({
     gap: 12,
     paddingVertical: 10,
     paddingHorizontal: 12,
-    borderRadius: 18,
+    borderRadius: radius.card,
     backgroundColor: colors.mint,
     // Sits over scrolling content, so it needs its own separation from the
     // page rather than relying on a background contrast that may not exist.

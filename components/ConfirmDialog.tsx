@@ -1,5 +1,5 @@
 import { Modal, Pressable, StyleSheet, Text, View } from 'react-native';
-import { colors, layout, type } from '../theme';
+import { colors, layout, radius, type } from '../theme';
 
 type Props = {
   visible: boolean;
@@ -75,7 +75,7 @@ const styles = StyleSheet.create({
     width: '100%',
     maxWidth: 340,
     backgroundColor: colors.surface,
-    borderRadius: 22,
+    borderRadius: radius.card,
     padding: 20,
     gap: 6,
   },
