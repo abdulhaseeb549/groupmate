@@ -1,6 +1,8 @@
-import { useEffect, useRef, useState } from 'react';
+import { ReactNode, useEffect, useRef, useState } from 'react';
 import {
   ActivityIndicator,
+  Animated,
+  Dimensions,
   FlatList,
   KeyboardAvoidingView,
   Linking,
@@ -15,7 +17,7 @@ import {
 import { LinearGradient } from 'expo-linear-gradient';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Avatar } from '../components/Avatar';
-import { Icon } from '../components/Icon';
+import { Icon, IconName } from '../components/Icon';
 import { TaskDetailModal } from '../components/TaskDetailModal';
 import { TaskStatusDot } from '../components/TaskStatusDot';
 import { Member } from '../data/member';
@@ -46,22 +48,43 @@ type Props = {
   onBack: () => void;
 };
 
+/** Where a long-pressed bubble sits on screen, so the reaction picker can open against it rather than in the middle of the screen. */
+type PickerAnchor = {
+  messageId: string;
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+  isOwn: boolean;
+};
+
+const REACTION_PALETTE = ['❤️', '👍', '🎉', '👏', '😄'];
+
+const ATTACH_KINDS: { label: string; icon: IconName; mime: string }[] = [
+  { label: 'Files', icon: 'document', mime: '*/*' },
+  { label: 'Images', icon: 'image', mime: 'image/*' },
+  { label: 'Audio', icon: 'audio', mime: 'audio/*' },
+  { label: 'Video', icon: 'video', mime: 'video/*' },
+];
+
 /**
  * One conversation's message list + composer — either the project's group
  * chat or a 1:1 with one other member (see ChatListScreen for where a
- * conversation gets picked). A message is either plain text or a shared
- * task-claim card (see state/messages.ts). Sending is await-then-let-
- * Realtime-echo-it-back rather than optimistic: there's no client-side id
- * to show ahead of the insert (same reasoning as ProjectRepository's
- * addTask), and Realtime typically confirms fast enough not to feel laggy.
+ * conversation gets picked). A message is either plain text, a shared
+ * task-claim card, or a file (see state/messages.ts). Sending is
+ * await-then-let-Realtime-echo-it-back rather than optimistic: there's no
+ * client-side id to show ahead of the insert (same reasoning as
+ * ProjectRepository's addTask), and Realtime typically confirms fast
+ * enough not to feel laggy.
  */
 export function ChatScreen({ conversation, onBack }: Props) {
   const insets = useSafeAreaInsets();
-  const { project, tasks, membersById, claimTask } = useProject();
+  const { project, tasks, members, membersById, claimTask } = useProject();
   const { session } = useAuth();
   const currentUserId = session?.user.id;
   const [messages, setMessages] = useState<Message[] | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
+  const [live, setLive] = useState(false);
   const [input, setInput] = useState('');
   const [sending, setSending] = useState(false);
   const [attaching, setAttaching] = useState(false);
@@ -69,8 +92,11 @@ export function ChatScreen({ conversation, onBack }: Props) {
   const [openTaskId, setOpenTaskId] = useState<string | null>(null);
   const [claimedTask, setClaimedTask] = useState<Task | null>(null);
   const [reactions, setReactions] = useState<Reaction[]>([]);
-  const [reactionPickerMessageId, setReactionPickerMessageId] = useState<string | null>(null);
+  const [anchor, setAnchor] = useState<PickerAnchor | null>(null);
   const listRef = useRef<FlatList<Message>>(null);
+  // Messages already on screen when the thread opened. Anything not in here
+  // is genuinely new and animates in; history doesn't re-animate on scroll.
+  const settledIdsRef = useRef<Set<string>>(new Set());
 
   function handleClaimed(task: Task) {
     setClaimedTask(task);
@@ -101,17 +127,22 @@ export function ChatScreen({ conversation, onBack }: Props) {
   }
 
   const title = conversation.type === 'group' ? project.name : (membersById[conversation.otherUserId]?.name ?? 'Direct message');
-  const subtitle = conversation.type === 'group' ? project.team : 'Direct message';
+  const subtitle =
+    conversation.type === 'group'
+      ? `${members.length} ${members.length === 1 ? 'person' : 'people'} in chat`
+      : 'Direct message';
 
   useEffect(() => {
     if (!currentUserId) return;
     let cancelled = false;
     setMessages(null);
     setLoadError(null);
+    settledIdsRef.current = new Set();
 
     fetchMessages(project.id, currentUserId, conversation)
       .then((data) => {
         if (cancelled) return;
+        for (const m of data) settledIdsRef.current.add(m.id);
         setMessages(data);
         return fetchReactions(data.map((m) => m.id));
       })
@@ -122,14 +153,20 @@ export function ChatScreen({ conversation, onBack }: Props) {
         if (!cancelled) setLoadError(err instanceof Error ? err.message : 'Could not load messages.');
       });
 
-    const unsubscribe = subscribeToMessages(project.id, (message) => {
-      if (!belongsToConversation(message, currentUserId, conversation)) return;
-      setMessages((prev) => {
-        const base = prev ?? [];
-        if (base.some((m) => m.id === message.id)) return base;
-        return [...base, message];
-      });
-    });
+    const unsubscribe = subscribeToMessages(
+      project.id,
+      (message) => {
+        if (!belongsToConversation(message, currentUserId, conversation)) return;
+        setMessages((prev) => {
+          const base = prev ?? [];
+          if (base.some((m) => m.id === message.id)) return base;
+          return [...base, message];
+        });
+      },
+      (isLive) => {
+        if (!cancelled) setLive(isLive);
+      }
+    );
 
     return () => {
       cancelled = true;
@@ -170,10 +207,10 @@ export function ChatScreen({ conversation, onBack }: Props) {
     setSending(false);
   }
 
-  async function handleAttach() {
+  async function handleAttach(mime: string) {
     if (attaching || !currentUserId) return;
     setAttachError(null);
-    const { file, error } = await pickFile();
+    const { file, error } = await pickFile(mime);
     if (error) {
       setAttachError(error);
       return;
@@ -188,148 +225,187 @@ export function ChatScreen({ conversation, onBack }: Props) {
     setAttaching(false);
   }
 
+  const canSend = input.trim().length > 0 && !sending;
+
   return (
     <>
-    <KeyboardAvoidingView style={styles.screen} behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
-      <View style={[styles.header, { paddingTop: Math.max(insets.top, 40) + 14 }]}>
-        <Pressable
-          onPress={onBack}
-          accessibilityRole="button"
-          accessibilityLabel="Back to chats"
-          style={styles.backButton}
-        >
-          <Icon name="chevronLeft" size={20} color={colors.ink} strokeWidth={2} />
-        </Pressable>
-        <View style={styles.headerText}>
-          <Text style={type.pageTitle} numberOfLines={1}>
-            {title}
-          </Text>
-          <Text style={[type.body, styles.muted]} numberOfLines={1}>
-            {subtitle}
-          </Text>
-        </View>
-      </View>
-
-      {messages === null ? (
-        <View style={styles.centerBox}>
-          <ActivityIndicator color={colors.purple} />
-        </View>
-      ) : loadError ? (
-        <View style={styles.centerBox}>
-          <Icon name="exclamation" size={20} color={colors.redText} strokeWidth={2.2} />
-          <Text style={[type.body, styles.muted, styles.centerText]}>{loadError}</Text>
-        </View>
-      ) : messages.length === 0 ? (
-        <View style={styles.centerBox}>
-          <View style={styles.emptyTile}>
-            <Icon name="chat" size={22} color={colors.purple} strokeWidth={1.8} />
-          </View>
-          <Text style={[type.taskTitle, styles.ink]}>No messages yet</Text>
-          <Text style={[type.caption, styles.muted, styles.centerText]}>
-            {conversation.type === 'group'
-              ? 'Say hello, or share a task from its detail view so your team can claim it.'
-              : `Say hello to ${title}.`}
-          </Text>
-        </View>
-      ) : (
-        <FlatList
-          ref={listRef}
-          data={messages}
-          keyExtractor={(m) => m.id}
-          contentContainerStyle={styles.list}
-          onContentSizeChange={() => listRef.current?.scrollToEnd({ animated: false })}
-          renderItem={({ item, index }) => {
-            const prevItem = index > 0 ? messages[index - 1] : undefined;
-            const showHeader = !prevItem || prevItem.authorId !== item.authorId;
-            const sharedTask = item.sharedTaskId ? (tasks.find((t) => t.id === item.sharedTaskId) ?? null) : null;
-            return (
-              <MessageRow
-                message={item}
-                isOwn={item.authorId === currentUserId}
-                author={membersById[item.authorId]}
-                showHeader={showHeader}
-                sharedTask={sharedTask}
-                membersById={membersById}
-                onClaim={claimTask}
-                onOpen={setOpenTaskId}
-                onClaimed={handleClaimed}
-                reactions={reactions.filter((r) => r.messageId === item.id)}
-                currentUserId={currentUserId}
-                onToggleReaction={toggleReaction}
-                onLongPress={() => setReactionPickerMessageId(item.id)}
-              />
-            );
-          }}
-        />
-      )}
-
-      {attachError ? (
-        <View style={styles.attachErrorBox}>
-          <Icon name="exclamation" size={14} color={colors.redText} strokeWidth={2.2} />
-          <Text style={[type.caption, styles.errorText]} numberOfLines={2}>
-            {attachError}
-          </Text>
-        </View>
-      ) : null}
-
-      <View style={[styles.composer, { marginBottom: Math.max(insets.bottom, 12) + 10 }]}>
-        <Pressable
-          onPress={handleAttach}
-          disabled={attaching}
-          accessibilityRole="button"
-          accessibilityLabel="Attach a file"
-          style={[styles.attachButton, attaching && styles.attachButtonDisabled]}
-        >
-          {attaching ? <ActivityIndicator size="small" color={colors.muted} /> : <Icon name="plus" size={18} color={colors.muted} strokeWidth={2} />}
-        </Pressable>
-        <TextInput
-          value={input}
-          onChangeText={setInput}
-          placeholder={conversation.type === 'group' ? 'Message your team…' : `Message ${title}…`}
-          placeholderTextColor={colors.faint}
-          multiline
-          style={styles.input}
-        />
-        <Pressable
-          onPress={handleSend}
-          disabled={!input.trim() || sending}
-          accessibilityRole="button"
-          accessibilityLabel="Send"
-          style={styles.sendButton}
-        >
-          <LinearGradient
-            colors={gradients.purpleDeep}
-            start={{ x: 0.25, y: 0 }}
-            end={{ x: 0.75, y: 1 }}
-            style={[styles.sendGradient, (!input.trim() || sending) && styles.sendGradientDisabled]}
+      <KeyboardAvoidingView style={styles.screen} behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
+        <View style={[styles.header, { paddingTop: Math.max(insets.top, 40) + 10 }]}>
+          <Pressable
+            onPress={onBack}
+            accessibilityRole="button"
+            accessibilityLabel="Back to chats"
+            style={({ pressed }) => [styles.headerButton, pressed && styles.pressed]}
           >
-            <Icon name="chevronUp" size={18} color={colors.onInk} strokeWidth={2.4} />
-          </LinearGradient>
-        </Pressable>
-      </View>
-    </KeyboardAvoidingView>
+            <Icon name="chevronLeft" size={20} color={colors.ink} strokeWidth={2} />
+          </Pressable>
+          <View style={styles.headerText}>
+            <Text style={[type.projectTitle, styles.ink]} numberOfLines={1}>
+              {title}
+            </Text>
+            <View style={styles.headerSubRow}>
+              <View style={[styles.liveDot, live ? styles.liveDotOn : styles.liveDotOff]} />
+              <Text style={[type.caption, styles.muted]} numberOfLines={1}>
+                {subtitle}
+              </Text>
+            </View>
+          </View>
+          {/* Balances the back button's width so the title stays optically centered — invisible, not an empty-looking button. */}
+          <View style={styles.headerSpacer} />
+        </View>
+
+        {messages === null ? (
+          <View style={styles.centerBox}>
+            <ActivityIndicator color={colors.purple} />
+          </View>
+        ) : loadError ? (
+          <View style={styles.centerBox}>
+            <Icon name="exclamation" size={20} color={colors.redText} strokeWidth={2.2} />
+            <Text style={[type.body, styles.muted, styles.centerText]}>{loadError}</Text>
+          </View>
+        ) : messages.length === 0 ? (
+          <View style={styles.centerBox}>
+            <View style={styles.emptyTile}>
+              <Icon name="chat" size={22} color={colors.purple} strokeWidth={1.8} />
+            </View>
+            <Text style={[type.taskTitle, styles.ink]}>No messages yet</Text>
+            <Text style={[type.caption, styles.muted, styles.centerText]}>
+              {conversation.type === 'group'
+                ? 'Say hello, or share a task from its detail view so your team can claim it.'
+                : `Say hello to ${title}.`}
+            </Text>
+          </View>
+        ) : (
+          <FlatList
+            ref={listRef}
+            data={messages}
+            keyExtractor={(m) => m.id}
+            contentContainerStyle={styles.list}
+            onContentSizeChange={() => listRef.current?.scrollToEnd({ animated: true })}
+            renderItem={({ item, index }) => {
+              const prevItem = index > 0 ? messages[index - 1] : undefined;
+              const showHeader = !prevItem || prevItem.authorId !== item.authorId;
+              const sharedTask = item.sharedTaskId ? (tasks.find((t) => t.id === item.sharedTaskId) ?? null) : null;
+              return (
+                <MessageRow
+                  message={item}
+                  isOwn={item.authorId === currentUserId}
+                  author={membersById[item.authorId]}
+                  showHeader={showHeader}
+                  sharedTask={sharedTask}
+                  membersById={membersById}
+                  onClaim={claimTask}
+                  onOpen={setOpenTaskId}
+                  onClaimed={handleClaimed}
+                  reactions={reactions.filter((r) => r.messageId === item.id)}
+                  currentUserId={currentUserId}
+                  onToggleReaction={toggleReaction}
+                  onAnchor={setAnchor}
+                  isNew={!settledIdsRef.current.has(item.id)}
+                  onSettled={() => settledIdsRef.current.add(item.id)}
+                />
+              );
+            }}
+          />
+        )}
+
+        {attachError ? (
+          <View style={styles.attachErrorBox}>
+            <Icon name="exclamation" size={14} color={colors.redText} strokeWidth={2.2} />
+            <Text style={[type.caption, styles.errorText]} numberOfLines={2}>
+              {attachError}
+            </Text>
+          </View>
+        ) : null}
+
+        <View style={styles.attachRow}>
+          {ATTACH_KINDS.map((kind) => (
+            <Pressable
+              key={kind.label}
+              onPress={() => handleAttach(kind.mime)}
+              disabled={attaching}
+              accessibilityRole="button"
+              accessibilityLabel={`Attach ${kind.label.toLowerCase()}`}
+              style={({ pressed }) => [styles.attachChip, (pressed || attaching) && styles.attachChipPressed]}
+            >
+              <Icon name={kind.icon} size={13} color={colors.muted} strokeWidth={1.8} />
+              <Text style={[type.tinyLabel, styles.muted]}>{kind.label}</Text>
+            </Pressable>
+          ))}
+          {attaching ? <ActivityIndicator size="small" color={colors.muted} /> : null}
+        </View>
+
+        <View style={[styles.composer, { marginBottom: Math.max(insets.bottom, 12) + 6 }]}>
+          <TextInput
+            value={input}
+            onChangeText={setInput}
+            placeholder={conversation.type === 'group' ? 'Message your team…' : `Message ${title}…`}
+            placeholderTextColor={colors.faint}
+            multiline
+            style={styles.input}
+          />
+          <Pressable
+            onPress={handleSend}
+            disabled={!canSend}
+            accessibilityRole="button"
+            accessibilityLabel="Send"
+            style={({ pressed }) => [styles.sendButton, pressed && canSend && styles.sendButtonPressed]}
+          >
+            <LinearGradient
+              colors={gradients.purpleDeep}
+              start={{ x: 0.25, y: 0 }}
+              end={{ x: 0.75, y: 1 }}
+              style={[styles.sendGradient, !canSend && styles.sendGradientDisabled]}
+            >
+              <Icon name="chevronUp" size={18} color={colors.onInk} strokeWidth={2.4} />
+            </LinearGradient>
+          </Pressable>
+        </View>
+      </KeyboardAvoidingView>
 
       <TaskDetailModal taskId={openTaskId} onClose={() => setOpenTaskId(null)} onClaimed={handleClaimed} />
       <TaskClaimedModal task={claimedTask} onClose={() => setClaimedTask(null)} onView={setOpenTaskId} />
-      <ReactionPickerModal
-        messageId={reactionPickerMessageId}
-        onClose={() => setReactionPickerMessageId(null)}
+      <ReactionPicker
+        anchor={anchor}
+        topLimit={Math.max(insets.top, 40) + 8}
+        onClose={() => setAnchor(null)}
         onPick={(emoji) => {
-          if (reactionPickerMessageId) toggleReaction(reactionPickerMessageId, emoji);
-          setReactionPickerMessageId(null);
+          if (anchor) toggleReaction(anchor.messageId, emoji);
+          setAnchor(null);
         }}
       />
     </>
   );
 }
 
-const REACTION_PALETTE = ['❤️', '👍', '🎉', '👏', '😄'];
-
 const PRIORITY: Record<Priority, { label: string; mark: string; text: string; bg: string }> = {
   high: { label: 'High', mark: colors.red, text: colors.redText, bg: colors.redSoft },
   medium: { label: 'Medium', mark: colors.amber, text: colors.yellowText, bg: colors.yellowSoft },
   low: { label: 'Low', mark: colors.faint, text: colors.muted, bg: colors.surfaceMuted },
 };
+
+/** Fades and lifts a newly-arrived message into place. Existing history renders at rest, so scrolling never re-animates it. */
+function MessageEntry({ animate, onSettled, children }: { animate: boolean; onSettled: () => void; children: ReactNode }) {
+  const progress = useRef(new Animated.Value(animate ? 0 : 1)).current;
+
+  useEffect(() => {
+    if (!animate) return;
+    Animated.timing(progress, { toValue: 1, duration: 240, useNativeDriver: true }).start(onSettled);
+    // Mount-only on purpose: this animates a message's arrival, not every render.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  return (
+    <Animated.View
+      style={{
+        opacity: progress,
+        transform: [{ translateY: progress.interpolate({ inputRange: [0, 1], outputRange: [10, 0] }) }],
+      }}
+    >
+      {children}
+    </Animated.View>
+  );
+}
 
 function MessageRow({
   message,
@@ -344,7 +420,9 @@ function MessageRow({
   reactions,
   currentUserId,
   onToggleReaction,
-  onLongPress,
+  onAnchor,
+  isNew,
+  onSettled,
 }: {
   message: Message;
   isOwn: boolean;
@@ -359,53 +437,79 @@ function MessageRow({
   reactions: Reaction[];
   currentUserId: string | undefined;
   onToggleReaction: (messageId: string, emoji: string) => void;
-  onLongPress: () => void;
+  onAnchor: (anchor: PickerAnchor) => void;
+  isNew: boolean;
+  onSettled: () => void;
 }) {
   const time = formatTime(new Date(message.createdAt));
   const name = isOwn ? 'You' : (author?.name ?? 'Someone');
+  const bubbleRef = useRef<View>(null);
+
+  // Measured at press time rather than on layout: the list scrolls, so a
+  // cached position would put the picker over the wrong message.
+  function handleLongPress() {
+    bubbleRef.current?.measureInWindow((x, y, width, height) => {
+      onAnchor({ messageId: message.id, x, y, width, height, isOwn });
+    });
+  }
 
   return (
-    <View style={[styles.row, isOwn && styles.rowOwn]}>
-      {!isOwn ? (
-        <View style={styles.avatarSlot}>
+    <MessageEntry animate={isNew} onSettled={onSettled}>
+      <View style={[styles.row, isOwn && styles.rowOwn]}>
+        {!isOwn ? (
+          <View style={styles.avatarSlot}>
+            {showHeader ? (
+              author ? (
+                <Avatar {...author} size={28} />
+              ) : (
+                <View style={styles.avatarPlaceholder} />
+              )
+            ) : null}
+          </View>
+        ) : null}
+        <View style={[styles.bubbleColumn, isOwn && styles.bubbleColumnOwn]}>
           {showHeader ? (
-            author ? (
-              <Avatar {...author} size={28} />
+            <Text style={[type.metadata, styles.author, isOwn && styles.authorOwn]} numberOfLines={1}>
+              {name} · {time}
+            </Text>
+          ) : null}
+          <View ref={bubbleRef} collapsable={false}>
+            {message.sharedTaskId !== null ? (
+              <TaskShareCard
+                task={sharedTask}
+                membersById={membersById}
+                onClaim={onClaim}
+                onOpen={onOpen}
+                onClaimed={onClaimed}
+                onLongPress={handleLongPress}
+              />
+            ) : message.attachmentPath !== null ? (
+              <AttachmentCard message={message} onLongPress={handleLongPress} />
             ) : (
-              <View style={styles.avatarPlaceholder} />
-            )
+              <Pressable
+                onLongPress={handleLongPress}
+                delayLongPress={300}
+                style={({ pressed }) => [
+                  styles.bubble,
+                  isOwn ? styles.bubbleOwn : styles.bubbleOther,
+                  pressed && styles.bubblePressed,
+                ]}
+              >
+                <Text style={[type.body, isOwn ? styles.bubbleTextOwn : styles.bubbleTextOther]}>{message.body}</Text>
+              </Pressable>
+            )}
+          </View>
+          {reactions.length > 0 ? (
+            <ReactionPills
+              reactions={reactions}
+              currentUserId={currentUserId}
+              onToggle={(emoji) => onToggleReaction(message.id, emoji)}
+              align={isOwn ? 'flex-end' : 'flex-start'}
+            />
           ) : null}
         </View>
-      ) : null}
-      <View style={[styles.bubbleColumn, isOwn && styles.bubbleColumnOwn]}>
-        {showHeader ? (
-          <Text style={[type.metadata, styles.author, isOwn && styles.authorOwn]} numberOfLines={1}>
-            {name} · {time}
-          </Text>
-        ) : null}
-        {message.sharedTaskId !== null ? (
-          <TaskShareCard task={sharedTask} membersById={membersById} onClaim={onClaim} onOpen={onOpen} onClaimed={onClaimed} onLongPress={onLongPress} />
-        ) : message.attachmentPath !== null ? (
-          <AttachmentCard message={message} onLongPress={onLongPress} />
-        ) : (
-          <Pressable
-            onLongPress={onLongPress}
-            delayLongPress={350}
-            style={[styles.bubble, isOwn ? styles.bubbleOwn : styles.bubbleOther]}
-          >
-            <Text style={[type.body, isOwn ? styles.bubbleTextOwn : styles.bubbleTextOther]}>{message.body}</Text>
-          </Pressable>
-        )}
-        {reactions.length > 0 ? (
-          <ReactionPills
-            reactions={reactions}
-            currentUserId={currentUserId}
-            onToggle={(emoji) => onToggleReaction(message.id, emoji)}
-            align={isOwn ? 'flex-end' : 'flex-start'}
-          />
-        ) : null}
       </View>
-    </View>
+    </MessageEntry>
   );
 }
 
@@ -420,6 +524,7 @@ function ReactionPills({
   onToggle: (emoji: string) => void;
   align: 'flex-start' | 'flex-end';
 }) {
+  const pop = useRef(new Animated.Value(0)).current;
   const grouped = new Map<string, number>();
   const mine = new Set<string>();
   for (const r of reactions) {
@@ -427,13 +532,24 @@ function ReactionPills({
     if (r.userId === currentUserId) mine.add(r.emoji);
   }
 
+  useEffect(() => {
+    Animated.spring(pop, { toValue: 1, useNativeDriver: true, friction: 5, tension: 160 }).start();
+    // Mount-only: the pop belongs to the first reaction landing, not to every count change.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
   return (
-    <View style={[styles.reactionRow, { justifyContent: align }]}>
+    <Animated.View
+      style={[
+        styles.reactionRow,
+        { justifyContent: align, opacity: pop, transform: [{ scale: pop.interpolate({ inputRange: [0, 1], outputRange: [0.6, 1] }) }] },
+      ]}
+    >
       {Array.from(grouped.entries()).map(([emoji, count]) => (
         <Pressable
           key={emoji}
           onPress={() => onToggle(emoji)}
-          style={[styles.reactionPill, mine.has(emoji) && styles.reactionPillActive]}
+          style={({ pressed }) => [styles.reactionPill, mine.has(emoji) && styles.reactionPillActive, pressed && styles.pressed]}
           accessibilityRole="button"
           accessibilityLabel={`${emoji} reaction, ${count}${mine.has(emoji) ? ', you reacted' : ''}`}
         >
@@ -441,7 +557,90 @@ function ReactionPills({
           <Text style={[type.tinyLabel, mine.has(emoji) ? styles.reactionCountActive : styles.muted]}>{count}</Text>
         </Pressable>
       ))}
-    </View>
+    </Animated.View>
+  );
+}
+
+const PICKER_ITEM = 40;
+const PICKER_GAP = 6;
+const PICKER_PAD = 8;
+const PICKER_W = REACTION_PALETTE.length * PICKER_ITEM + (REACTION_PALETTE.length - 1) * PICKER_GAP + PICKER_PAD * 2;
+const PICKER_H = PICKER_ITEM + PICKER_PAD * 2;
+
+/**
+ * The emoji row, opened against the message it will react to — above it
+ * where there's room, below it when the message sits near the top of the
+ * screen, and edge-clamped so it never runs off either side. The backdrop
+ * is only lightly dimmed on purpose: you need to still see which message
+ * you're reacting to, which a full-screen modal defeats.
+ */
+function ReactionPicker({
+  anchor,
+  topLimit,
+  onClose,
+  onPick,
+}: {
+  anchor: PickerAnchor | null;
+  /** Lowest y the picker may occupy — below the status bar / header inset. */
+  topLimit: number;
+  onClose: () => void;
+  onPick: (emoji: string) => void;
+}) {
+  const progress = useRef(new Animated.Value(0)).current;
+  const itemScales = useRef(REACTION_PALETTE.map(() => new Animated.Value(0))).current;
+
+  useEffect(() => {
+    if (!anchor) {
+      progress.setValue(0);
+      itemScales.forEach((v) => v.setValue(0));
+      return;
+    }
+    Animated.parallel([
+      Animated.spring(progress, { toValue: 1, useNativeDriver: true, friction: 7, tension: 140 }),
+      Animated.stagger(
+        28,
+        itemScales.map((v) => Animated.spring(v, { toValue: 1, useNativeDriver: true, friction: 6, tension: 180 }))
+      ),
+    ]).start();
+  }, [anchor, progress, itemScales]);
+
+  if (!anchor) return <Modal visible={false} transparent />;
+
+  const screen = Dimensions.get('window');
+  const preferredLeft = anchor.isOwn ? anchor.x + anchor.width - PICKER_W : anchor.x;
+  const left = Math.min(Math.max(preferredLeft, 8), Math.max(screen.width - PICKER_W - 8, 8));
+  const above = anchor.y - PICKER_H - 8;
+  const top = above >= topLimit ? above : anchor.y + anchor.height + 8;
+
+  return (
+    <Modal visible transparent animationType="none" onRequestClose={onClose}>
+      <Pressable style={styles.pickerBackdrop} onPress={onClose} accessibilityLabel="Close reactions">
+        <Animated.View
+          style={[
+            styles.pickerCard,
+            {
+              left,
+              top,
+              opacity: progress,
+              transform: [{ scale: progress.interpolate({ inputRange: [0, 1], outputRange: [0.85, 1] }) }],
+            },
+          ]}
+        >
+          {REACTION_PALETTE.map((emoji, i) => (
+            <Animated.View key={emoji} style={{ transform: [{ scale: itemScales[i] }] }}>
+              <Pressable
+                onPress={() => onPick(emoji)}
+                accessibilityRole="button"
+                accessibilityLabel={`React with ${emoji}`}
+                style={({ pressed }) => [styles.pickerItem, pressed && styles.pickerItemPressed]}
+              >
+                <Text style={styles.pickerEmoji}>{emoji}</Text>
+              </Pressable>
+            </Animated.View>
+          ))}
+        </Animated.View>
+      </Pressable>
+    </Modal>
   );
 }
 
@@ -491,10 +690,10 @@ function TaskShareCard({
     <Pressable
       onPress={() => onOpen(task!.id)}
       onLongPress={onLongPress}
-      delayLongPress={350}
+      delayLongPress={300}
       accessibilityRole="button"
       accessibilityLabel={`Open ${task.title}`}
-      style={styles.taskCard}
+      style={({ pressed }) => [styles.taskCard, pressed && styles.taskCardPressed]}
     >
       <View style={styles.taskCardHeader}>
         <TaskStatusDot status={task.status} size={18} />
@@ -526,7 +725,7 @@ function TaskShareCard({
         <Pressable
           onPress={handleClaim}
           disabled={claiming}
-          style={[styles.taskCardClaim, claiming && styles.taskCardClaimDisabled]}
+          style={({ pressed }) => [styles.taskCardClaim, (claiming || pressed) && styles.taskCardClaimDisabled]}
           accessibilityRole="button"
           accessibilityLabel={`Claim ${task.title}`}
         >
@@ -555,6 +754,15 @@ function formatFileSize(bytes: number): string {
   return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
 }
 
+/** Picks the closest icon for what was actually attached, from the message's own mime type. */
+function attachmentIcon(mimeType: string | null): IconName {
+  if (!mimeType) return 'document';
+  if (mimeType.startsWith('image/')) return 'image';
+  if (mimeType.startsWith('audio/')) return 'audio';
+  if (mimeType.startsWith('video/')) return 'video';
+  return 'document';
+}
+
 function AttachmentCard({ message, onLongPress }: { message: Message; onLongPress: () => void }) {
   const [opening, setOpening] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -576,14 +784,18 @@ function AttachmentCard({ message, onLongPress }: { message: Message; onLongPres
     <Pressable
       onPress={handleOpen}
       onLongPress={onLongPress}
-      delayLongPress={350}
+      delayLongPress={300}
       disabled={opening}
       accessibilityRole="button"
       accessibilityLabel={`Open ${message.attachmentName}`}
-      style={styles.attachmentCard}
+      style={({ pressed }) => [styles.attachmentCard, pressed && styles.taskCardPressed]}
     >
       <View style={styles.attachmentIconTile}>
-        {opening ? <ActivityIndicator size="small" color={colors.purple} /> : <Icon name="document" size={18} color={colors.purple} strokeWidth={1.8} />}
+        {opening ? (
+          <ActivityIndicator size="small" color={colors.purple} />
+        ) : (
+          <Icon name={attachmentIcon(message.attachmentType)} size={18} color={colors.purple} strokeWidth={1.8} />
+        )}
       </View>
       <View style={styles.attachmentInfo}>
         <Text style={[type.body, styles.ink]} numberOfLines={1}>
@@ -643,36 +855,6 @@ function TaskClaimedModal({
   );
 }
 
-function ReactionPickerModal({
-  messageId,
-  onClose,
-  onPick,
-}: {
-  messageId: string | null;
-  onClose: () => void;
-  onPick: (emoji: string) => void;
-}) {
-  return (
-    <Modal visible={messageId !== null} transparent animationType="fade" onRequestClose={onClose}>
-      <Pressable style={styles.claimedBackdrop} onPress={onClose}>
-        <Pressable style={styles.pickerCard} onPress={(e) => e.stopPropagation()}>
-          {REACTION_PALETTE.map((emoji) => (
-            <Pressable
-              key={emoji}
-              onPress={() => onPick(emoji)}
-              accessibilityRole="button"
-              accessibilityLabel={`React with ${emoji}`}
-              style={styles.pickerItem}
-            >
-              <Text style={styles.pickerEmoji}>{emoji}</Text>
-            </Pressable>
-          ))}
-        </Pressable>
-      </Pressable>
-    </Modal>
-  );
-}
-
 const styles = StyleSheet.create({
   screen: {
     flex: 1,
@@ -685,7 +867,7 @@ const styles = StyleSheet.create({
     paddingHorizontal: layout.screenPadding,
     paddingBottom: 12,
   },
-  backButton: {
+  headerButton: {
     width: 40,
     height: 40,
     borderRadius: 20,
@@ -693,9 +875,32 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
   },
+  headerSpacer: {
+    width: 40,
+  },
   headerText: {
     flex: 1,
+    alignItems: 'center',
     gap: 2,
+  },
+  headerSubRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 5,
+  },
+  liveDot: {
+    width: 6,
+    height: 6,
+    borderRadius: 3,
+  },
+  liveDotOn: {
+    backgroundColor: colors.green,
+  },
+  liveDotOff: {
+    backgroundColor: colors.faint,
+  },
+  pressed: {
+    opacity: 0.6,
   },
   muted: {
     color: colors.muted,
@@ -762,6 +967,9 @@ const styles = StyleSheet.create({
     paddingHorizontal: 14,
     paddingVertical: 10,
   },
+  bubblePressed: {
+    opacity: 0.85,
+  },
   bubbleOther: {
     backgroundColor: colors.surface,
     borderWidth: StyleSheet.hairlineWidth,
@@ -786,6 +994,9 @@ const styles = StyleSheet.create({
     borderColor: colors.purpleSoft,
     padding: 14,
     gap: 10,
+  },
+  taskCardPressed: {
+    opacity: 0.85,
   },
   taskCardHeader: {
     flexDirection: 'row',
@@ -836,6 +1047,7 @@ const styles = StyleSheet.create({
     color: colors.onInk,
   },
   errorText: {
+    flex: 1,
     color: colors.redText,
   },
   attachErrorBox: {
@@ -872,31 +1084,41 @@ const styles = StyleSheet.create({
     minWidth: 0,
     gap: 1,
   },
+  attachRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    paddingHorizontal: layout.screenPadding,
+    paddingBottom: 8,
+  },
+  attachChip: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 5,
+    height: 30,
+    paddingHorizontal: 11,
+    borderRadius: 15,
+    backgroundColor: colors.surface,
+    borderWidth: StyleSheet.hairlineWidth,
+    borderColor: colors.border,
+  },
+  attachChipPressed: {
+    backgroundColor: colors.surfaceMuted,
+    opacity: 0.8,
+  },
   composer: {
     flexDirection: 'row',
     alignItems: 'flex-end',
     gap: 10,
     paddingHorizontal: layout.screenPadding,
-    paddingTop: 8,
-  },
-  attachButton: {
-    width: 44,
-    height: 44,
-    borderRadius: 22,
-    alignItems: 'center',
-    justifyContent: 'center',
-    backgroundColor: colors.surfaceMuted,
-  },
-  attachButtonDisabled: {
-    opacity: 0.6,
   },
   input: {
     flex: 1,
-    minHeight: 44,
+    minHeight: 46,
     maxHeight: 120,
-    borderRadius: 22,
-    paddingHorizontal: 16,
-    paddingVertical: 11,
+    borderRadius: 23,
+    paddingHorizontal: 18,
+    paddingVertical: 12,
     backgroundColor: colors.surface,
     borderWidth: 1.5,
     borderColor: colors.border,
@@ -905,10 +1127,13 @@ const styles = StyleSheet.create({
     fontSize: type.body.fontSize,
   },
   sendButton: {
-    width: 44,
-    height: 44,
-    borderRadius: 22,
+    width: 46,
+    height: 46,
+    borderRadius: 23,
     overflow: 'hidden',
+  },
+  sendButtonPressed: {
+    transform: [{ scale: 0.92 }],
   },
   sendGradient: {
     flex: 1,
@@ -995,20 +1220,37 @@ const styles = StyleSheet.create({
   reactionCountActive: {
     color: colors.purple,
   },
+  // Barely dimmed: the point of anchoring the picker is that you can still
+  // see the message you're reacting to.
+  pickerBackdrop: {
+    flex: 1,
+    backgroundColor: 'rgba(17,15,26,0.12)',
+  },
   pickerCard: {
+    position: 'absolute',
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 6,
+    gap: PICKER_GAP,
+    width: PICKER_W,
+    height: PICKER_H,
+    padding: PICKER_PAD,
     backgroundColor: colors.surface,
-    borderRadius: 28,
-    padding: 10,
+    borderRadius: PICKER_H / 2,
+    shadowColor: '#1C1633',
+    shadowOpacity: 0.18,
+    shadowRadius: 20,
+    shadowOffset: { width: 0, height: 8 },
+    elevation: 8,
   },
   pickerItem: {
-    width: 44,
-    height: 44,
-    borderRadius: 22,
+    width: PICKER_ITEM,
+    height: PICKER_ITEM,
+    borderRadius: PICKER_ITEM / 2,
     alignItems: 'center',
     justifyContent: 'center',
+  },
+  pickerItemPressed: {
+    backgroundColor: colors.surfaceMuted,
   },
   pickerEmoji: {
     fontSize: 24,

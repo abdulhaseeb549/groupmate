@@ -150,7 +150,12 @@ export async function getAttachmentUrl(path: string): Promise<string> {
  * delete on messages, so that's the only event that can occur. Returns an
  * unsubscribe function.
  */
-export function subscribeToMessages(projectId: string, onInsert: (message: Message) => void): () => void {
+export function subscribeToMessages(
+  projectId: string,
+  onInsert: (message: Message) => void,
+  /** True once the channel is actually live, false if it drops or errors. The chat header's dot reflects this instead of assuming a connection. */
+  onLive?: (live: boolean) => void
+): () => void {
   const channel = supabase
     .channel(`project:${projectId}:messages`)
     .on(
@@ -158,7 +163,7 @@ export function subscribeToMessages(projectId: string, onInsert: (message: Messa
       { event: 'INSERT', schema: 'public', table: 'messages', filter: `project_id=eq.${projectId}` },
       (payload) => onInsert(toMessage(payload.new as MessageRow))
     )
-    .subscribe();
+    .subscribe((status) => onLive?.(status === 'SUBSCRIBED'));
   return () => {
     void supabase.removeChannel(channel);
   };

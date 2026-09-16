@@ -11,9 +11,9 @@ function stripDataUriPrefix(base64: string): string {
   return commaIndex >= 0 ? base64.slice(commaIndex + 1) : base64;
 }
 
-/** Opens the OS file picker for any file type, validates size, and returns decoded bytes ready for a Supabase Storage upload. */
-export async function pickFile(): Promise<{ file: PickedFile | null; error: string | null }> {
-  const result = await DocumentPicker.getDocumentAsync({ base64: true, type: '*/*' });
+/** Opens the OS file picker, validates size, and returns decoded bytes ready for a Supabase Storage upload. `type` narrows what the picker offers (e.g. 'image/*'). */
+export async function pickFile(type: string = '*/*'): Promise<{ file: PickedFile | null; error: string | null }> {
+  const result = await DocumentPicker.getDocumentAsync({ base64: true, type });
   if (result.canceled || !result.assets?.[0]) return { file: null, error: null };
   const asset = result.assets[0];
   if (!asset.base64) {
