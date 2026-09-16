@@ -9,7 +9,7 @@ import { SectionHeader } from '../components/SectionHeader';
 import { AttentionRow } from '../components/home/AttentionRow';
 import { ProjectOverviewCard } from '../components/home/ProjectOverviewCard';
 import { TaskRow } from '../components/home/TaskRow';
-import { WeekStrip } from '../components/home/WeekStrip';
+import { WeekStrip, weekDates } from '../components/home/WeekStrip';
 import { Priority, Task } from '../data/tasks';
 import { RequirementState } from '../state/projectState';
 import { useAuth } from '../state/AuthProvider';
@@ -32,7 +32,7 @@ type Props = {
 
 export function HomeScreen({ activeTab, onSelectTab }: Props) {
   const insets = useSafeAreaInsets();
-  const { project, tasks, projectState, members, setTaskStatus } = useProject();
+  const { project, tasks, projectState, members, schedule, setTaskStatus } = useProject();
   const { session, profile, signOut } = useAuth();
   const currentUserId = session?.user.id;
   const [showAllAttention, setShowAllAttention] = useState(false);
@@ -63,6 +63,20 @@ export function HomeScreen({ activeTab, onSelectTab }: Props) {
     .filter((t) => t.assigneeId === currentUserId && t.status !== 'completed')
     .sort((a, b) => urgency(a) - urgency(b));
   const nextTasks = myOpenTasks.slice(0, NEXT_LIMIT);
+
+  // One entry per day of this week: how many of your unfinished tasks have
+  // to be done by then, from the scheduling engine's latestFinish (the real
+  // "last safe day" for a task) rather than an invented per-task deadline.
+  const weekCounts = useMemo(() => {
+    const days = weekDates(today);
+    return days.map(
+      (day) =>
+        myOpenTasks.filter((t) => {
+          const finish = schedule.byTaskId[t.id]?.latestFinish;
+          return finish ? finish.toDateString() === day.toDateString() : false;
+        }).length
+    );
+  }, [myOpenTasks, schedule, today]);
 
   const unmet = projectState.requirementStates
     .filter((r) => r.status !== 'met')
@@ -151,7 +165,7 @@ export function HomeScreen({ activeTab, onSelectTab }: Props) {
           onOpen={goToProjects}
         />
 
-        <WeekStrip today={today} />
+        <WeekStrip today={today} counts={weekCounts} />
 
         <View style={styles.section}>
           <SectionHeader title="Up next" actionLabel="See all" onAction={goToProjects} />
