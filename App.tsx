@@ -3,6 +3,7 @@ import { useFonts } from '@expo-google-fonts/manrope';
 import { View } from 'react-native';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
 import { LoadingScreen } from './components/LoadingScreen';
+import { PreviewGate } from './dev/PreviewGate';
 import { isSupabaseConfigured } from './lib/supabase';
 import { AuthScreen } from './screens/AuthScreen';
 import { ChatTab } from './screens/ChatTab';
@@ -23,7 +24,17 @@ import {
   displayFonts,
 } from './theme';
 
+// Flip to true in a dev build to render the real screens against fixtures
+// (dev/PreviewGate) instead of signing in — for checking layout and type on
+// screens that sit behind a project. __DEV__ is false in release builds, so
+// the branch below is dead code there regardless of this flag.
+const DEV_PREVIEW = false;
+
 function AppShell() {
+  if (__DEV__ && DEV_PREVIEW) {
+    return <PreviewGate />;
+  }
+
   const { session } = useAuth();
 
   // undefined = the first getSession() call hasn't resolved yet.

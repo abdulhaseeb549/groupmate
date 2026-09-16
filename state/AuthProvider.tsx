@@ -31,7 +31,11 @@ type AuthState = {
   signOut: () => Promise<void>;
 };
 
-const AuthContext = createContext<AuthState | null>(null);
+// Exported for dev/PreviewGate only, which supplies a fixture value so the
+// real screens can be looked at without a session. Everything else must
+// still go through the hook below — it throws outside a provider, which is
+// the check worth keeping.
+export const AuthContext = createContext<AuthState | null>(null);
 
 function toProfile(row: {
   id: string;
