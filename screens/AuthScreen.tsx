@@ -12,7 +12,7 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { GoogleMark } from '../components/GoogleMark';
 import { Icon } from '../components/Icon';
 import { KeyboardAvoider } from '../components/KeyboardAvoider';
-import { supabase } from '../lib/supabase';
+import { isGoogleSignInEnabled, supabase } from '../lib/supabase';
 import { useAuth } from '../state/AuthProvider';
 import { colors, layout, type } from '../theme';
 import { useIncomingInviteCode } from '../utils/inviteLink';
@@ -29,6 +29,10 @@ export function AuthScreen() {
   const { signIn, signUp, signInWithGoogle } = useAuth();
   const [mode, setMode] = useState<Mode>('signIn');
   const [googleBusy, setGoogleBusy] = useState(false);
+  // Hidden until the project confirms Google is actually switched on — the
+  // button used to render unconditionally and error on every tap while the
+  // provider was still disabled in Supabase.
+  const [googleAvailable, setGoogleAvailable] = useState(false);
   const [fullName, setFullName] = useState('');
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
@@ -46,6 +50,16 @@ export function AuthScreen() {
     setInviteCode(incomingCode);
     setMode('signUp');
   }, [incomingCode]);
+
+  useEffect(() => {
+    let cancelled = false;
+    void isGoogleSignInEnabled().then((enabled) => {
+      if (!cancelled) setGoogleAvailable(enabled);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   const isSignUp = mode === 'signUp';
   const canSubmit =
@@ -236,28 +250,32 @@ export function AuthScreen() {
             )}
           </Pressable>
 
-          <View style={styles.divider}>
-            <View style={styles.dividerLine} />
-            <Text style={[type.caption, styles.muted]}>or</Text>
-            <View style={styles.dividerLine} />
-          </View>
+          {googleAvailable ? (
+            <>
+              <View style={styles.divider}>
+                <View style={styles.dividerLine} />
+                <Text style={[type.caption, styles.muted]}>or</Text>
+                <View style={styles.dividerLine} />
+              </View>
 
-          <Pressable
-            onPress={handleGoogle}
-            disabled={googleBusy}
-            accessibilityRole="button"
-            accessibilityState={{ disabled: googleBusy }}
-            style={({ pressed }) => [styles.googleButton, googleBusy && styles.submitDisabled, pressed && styles.googlePressed]}
-          >
-            {googleBusy ? (
-              <ActivityIndicator color={colors.ink} />
-            ) : (
-              <>
-                <GoogleMark size={18} />
-                <Text style={[type.button, styles.ink]}>Continue with Google</Text>
-              </>
-            )}
-          </Pressable>
+              <Pressable
+                onPress={handleGoogle}
+                disabled={googleBusy}
+                accessibilityRole="button"
+                accessibilityState={{ disabled: googleBusy }}
+                style={({ pressed }) => [styles.googleButton, googleBusy && styles.submitDisabled, pressed && styles.googlePressed]}
+              >
+                {googleBusy ? (
+                  <ActivityIndicator color={colors.ink} />
+                ) : (
+                  <>
+                    <GoogleMark size={18} />
+                    <Text style={[type.button, styles.ink]}>Continue with Google</Text>
+                  </>
+                )}
+              </Pressable>
+            </>
+          ) : null}
         </View>
       </ScrollView>
     </KeyboardAvoider>

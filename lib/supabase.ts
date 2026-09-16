@@ -30,3 +30,24 @@ export const supabase: SupabaseClient = isSupabaseConfigured
       },
     })
   : (null as unknown as SupabaseClient);
+
+/**
+ * Whether the Google provider is switched on for this Supabase project,
+ * read from its public auth settings at runtime rather than baked in at
+ * build time — so enabling Google in the dashboard makes the button appear
+ * in APKs that are already installed. Any failure reads as "off": a missing
+ * button is a safe default, and a button that errors on every tap is not.
+ */
+export async function isGoogleSignInEnabled(): Promise<boolean> {
+  if (!isSupabaseConfigured) return false;
+  try {
+    const response = await fetch(`${supabaseUrl}/auth/v1/settings`, {
+      headers: { apikey: supabaseAnonKey as string },
+    });
+    if (!response.ok) return false;
+    const settings = await response.json();
+    return settings?.external?.google === true;
+  } catch {
+    return false;
+  }
+}
