@@ -22,6 +22,11 @@ export const supabase: SupabaseClient = isSupabaseConfigured
         autoRefreshToken: true,
         persistSession: true,
         detectSessionInUrl: false,
+        // PKCE rather than the implicit default: the Google sign-in flow
+        // hands back a one-time code that AuthProvider exchanges for a
+        // session (see signInWithGoogle). Email/password sign-in is
+        // unaffected by this setting.
+        flowType: 'pkce',
       },
     })
   : (null as unknown as SupabaseClient);

@@ -11,6 +11,7 @@ import {
   View,
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import { GoogleMark } from '../components/GoogleMark';
 import { Icon } from '../components/Icon';
 import { supabase } from '../lib/supabase';
 import { useAuth } from '../state/AuthProvider';
@@ -25,8 +26,9 @@ type InviteLookup =
 
 export function AuthScreen() {
   const insets = useSafeAreaInsets();
-  const { signIn, signUp } = useAuth();
+  const { signIn, signUp, signInWithGoogle } = useAuth();
   const [mode, setMode] = useState<Mode>('signIn');
+  const [googleBusy, setGoogleBusy] = useState(false);
   const [fullName, setFullName] = useState('');
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
@@ -72,6 +74,15 @@ export function AuthScreen() {
       clearTimeout(timer);
     };
   }, [inviteCode, isSignUp]);
+
+  async function handleGoogle() {
+    if (googleBusy) return;
+    setGoogleBusy(true);
+    setError(null);
+    const result = await signInWithGoogle();
+    setGoogleBusy(false);
+    if (result.error) setError(result.error);
+  }
 
   async function submit() {
     if (!canSubmit || submitting) return;
@@ -216,6 +227,29 @@ export function AuthScreen() {
               <Text style={[type.button, styles.submitLabel]}>
                 {isSignUp ? 'Create account' : 'Sign in'}
               </Text>
+            )}
+          </Pressable>
+
+          <View style={styles.divider}>
+            <View style={styles.dividerLine} />
+            <Text style={[type.caption, styles.muted]}>or</Text>
+            <View style={styles.dividerLine} />
+          </View>
+
+          <Pressable
+            onPress={handleGoogle}
+            disabled={googleBusy}
+            accessibilityRole="button"
+            accessibilityState={{ disabled: googleBusy }}
+            style={({ pressed }) => [styles.googleButton, googleBusy && styles.submitDisabled, pressed && styles.googlePressed]}
+          >
+            {googleBusy ? (
+              <ActivityIndicator color={colors.ink} />
+            ) : (
+              <>
+                <GoogleMark size={18} />
+                <Text style={[type.button, styles.ink]}>Continue with Google</Text>
+              </>
             )}
           </Pressable>
         </View>
@@ -367,5 +401,29 @@ const styles = StyleSheet.create({
   },
   submitLabel: {
     color: colors.onInk,
+  },
+  divider: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 12,
+  },
+  dividerLine: {
+    flex: 1,
+    height: StyleSheet.hairlineWidth,
+    backgroundColor: colors.border,
+  },
+  googleButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 10,
+    height: 52,
+    borderRadius: 16,
+    backgroundColor: colors.surface,
+    borderWidth: 1.5,
+    borderColor: colors.border,
+  },
+  googlePressed: {
+    backgroundColor: colors.surfaceMuted,
   },
 });

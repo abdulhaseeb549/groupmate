@@ -1,6 +1,12 @@
 import { createContext, ReactNode, useContext, useEffect, useState } from 'react';
 import { Session } from '@supabase/supabase-js';
+import * as AuthSession from 'expo-auth-session';
+import * as WebBrowser from 'expo-web-browser';
 import { supabase } from '../lib/supabase';
+
+// Lets the in-app browser hand control back to the app when the OAuth
+// redirect lands, instead of leaving the tab open behind the app.
+WebBrowser.maybeCompleteAuthSession();
 
 export type Profile = {
   id: string;
@@ -20,6 +26,8 @@ type AuthState = {
   /** inviteCode, if present and valid, joins that project as a member instead of seeding a new demo project — see handle_new_user() in migration 0011. */
   signUp: (email: string, password: string, fullName: string, inviteCode?: string) => Promise<AuthResult>;
   signIn: (email: string, password: string) => Promise<AuthResult>;
+  /** Opens Google's consent screen in a system browser sheet and exchanges the returned code for a session. Cancelling is not an error. */
+  signInWithGoogle: () => Promise<AuthResult>;
   signOut: () => Promise<void>;
 };
 
@@ -87,12 +95,40 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     return { error: error?.message ?? null };
   }
 
+  /**
+   * Three steps, because a mobile OAuth round trip isn't a redirect the way
+   * it is on the web: ask Supabase for the consent URL (skipBrowserRedirect
+   * — we open it ourselves), run it in a system browser sheet that returns
+   * to our scheme, then trade the `code` it comes back with for a real
+   * session. PKCE keeps that code useless to anyone who intercepts it; the
+   * verifier never leaves this device (see lib/supabase.ts's flowType).
+   */
+  async function signInWithGoogle(): Promise<AuthResult> {
+    const redirectTo = AuthSession.makeRedirectUri();
+    const { data, error } = await supabase.auth.signInWithOAuth({
+      provider: 'google',
+      options: { redirectTo, skipBrowserRedirect: true },
+    });
+    if (error) return { error: error.message };
+    if (!data?.url) return { error: 'Could not start Google sign-in.' };
+
+    const result = await WebBrowser.openAuthSessionAsync(data.url, redirectTo);
+    // dismiss/cancel is the user backing out, not a failure to report.
+    if (result.type !== 'success') return { error: null };
+
+    const code = new URL(result.url).searchParams.get('code');
+    if (!code) return { error: 'Google sign-in did not complete.' };
+
+    const { error: exchangeError } = await supabase.auth.exchangeCodeForSession(code);
+    return { error: exchangeError?.message ?? null };
+  }
+
   async function signOut() {
     await supabase.auth.signOut();
   }
 
   return (
-    <AuthContext.Provider value={{ session, profile, signUp, signIn, signOut }}>
+    <AuthContext.Provider value={{ session, profile, signUp, signIn, signInWithGoogle, signOut }}>
       {children}
     </AuthContext.Provider>
   );
