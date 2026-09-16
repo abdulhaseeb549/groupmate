@@ -77,26 +77,19 @@ export async function commitExtractedProject(extracted: ExtractedProjectData): P
     } = await supabase.auth.getUser();
     if (!user) return { error: 'Not authenticated.' };
 
-    const { data: project, error: projectError } = await supabase
-      .from('projects')
-      .insert({
-        owner_id: user.id,
-        name: extracted.projectName,
-        team: 'Team 4',
-        course: extracted.course,
-        due_date: extracted.dueDate,
-      })
-      .select('id')
-      .single();
+    // One RPC, not an insert into projects followed by one into
+    // project_members. Done as two client writes, RLS made each depend on
+    // the other having happened first: reading the new project back needs a
+    // membership, and adding the membership needs to see the project. Every
+    // create from the app failed with 42501 — see migration 0019.
+    const { data: projectId, error: projectError } = await supabase.rpc('create_project', {
+      project_name: extracted.projectName,
+      project_team: 'Team 4',
+      project_course: extracted.course,
+      project_due_date: extracted.dueDate,
+    });
     if (projectError) throw projectError;
-
-    // Every read in this app (fetchProjectData) looks the project up
-    // through project_members, not projects.owner_id — without this row
-    // the creator can't see the project they just made.
-    const { error: memberError } = await supabase
-      .from('project_members')
-      .insert({ project_id: project.id, user_id: user.id, role: 'owner' });
-    if (memberError) throw memberError;
+    const project = { id: projectId as string };
 
     const requirementIdByLabel = new Map<string, string>();
     for (const [i, requirement] of extracted.requirements.entries()) {
@@ -162,6 +155,10 @@ export async function commitExtractedProject(extracted: ExtractedProjectData): P
 
     return { error: null };
   } catch (err) {
-    return { error: err instanceof Error ? err.message : 'Could not save this project.' };
+    // Supabase's errors are plain objects with a message, not Error
+    // instances — an instanceof check discarded every one of them, which is
+    // why the RLS failure above only ever surfaced as the fallback text.
+    const message = (err as { message?: unknown } | null)?.message;
+    return { error: typeof message === 'string' && message ? message : 'Could not save this project.' };
   }
 }
