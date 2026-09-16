@@ -498,7 +498,12 @@ function SetupView({
       <ScrollView
         contentContainerStyle={[
           styles.content,
-          { paddingTop: Math.max(insets.top, 32) + 14, paddingBottom: insets.bottom + 32 },
+          // 130, not the +32 every other keyboard-avoiding form screen
+          // uses: this one still shows BottomNav (phase 'setup' keeps it
+          // mounted, see the render below), which the smaller figure never
+          // reserved room for — "Generate quiz" sat directly under the
+          // floating nav and was unreachable.
+          { paddingTop: Math.max(insets.top, 32) + 14, paddingBottom: 130 + insets.bottom },
         ]}
         keyboardShouldPersistTaps="handled"
         showsVerticalScrollIndicator={false}
