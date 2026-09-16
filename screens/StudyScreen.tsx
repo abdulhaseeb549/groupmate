@@ -14,10 +14,13 @@ import { AttachRow } from '../components/AttachRow';
 import { BottomNav, NavTab } from '../components/BottomNav';
 import { Card, CardDivider } from '../components/Card';
 import { ConfirmDialog } from '../components/ConfirmDialog';
+import { FadeIn } from '../components/FadeIn';
 import { Icon } from '../components/Icon';
 import { KeyboardAvoider } from '../components/KeyboardAvoider';
+import { SectionHeader } from '../components/SectionHeader';
 import { useAuth } from '../state/AuthProvider';
 import { useChatUnread } from '../state/chatUnread';
+import { NotePager } from '../components/study/NotePager';
 import { useNavigation } from '../state/NavigationProvider';
 import {
   commitQuiz,
@@ -27,7 +30,10 @@ import {
   ExtractedQuiz,
   fetchQuizQuestions,
   fetchQuizzes,
+  generateNotes,
   generateQuiz,
+  fetchQuizNotes,
+  NotePage,
   QuizSummary,
   recordBestScore,
 } from '../state/studyQuiz';
@@ -68,6 +74,11 @@ export function StudyScreen({ activeTab, onSelectTab }: Props) {
   const [difficulty, setDifficulty] = useState<Difficulty>('medium');
   const [questionCount, setQuestionCount] = useState<number>(5);
   const [generating, setGenerating] = useState(false);
+  // The newest set of pointers, shown as the second card on the list.
+  // Held separately from `quizzes` because the list rows carry only a
+  // count — the pages themselves are far more text than every row
+  // combined, and most sessions never open them.
+  const [pointers, setPointers] = useState<{ quizId: string; title: string; pages: NotePage[] } | null>(null);
   const [setupError, setSetupError] = useState<string | null>(null);
 
   const [activeQuiz, setActiveQuiz] = useState<ExtractedQuiz | null>(null);
@@ -87,6 +98,17 @@ export function StudyScreen({ activeTab, onSelectTab }: Props) {
     try {
       const rows = await fetchQuizzes(userId);
       setQuizzes(rows);
+
+      // fetchQuizzes is newest-first, so the first row with pointers is
+      // the most recent set. Quizzes made before notes existed, and ones
+      // whose note generation failed, report 0 and are skipped.
+      const newest = rows.find((row) => row.noteCount > 0);
+      if (!newest) {
+        setPointers(null);
+        return;
+      }
+      const pages = await fetchQuizNotes(newest.id);
+      setPointers(pages.length > 0 ? { quizId: newest.id, title: newest.title, pages } : null);
     } catch (err) {
       setListError(err instanceof Error ? err.message : 'Could not load your quizzes.');
     }
@@ -126,23 +148,33 @@ export function StudyScreen({ activeTab, onSelectTab }: Props) {
   async function handleGenerate() {
     setGenerating(true);
     setSetupError(null);
-    const result = await generateQuiz({
+
+    // Both read the same upload, so they run together rather than one
+    // after the other — and they are settled separately on purpose: the
+    // pointers failing must not cost the student the quiz they waited on.
+    const source = {
       studyText: studyText.trim() || undefined,
       syllabusFile: syllabusFile ?? undefined,
-      difficulty,
-      questionCount,
-    });
+    };
+    const [result, notesResult] = await Promise.all([
+      generateQuiz({ ...source, difficulty, questionCount }),
+      generateNotes(source),
+    ]);
+
     if (!result.quiz) {
       setSetupError(result.error);
       setGenerating(false);
       return;
     }
     const quiz = result.quiz;
-    const { quizId, error } = await commitQuiz(quiz, difficulty);
+    const { quizId, error } = await commitQuiz(quiz, difficulty, notesResult.pages);
     setGenerating(false);
     if (error) {
       setSetupError(error);
       return;
+    }
+    if (quizId && notesResult.pages) {
+      setPointers({ quizId, title: quiz.title, pages: notesResult.pages });
     }
     startQuiz(quiz, quizId);
   }
@@ -219,6 +251,7 @@ export function StudyScreen({ activeTab, onSelectTab }: Props) {
         <ListView
           insets={insets}
           quizzes={quizzes}
+          pointers={pointers}
           error={listError}
           onNewQuiz={openSetup}
           onOpenQuiz={openExistingQuiz}
@@ -288,6 +321,7 @@ export function StudyScreen({ activeTab, onSelectTab }: Props) {
 function ListView({
   insets,
   quizzes,
+  pointers,
   error,
   onNewQuiz,
   onOpenQuiz,
@@ -295,6 +329,7 @@ function ListView({
 }: {
   insets: { top: number; bottom: number };
   quizzes: QuizSummary[] | null;
+  pointers: { quizId: string; title: string; pages: NotePage[] } | null;
   error: string | null;
   onNewQuiz: () => void;
   onOpenQuiz: (summary: QuizSummary) => void;
@@ -308,19 +343,57 @@ function ListView({
       ]}
       showsVerticalScrollIndicator={false}
     >
-      <View style={styles.intro}>
-        <Text style={[type.pageTitle, styles.ink]}>Study</Text>
-        <Text style={[type.body, styles.muted]}>Paste your notes. I'll write a quiz to test what actually stuck.</Text>
-      </View>
+      <FadeIn>
+        <View style={styles.intro}>
+          <Text style={[type.pageTitle, styles.ink]}>Study</Text>
+          <Text style={[type.body, styles.muted]}>
+            One upload, two ways to revise — questions to test yourself, pointers to remember.
+          </Text>
+        </View>
+      </FadeIn>
 
+      {/* Card one: the MCQs. */}
+      <FadeIn delay={60}>
       <Pressable
         onPress={onNewQuiz}
         accessibilityRole="button"
-        style={({ pressed }) => [styles.submit, pressed && styles.submitPressed]}
+        style={({ pressed }) => [styles.mcqCard, pressed && styles.pressed]}
       >
-        <Icon name="plus" size={18} color={colors.onInk} strokeWidth={2.4} />
-        <Text style={[type.button, styles.submitLabel]}>New quiz</Text>
+        <View style={styles.mcqTile}>
+          <Icon name="book" size={20} color={colors.purple} strokeWidth={1.8} />
+        </View>
+        <View style={styles.mcqText}>
+          <Text style={[type.taskTitle, styles.ink]}>Practice questions</Text>
+          <Text style={[type.caption, styles.muted]}>
+            Turn a syllabus, chapter, or your notes into MCQs
+          </Text>
+        </View>
+        <View style={styles.mcqAction}>
+          <Icon name="plus" size={18} color={colors.onInk} strokeWidth={2.4} />
+        </View>
       </Pressable>
+      </FadeIn>
+
+      {/* Card two: the pointers from that same upload. */}
+      <FadeIn delay={120}>
+      <View style={styles.section}>
+        <SectionHeader
+          title="Points to remember"
+          subtitle={pointers ? pointers.title : undefined}
+        />
+        {pointers ? (
+          <NotePager pages={pointers.pages} compact />
+        ) : (
+          <View style={styles.pointersEmpty}>
+            <Text style={[type.taskTitle, styles.ink]}>Nothing to revise yet</Text>
+            <Text style={[type.caption, styles.muted]}>
+              Your next upload makes these too — short cards of what's worth remembering, from the same
+              document as the questions.
+            </Text>
+          </View>
+        )}
+      </View>
+      </FadeIn>
 
       {error ? (
         <View style={styles.errorBox}>
@@ -749,6 +822,47 @@ const styles = StyleSheet.create({
   },
   subtitle: {
     marginTop: 4,
+  },
+  mcqCard: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 12,
+    padding: 14,
+    borderRadius: 20,
+    backgroundColor: colors.surface,
+    borderWidth: StyleSheet.hairlineWidth,
+    borderColor: 'rgba(17,17,17,0.06)',
+  },
+  mcqTile: {
+    width: layout.iconTile,
+    height: layout.iconTile,
+    borderRadius: layout.iconTileRadius,
+    backgroundColor: colors.purpleSoft,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  mcqText: {
+    flex: 1,
+    minWidth: 0,
+    gap: 2,
+  },
+  // The card is the tap target; this is the affordance, not a second
+  // button — hence no label and no hit area of its own.
+  mcqAction: {
+    width: 36,
+    height: 36,
+    borderRadius: 18,
+    backgroundColor: colors.purple,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  pointersEmpty: {
+    gap: 4,
+    padding: 18,
+    borderRadius: 20,
+    backgroundColor: colors.surface,
+    borderWidth: StyleSheet.hairlineWidth,
+    borderColor: 'rgba(17,17,17,0.06)',
   },
   section: {
     gap: 10,

@@ -15,12 +15,21 @@ export type ExtractedQuiz = {
   questions: ExtractedQuestion[];
 };
 
+/** One swipeable revision card — the short pointers drawn from the same upload as the quiz. */
+export type NotePage = {
+  eyebrow: string;
+  heading: string;
+  points: string[];
+};
+
 export type QuizSummary = {
   id: string;
   title: string;
   difficulty: Difficulty;
   questionCount: number;
   bestScore: number | null;
+  /** How many pointer cards this set has. 0 when notes were never generated (every quiz made before they existed) or generation failed. */
+  noteCount: number;
 };
 
 type RawQuizQuestion = {
@@ -75,10 +84,36 @@ export async function generateQuiz(input: GenerateQuizInput): Promise<GenerateRe
   return { quiz: { title: data.extracted.title, questions }, error: null };
 }
 
+/**
+ * Calls the generate-notes Edge Function on the same material the quiz
+ * came from. Kept separate from generateQuiz so the two can be fired
+ * together and fail independently: a student who waited on an upload
+ * should still get their quiz when the pointers 429, and the notes column
+ * stays null for a later retry rather than taking the quiz down with it.
+ */
+export async function generateNotes(
+  input: Pick<GenerateQuizInput, 'studyText' | 'syllabusFile'>
+): Promise<{ pages: NotePage[] | null; error: string | null }> {
+  const { data, error } = await supabase.functions.invoke<{
+    extracted?: { pages: NotePage[] };
+    error?: string;
+  }>('generate-notes', { body: input });
+
+  if (error) {
+    return { pages: null, error: error.message ?? 'Could not reach the AI right now.' };
+  }
+  if (!data || data.error || !data.extracted) {
+    return { pages: null, error: data?.error ?? 'Something went wrong writing those pointers.' };
+  }
+  return { pages: data.extracted.pages, error: null };
+}
+
 /** Saves a generated quiz as a new row so it's there next time and can track a best score. */
 export async function commitQuiz(
   quiz: ExtractedQuiz,
-  difficulty: Difficulty
+  difficulty: Difficulty,
+  /** Null when generate-notes failed — the quiz is still worth saving without them. */
+  notes: NotePage[] | null = null
 ): Promise<{ quizId: string | null; error: string | null }> {
   try {
     const {
@@ -93,6 +128,7 @@ export async function commitQuiz(
         title: quiz.title,
         difficulty,
         question_count: quiz.questions.length,
+        notes,
       })
       .select('id')
       .single();
@@ -124,7 +160,7 @@ export async function deleteQuiz(quizId: string): Promise<{ error: string | null
 export async function fetchQuizzes(userId: string): Promise<QuizSummary[]> {
   const { data, error } = await supabase
     .from('quizzes')
-    .select('id, title, difficulty, question_count, best_score')
+    .select('id, title, difficulty, question_count, best_score, notes')
     .eq('owner_id', userId)
     .order('created_at', { ascending: false });
   if (error) throw error;
@@ -135,6 +171,7 @@ export async function fetchQuizzes(userId: string): Promise<QuizSummary[]> {
     difficulty: row.difficulty as Difficulty,
     questionCount: row.question_count as number,
     bestScore: row.best_score as number | null,
+    noteCount: Array.isArray(row.notes) ? (row.notes as NotePage[]).length : 0,
   }));
 }
 
@@ -159,4 +196,26 @@ export async function recordBestScore(quizId: string, score: number): Promise<vo
   const { data } = await supabase.from('quizzes').select('best_score').eq('id', quizId).single();
   if (data && data.best_score !== null && data.best_score >= score) return;
   await supabase.from('quizzes').update({ best_score: score }).eq('id', quizId);
+}
+
+/**
+ * The pointer cards for one quiz, fetched on open rather than with the
+ * list: a set of eight cards is far more text than every list row combined,
+ * and most sessions never open them.
+ */
+export async function fetchQuizNotes(quizId: string): Promise<NotePage[]> {
+  const { data, error } = await supabase.from('quizzes').select('notes').eq('id', quizId).maybeSingle();
+  if (error) throw error;
+  const notes = data?.notes;
+  return Array.isArray(notes) ? (notes as NotePage[]) : [];
+}
+
+/**
+ * Fills in pointers for a quiz that has none — one made before notes
+ * existed, or one whose generation failed. Needs the original material
+ * again, since nothing stores the upload after the quiz is built.
+ */
+export async function attachQuizNotes(quizId: string, pages: NotePage[]): Promise<{ error: string | null }> {
+  const { error } = await supabase.from('quizzes').update({ notes: pages }).eq('id', quizId);
+  return { error: error?.message ?? null };
 }
