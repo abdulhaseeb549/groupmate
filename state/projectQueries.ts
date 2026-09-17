@@ -372,6 +372,12 @@ export async function deleteTask(taskId: string): Promise<void> {
   if (error) throw error;
 }
 
+/** Persists AI-written help the first (and only) time it's generated for a task — see ProjectRepository.generateTaskHelp. */
+export async function updateTaskHelp(taskId: string, help: { guidance: string; outline: string[] }): Promise<void> {
+  const { error } = await supabase.from('tasks').update({ guidance: help.guidance, outline: help.outline }).eq('id', taskId);
+  if (error) throw error;
+}
+
 /** Replaces this task's requirement links wholesale — simpler and safer than diffing adds/removes for a multi-select UI. */
 export async function setTaskRequirementLinks(taskId: string, requirementIds: string[]): Promise<void> {
   const { error: deleteError } = await supabase.from('task_requirements').delete().eq('task_id', taskId);

@@ -1,5 +1,5 @@
 import { useMemo, useState } from 'react';
-import { Modal, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
+import { ActivityIndicator, Modal, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Avatar, UnclaimedAvatar } from './Avatar';
 import { ConfirmDialog } from './ConfirmDialog';
@@ -41,11 +41,13 @@ const STATUS_LABEL: Record<TaskStatus, string> = {
  */
 export function TaskDetailModal({ taskId, onClose, onClaimed }: Props) {
   const insets = useSafeAreaInsets();
-  const { project, tasks, members, setTaskStatus, reassignTask, claimTask, removeTask } = useProject();
+  const { project, tasks, members, setTaskStatus, reassignTask, claimTask, generateTaskHelp, removeTask } = useProject();
   const { session } = useAuth();
   const { goToChat } = useNavigation();
   const currentUserId = session?.user.id;
   const [helpOpen, setHelpOpen] = useState(false);
+  const [helpLoading, setHelpLoading] = useState(false);
+  const [helpError, setHelpError] = useState<string | null>(null);
   const [editing, setEditing] = useState(false);
   const [deleting, setDeleting] = useState(false);
   const [claiming, setClaiming] = useState(false);
@@ -60,9 +62,38 @@ export function TaskDetailModal({ taskId, onClose, onClaimed }: Props) {
 
   function close() {
     setHelpOpen(false);
+    setHelpError(null);
     setShared(false);
     setShareError(null);
     onClose();
+  }
+
+  /**
+   * Guidance/outline used to be written for every task the moment a brief
+   * was parsed. Now it's generated the first time someone actually taps
+   * Help on THIS task, and cached on it afterwards — a second tap just
+   * toggles visibility of what's already there instead of calling the AI again.
+   */
+  async function handleHelpPress() {
+    if (helpLoading) return;
+    if (helpOpen) {
+      setHelpOpen(false);
+      return;
+    }
+    if (hasHelp) {
+      setHelpOpen(true);
+      return;
+    }
+    if (!task) return;
+    setHelpLoading(true);
+    setHelpError(null);
+    const result = await generateTaskHelp(task.id);
+    setHelpLoading(false);
+    if (result.error) {
+      setHelpError(result.error);
+    } else {
+      setHelpOpen(true);
+    }
   }
 
   function confirmDelete() {
@@ -197,16 +228,34 @@ export function TaskDetailModal({ taskId, onClose, onClaimed }: Props) {
             </Pressable>
           )}
 
-          {hasHelp ? (
-            <Pressable
-              onPress={() => setHelpOpen((v) => !v)}
-              style={styles.helpButton}
-              accessibilityRole="button"
-              accessibilityLabel={`${helpOpen ? 'Hide' : 'Show'} what to write for ${task.title}`}
-            >
-              <Text style={[type.button, styles.ink]}>{helpOpen ? 'Hide help' : 'Help'}</Text>
-              <Icon name={helpOpen ? 'chevronUp' : 'chevronDown'} size={14} color={colors.muted} strokeWidth={2} />
-            </Pressable>
+          <Pressable
+            onPress={handleHelpPress}
+            disabled={helpLoading}
+            style={[styles.helpButton, helpLoading && styles.helpButtonDisabled]}
+            accessibilityRole="button"
+            accessibilityLabel={
+              helpLoading
+                ? `Writing help for ${task.title}`
+                : `${helpOpen ? 'Hide' : 'Show'} what to write for ${task.title}`
+            }
+          >
+            {helpLoading ? (
+              <>
+                <ActivityIndicator size="small" color={colors.muted} />
+                <Text style={[type.button, styles.ink]}>Writing help…</Text>
+              </>
+            ) : (
+              <>
+                <Text style={[type.button, styles.ink]}>{helpOpen ? 'Hide help' : 'Help'}</Text>
+                <Icon name={helpOpen ? 'chevronUp' : 'chevronDown'} size={14} color={colors.muted} strokeWidth={2} />
+              </>
+            )}
+          </Pressable>
+          {helpError ? (
+            <View style={styles.claimErrorBox}>
+              <Icon name="exclamation" size={16} color={colors.redText} strokeWidth={2.2} />
+              <Text style={[type.caption, styles.claimErrorText]}>{helpError}</Text>
+            </View>
           ) : null}
 
           {helpOpen && hasGuidance ? (
@@ -432,6 +481,9 @@ const styles = StyleSheet.create({
     borderColor: colors.border,
     marginTop: 6,
     marginBottom: 12,
+  },
+  helpButtonDisabled: {
+    opacity: 0.6,
   },
   claimButton: {
     flexDirection: 'row',

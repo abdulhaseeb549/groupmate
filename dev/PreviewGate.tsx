@@ -106,6 +106,20 @@ function FakeProject() {
     updateMemberHoursPerDay: () => {},
     addTask: async () => ({ error: null }),
     updateTask: async () => ({ error: null }),
+    generateTaskHelp: async (taskId: string) => {
+      setTasks((prev) =>
+        prev.map((t) =>
+          t.id === taskId
+            ? {
+                ...t,
+                guidance: 'Cover the three main points from the requirement, and tie each back to the rubric.',
+                outline: ['Background', 'Main argument', 'Supporting evidence', 'Wrap-up'],
+              }
+            : t
+        )
+      );
+      return { error: null };
+    },
     removeTask: (taskId: string) => setTasks((prev) => prev.filter((t) => t.id !== taskId)),
     renameRequirement: () => {},
     updateDueDate: () => {},

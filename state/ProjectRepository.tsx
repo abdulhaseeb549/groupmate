@@ -32,8 +32,10 @@ import {
   updateProjectDueDate,
   updateRequirementLabel,
   updateTaskFields,
+  updateTaskHelp,
 } from './projectQueries';
 import type { ProjectSummary } from './projectQueries';
+import { generateTaskHelp as generateTaskHelpQuery } from './taskHelp';
 
 export type NewTaskFields = {
   title: string;
@@ -71,6 +73,8 @@ type ProjectRepository = {
   updateMemberHoursPerDay: (memberId: string, hoursPerDay: number) => void;
   addTask: (fields: NewTaskFields) => Promise<{ error: string | null }>;
   updateTask: (taskId: string, edits: TaskEdits) => Promise<{ error: string | null }>;
+  /** Generates this task's guidance/outline on the first "Help" tap and persists it — cached after that, never regenerates. */
+  generateTaskHelp: (taskId: string) => Promise<{ error: string | null }>;
   removeTask: (taskId: string) => void;
   renameRequirement: (requirementId: string, label: string) => void;
   updateDueDate: (dueDate: string) => void;
@@ -405,6 +409,39 @@ function ProjectProviderReady({
     }
   }
 
+  // Awaited, not optimistic: there's nothing to show until the AI call
+  // actually returns, and the result is cached to the task (guidance/outline)
+  // so a second tap on the same task never calls the AI again.
+  async function generateTaskHelpAction(taskId: string): Promise<{ error: string | null }> {
+    const task = tasks.find((t) => t.id === taskId);
+    if (!task) return { error: 'Task not found.' };
+    try {
+      const requirementLabels = taskRequirements
+        .filter((tr) => tr.taskId === taskId)
+        .map((tr) => requirements.find((r) => r.id === tr.requirementId)?.label)
+        .filter((label): label is string => Boolean(label));
+
+      const { help, error } = await generateTaskHelpQuery({
+        projectName: project.name,
+        course: project.course,
+        taskTitle: task.title,
+        sectionRef: task.sectionRef,
+        requirementLabels,
+        metadata: task.metadata ?? null,
+        effortHours: task.effortHours ?? null,
+      });
+      if (error || !help) {
+        return { error: error ?? 'Could not generate help for this task.' };
+      }
+
+      await updateTaskHelp(taskId, help);
+      setTasks((prev) => prev.map((t) => (t.id === taskId ? { ...t, guidance: help.guidance, outline: help.outline } : t)));
+      return { error: null };
+    } catch (err) {
+      return { error: err instanceof Error ? err.message : 'Could not generate help for this task.' };
+    }
+  }
+
   function removeTask(taskId: string) {
     setTasks((prev) => prev.filter((t) => t.id !== taskId));
     setTaskRequirements((prev) => prev.filter((tr) => tr.taskId !== taskId));
@@ -449,6 +486,7 @@ function ProjectProviderReady({
     updateMemberHoursPerDay,
     addTask,
     updateTask,
+    generateTaskHelp: generateTaskHelpAction,
     removeTask,
     renameRequirement,
     updateDueDate,
