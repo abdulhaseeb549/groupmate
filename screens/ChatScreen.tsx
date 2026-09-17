@@ -18,6 +18,7 @@ import { LinearGradient } from 'expo-linear-gradient';
 import * as Sharing from 'expo-sharing';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Avatar } from '../components/Avatar';
+import { ConfirmDialog } from '../components/ConfirmDialog';
 import { Icon, IconName } from '../components/Icon';
 import { KeyboardAvoider } from '../components/KeyboardAvoider';
 import { TaskDetailModal } from '../components/TaskDetailModal';
@@ -29,6 +30,7 @@ import {
   addReaction,
   belongsToConversation,
   Conversation,
+  deleteMessage,
   fetchMessages,
   fetchReactions,
   getAttachmentUrl,
@@ -98,6 +100,8 @@ export function ChatScreen({ conversation, onBack }: Props) {
   const [claimedTask, setClaimedTask] = useState<Task | null>(null);
   const [reactions, setReactions] = useState<Reaction[]>([]);
   const [anchor, setAnchor] = useState<PickerAnchor | null>(null);
+  const [deletingId, setDeletingId] = useState<string | null>(null);
+  const [deleteError, setDeleteError] = useState<string | null>(null);
   const listRef = useRef<FlatList<Message>>(null);
   // Messages already on screen when the thread opened. Anything not in here
   // is genuinely new and animates in; history doesn't re-animate on scroll.
@@ -128,6 +132,24 @@ export function ChatScreen({ conversation, onBack }: Props) {
           ? [...prev, { messageId, userId: currentUserId, emoji }]
           : prev.filter((r) => !(r.messageId === messageId && r.userId === currentUserId && r.emoji === emoji))
       );
+    }
+  }
+
+  async function confirmDelete() {
+    const messageId = deletingId;
+    if (!messageId) return;
+    setDeletingId(null);
+    setDeleteError(null);
+    const removed = messages?.find((m) => m.id === messageId) ?? null;
+    // Optimistic, same as removeTask — the RLS delete is scoped to your
+    // own messages, so this only fails on something like a dropped
+    // connection, not a permissions surprise.
+    setMessages((prev) => prev?.filter((m) => m.id !== messageId) ?? prev);
+    try {
+      await deleteMessage(messageId);
+    } catch (err) {
+      if (removed) setMessages((prev) => (prev ? [...prev, removed].sort((a, b) => a.createdAt.localeCompare(b.createdAt)) : prev));
+      setDeleteError(err instanceof Error ? err.message : 'Could not unsend this message.');
     }
   }
 
@@ -173,7 +195,13 @@ export function ChatScreen({ conversation, onBack }: Props) {
       },
       // Distinct from the unread tracker's subscription, which watches the
       // same project at the same time.
-      'thread'
+      'thread',
+      (messageId) => {
+        // Fires for the deleter's own client too (Realtime echoes back),
+        // so the optimistic removal in confirmDelete below and this are
+        // both no-ops on whichever one runs second.
+        setMessages((prev) => prev?.filter((m) => m.id !== messageId) ?? prev);
+      }
     );
 
     return () => {
@@ -326,6 +354,14 @@ export function ChatScreen({ conversation, onBack }: Props) {
             </Text>
           </View>
         ) : null}
+        {deleteError ? (
+          <View style={styles.attachErrorBox}>
+            <Icon name="exclamation" size={14} color={colors.redText} strokeWidth={2.2} />
+            <Text style={[type.caption, styles.errorText]} numberOfLines={2}>
+              {deleteError}
+            </Text>
+          </View>
+        ) : null}
 
         <View style={styles.attachRow}>
           {ATTACH_KINDS.map((kind) => (
@@ -391,6 +427,19 @@ export function ChatScreen({ conversation, onBack }: Props) {
           if (anchor) toggleReaction(anchor.messageId, emoji);
           setAnchor(null);
         }}
+        onDeletePress={() => {
+          if (anchor) setDeletingId(anchor.messageId);
+          setAnchor(null);
+        }}
+      />
+      <ConfirmDialog
+        visible={deletingId !== null}
+        title="Unsend this message?"
+        message="It's removed for everyone in this chat. This can't be undone."
+        confirmLabel="Unsend"
+        destructive
+        onConfirm={confirmDelete}
+        onCancel={() => setDeletingId(null)}
       />
     </>
   );
@@ -577,8 +626,11 @@ const SEND_SIZE = 46;
 const PICKER_ITEM = 40;
 const PICKER_GAP = 6;
 const PICKER_PAD = 8;
-const PICKER_W = REACTION_PALETTE.length * PICKER_ITEM + (REACTION_PALETTE.length - 1) * PICKER_GAP + PICKER_PAD * 2;
 const PICKER_H = PICKER_ITEM + PICKER_PAD * 2;
+
+function pickerWidth(itemCount: number) {
+  return itemCount * PICKER_ITEM + (itemCount - 1) * PICKER_GAP + PICKER_PAD * 2;
+}
 
 /**
  * The emoji row, opened against the message it will react to — above it
@@ -586,21 +638,29 @@ const PICKER_H = PICKER_ITEM + PICKER_PAD * 2;
  * screen, and edge-clamped so it never runs off either side. The backdrop
  * is only lightly dimmed on purpose: you need to still see which message
  * you're reacting to, which a full-screen modal defeats.
+ *
+ * On your own message, a trailing trash icon rides in the same row —
+ * "unsend" is just another action on the bubble, not a separate menu.
+ * It's never shown on someone else's message: only the author can unsend.
  */
 function ReactionPicker({
   anchor,
   topLimit,
   onClose,
   onPick,
+  onDeletePress,
 }: {
   anchor: PickerAnchor | null;
   /** Lowest y the picker may occupy — below the status bar / header inset. */
   topLimit: number;
   onClose: () => void;
   onPick: (emoji: string) => void;
+  onDeletePress: () => void;
 }) {
   const progress = useRef(new Animated.Value(0)).current;
-  const itemScales = useRef(REACTION_PALETTE.map(() => new Animated.Value(0))).current;
+  // One extra slot for the delete item, always allocated (hooks can't be
+  // conditional) — simply unused when the anchor isn't the viewer's own message.
+  const itemScales = useRef([...REACTION_PALETTE, 'delete'].map(() => new Animated.Value(0))).current;
 
   useEffect(() => {
     if (!anchor) {
@@ -619,21 +679,23 @@ function ReactionPicker({
 
   if (!anchor) return <Modal visible={false} transparent />;
 
+  const width = pickerWidth(REACTION_PALETTE.length + (anchor.isOwn ? 1 : 0));
   const screen = Dimensions.get('window');
-  const preferredLeft = anchor.isOwn ? anchor.x + anchor.width - PICKER_W : anchor.x;
-  const left = Math.min(Math.max(preferredLeft, 8), Math.max(screen.width - PICKER_W - 8, 8));
+  const preferredLeft = anchor.isOwn ? anchor.x + anchor.width - width : anchor.x;
+  const left = Math.min(Math.max(preferredLeft, 8), Math.max(screen.width - width - 8, 8));
   const above = anchor.y - PICKER_H - 8;
   const top = above >= topLimit ? above : anchor.y + anchor.height + 8;
 
   return (
     <Modal visible transparent animationType="none" onRequestClose={onClose}>
-      <Pressable style={styles.pickerBackdrop} onPress={onClose} accessibilityLabel="Close reactions">
+      <Pressable style={styles.pickerBackdrop} onPress={onClose} accessibilityLabel="Close message options">
         <Animated.View
           style={[
             styles.pickerCard,
             {
               left,
               top,
+              width,
               opacity: progress,
               transform: [{ scale: progress.interpolate({ inputRange: [0, 1], outputRange: [0.85, 1] }) }],
             },
@@ -651,6 +713,18 @@ function ReactionPicker({
               </Pressable>
             </Animated.View>
           ))}
+          {anchor.isOwn ? (
+            <Animated.View style={{ transform: [{ scale: itemScales[REACTION_PALETTE.length] }] }}>
+              <Pressable
+                onPress={onDeletePress}
+                accessibilityRole="button"
+                accessibilityLabel="Unsend this message"
+                style={({ pressed }) => [styles.pickerItem, pressed && styles.pickerItemPressed]}
+              >
+                <Icon name="trash" size={17} color={colors.redText} strokeWidth={1.9} />
+              </Pressable>
+            </Animated.View>
+          ) : null}
         </Animated.View>
       </Pressable>
     </Modal>
@@ -1483,7 +1557,8 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     gap: PICKER_GAP,
-    width: PICKER_W,
+    // width is set inline per-anchor (pickerWidth) — it depends on whether
+    // the delete item is shown, so there's no single static value here.
     height: PICKER_H,
     padding: PICKER_PAD,
     backgroundColor: colors.surface,

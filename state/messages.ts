@@ -142,12 +142,25 @@ export async function getAttachmentUrl(path: string): Promise<string> {
 }
 
 /**
- * Live new-message push for one project — every conversation's messages
- * flow through the same channel, filtered by RLS to only what this user
- * is allowed to see (group messages, or a DM they're a participant in).
- * The caller filters further, down to the one conversation it's showing,
- * via belongsToConversation. Only INSERT is handled — v1 has no edit/
- * delete on messages, so that's the only event that can occur. Returns an
+ * Unsends a message — a real delete, not a "deleted message" placeholder
+ * row. RLS (migration 0020) scopes this to the caller's own messages, so
+ * there's nothing to check client-side beyond only ever showing the action
+ * on your own bubbles. message_reactions cascade-deletes with its parent
+ * message (0014); an attachment's Storage object is left behind, same
+ * accepted tradeoff as a failed upload leaving one orphaned (see
+ * sendAttachment above) — no cleanup job exists for either in v1.
+ */
+export async function deleteMessage(messageId: string): Promise<void> {
+  const { error } = await supabase.from('messages').delete().eq('id', messageId);
+  if (error) throw error;
+}
+
+/**
+ * Live new-message (and unsend) push for one project — every
+ * conversation's messages flow through the same channel, filtered by RLS
+ * to only what this user is allowed to see (group messages, or a DM
+ * they're a participant in). The caller filters further, down to the one
+ * conversation it's showing, via belongsToConversation. Returns an
  * unsubscribe function.
  */
 export function subscribeToMessages(
@@ -156,7 +169,14 @@ export function subscribeToMessages(
   /** True once the channel is actually live, false if it drops or errors. The chat header's dot reflects this instead of assuming a connection. */
   onLive?: (live: boolean) => void,
   /** Realtime topics are unique per socket, so two components watching the same project at once (the open thread and the unread tracker) must not ask for the same one. */
-  subscriberId: string = "default"
+  subscriberId: string = "default",
+  /**
+   * Fired when a message is unsent. Optional — the unread tracker only
+   * cares about the newest message per thread and accepts a stale preview
+   * until its next cold-start refetch if that exact message gets unsent,
+   * same class of tradeoff this file already makes elsewhere.
+   */
+  onDelete?: (messageId: string) => void
 ): () => void {
   const channel = supabase
     .channel(`project:${projectId}:messages:${subscriberId}`)
@@ -164,6 +184,14 @@ export function subscribeToMessages(
       'postgres_changes',
       { event: 'INSERT', schema: 'public', table: 'messages', filter: `project_id=eq.${projectId}` },
       (payload) => onInsert(toMessage(payload.new as MessageRow))
+    )
+    .on(
+      // Requires messages' replica identity to be FULL (migration 0020) —
+      // otherwise a DELETE's payload.old carries only the primary key, and
+      // this project_id filter would never match anything.
+      'postgres_changes',
+      { event: 'DELETE', schema: 'public', table: 'messages', filter: `project_id=eq.${projectId}` },
+      (payload) => onDelete?.((payload.old as MessageRow).id)
     )
     .subscribe((status) => onLive?.(status === 'SUBSCRIBED'));
   return () => {
