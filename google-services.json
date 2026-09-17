@@ -1,0 +1,29 @@
+{
+  "project_info": {
+    "project_number": "128353977064",
+    "project_id": "groupmate-93cc7",
+    "storage_bucket": "groupmate-93cc7.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:128353977064:android:5b3e01c892e1f0fbf9bf5d",
+        "android_client_info": {
+          "package_name": "com.groupmate.app"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyALd6pUr3lSJ5f5fNLWWNOi9jnTYHkPpCY"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}

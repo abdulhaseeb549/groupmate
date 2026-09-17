@@ -19,10 +19,25 @@
         "backgroundColor": "#F5F2FF",
         "foregroundImage": "./assets/android-icon-foreground.png"
       },
-      "predictiveBackGestureEnabled": false
+      "predictiveBackGestureEnabled": false,
+      "googleServicesFile": "./google-services.json"
     },
     "web": {
       "favicon": "./assets/favicon.png"
+    },
+    "plugins": [
+      [
+        "expo-notifications",
+        {
+          "icon": "./assets/android-icon-monochrome.png",
+          "color": "#5B44A1"
+        }
+      ]
+    ],
+    "extra": {
+      "eas": {
+        "projectId": "ef622cc1-2f9a-48d6-bb43-9d5a5ffc4fdd"
+      }
     }
   }
 }
