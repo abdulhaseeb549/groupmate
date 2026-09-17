@@ -4,6 +4,7 @@ import {
   Animated,
   Dimensions,
   FlatList,
+  Image,
   Linking,
   Modal,
   Pressable,
@@ -12,7 +13,9 @@ import {
   TextInput,
   View,
 } from 'react-native';
+import { Directory, File, Paths } from 'expo-file-system';
 import { LinearGradient } from 'expo-linear-gradient';
+import * as Sharing from 'expo-sharing';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Avatar } from '../components/Avatar';
 import { Icon, IconName } from '../components/Icon';
@@ -793,9 +796,21 @@ function attachmentIcon(mimeType: string | null): IconName {
   return 'document';
 }
 
+/**
+ * Images get their own path (ImageAttachmentCard below): a thumbnail in the
+ * bubble and a real in-app viewer. Everything else — PDFs, docs, audio,
+ * video — still opens through the OS via Linking, which is the right tool
+ * for those; the "opens like a link, not a downloadable image" complaint
+ * was specific to images, where handing a signed URL to the OS puts it in
+ * a browser tab with no save affordance most Android browsers surface.
+ */
 function AttachmentCard({ message, onLongPress }: { message: Message; onLongPress: () => void }) {
   const [opening, setOpening] = useState(false);
   const [error, setError] = useState<string | null>(null);
+
+  if (message.attachmentType?.startsWith('image/')) {
+    return <ImageAttachmentCard message={message} onLongPress={onLongPress} />;
+  }
 
   async function handleOpen() {
     if (opening || !message.attachmentPath) return;
@@ -841,6 +856,127 @@ function AttachmentCard({ message, onLongPress }: { message: Message; onLongPres
         ) : null}
       </View>
     </Pressable>
+  );
+}
+
+/**
+ * A real thumbnail in the bubble, tapped open to a full-screen viewer —
+ * the resolution the "why is my photo a link" complaint was actually
+ * asking for. The signed URL is resolved once, on mount, since the
+ * thumbnail needs it to render at all rather than only on tap.
+ */
+function ImageAttachmentCard({ message, onLongPress }: { message: Message; onLongPress: () => void }) {
+  const [url, setUrl] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const [viewerOpen, setViewerOpen] = useState(false);
+
+  useEffect(() => {
+    let cancelled = false;
+    if (!message.attachmentPath) return;
+    getAttachmentUrl(message.attachmentPath)
+      .then((resolved) => {
+        if (!cancelled) setUrl(resolved);
+      })
+      .catch((err: unknown) => {
+        if (!cancelled) setError(err instanceof Error ? err.message : 'Could not load this image.');
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [message.attachmentPath]);
+
+  return (
+    <>
+      <Pressable
+        onPress={() => url && setViewerOpen(true)}
+        onLongPress={onLongPress}
+        delayLongPress={300}
+        disabled={!url}
+        accessibilityRole="button"
+        accessibilityLabel={`Open ${message.attachmentName ?? 'image'}`}
+        style={styles.imageThumbWrap}
+      >
+        {url ? (
+          <Image source={{ uri: url }} style={styles.imageThumb} resizeMode="cover" />
+        ) : error ? (
+          <View style={[styles.imageThumb, styles.imageThumbFallback]}>
+            <Icon name="exclamation" size={18} color={colors.redText} strokeWidth={2} />
+          </View>
+        ) : (
+          <View style={[styles.imageThumb, styles.imageThumbFallback]}>
+            <ActivityIndicator color={colors.purple} />
+          </View>
+        )}
+      </Pressable>
+
+      <ImageViewerModal
+        visible={viewerOpen}
+        url={url}
+        filename={message.attachmentName}
+        onClose={() => setViewerOpen(false)}
+      />
+    </>
+  );
+}
+
+/** Full-screen image + a real Save, not a hand-off to the OS. Downloads the signed URL to a local file, then hands that local file to the OS share sheet — the standard Expo path to "save this to my phone" without asking for gallery permissions directly. */
+function ImageViewerModal({
+  visible,
+  url,
+  filename,
+  onClose,
+}: {
+  visible: boolean;
+  url: string | null;
+  filename: string | null;
+  onClose: () => void;
+}) {
+  const [saving, setSaving] = useState(false);
+  const [saveError, setSaveError] = useState<string | null>(null);
+
+  async function handleSave() {
+    if (saving || !url) return;
+    setSaving(true);
+    setSaveError(null);
+    try {
+      const canShare = await Sharing.isAvailableAsync();
+      if (!canShare) {
+        setSaveError('Saving files is not available on this device.');
+        return;
+      }
+      const destinationName = filename ?? `image-${Date.now()}.jpg`;
+      const downloaded = await File.downloadFileAsync(url, new Directory(Paths.cache), { idempotent: true });
+      await Sharing.shareAsync(downloaded.uri, { dialogTitle: destinationName });
+    } catch (err) {
+      setSaveError(err instanceof Error ? err.message : 'Could not save this image.');
+    }
+    setSaving(false);
+  }
+
+  return (
+    <Modal visible={visible} transparent animationType="fade" onRequestClose={onClose}>
+      <View style={styles.viewerBackdrop}>
+        {url ? <Image source={{ uri: url }} style={styles.viewerImage} resizeMode="contain" /> : null}
+
+        <Pressable onPress={onClose} accessibilityRole="button" accessibilityLabel="Close" style={styles.viewerClose}>
+          <Icon name="close" size={18} color={colors.onInk} strokeWidth={2.2} />
+        </Pressable>
+
+        <View style={styles.viewerFooter}>
+          {saveError ? <Text style={[type.caption, styles.viewerError]}>{saveError}</Text> : null}
+          <Pressable onPress={handleSave} disabled={saving} accessibilityRole="button" style={styles.viewerSaveButton}>
+            {saving ? (
+              <ActivityIndicator color={colors.ink} />
+            ) : (
+              <>
+                <Icon name="download" size={16} color={colors.ink} strokeWidth={2} />
+                <Text style={[type.button, styles.viewerSaveText]}>Save</Text>
+              </>
+            )}
+          </Pressable>
+        </View>
+      </View>
+    </Modal>
   );
 }
 
@@ -1136,6 +1272,65 @@ const styles = StyleSheet.create({
     flex: 1,
     minWidth: 0,
     gap: 1,
+  },
+  // 220 wide to match attachmentCard, 4:3-ish so a portrait or landscape
+  // photo both crop to something reasonable rather than a tall sliver.
+  imageThumbWrap: {
+    width: 220,
+    height: 165,
+    borderRadius: 16,
+    overflow: 'hidden',
+  },
+  imageThumb: {
+    width: '100%',
+    height: '100%',
+  },
+  imageThumbFallback: {
+    backgroundColor: colors.surfaceMuted,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  viewerBackdrop: {
+    flex: 1,
+    backgroundColor: 'rgba(10,9,15,0.92)',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  viewerImage: {
+    width: '100%',
+    height: '78%',
+  },
+  viewerClose: {
+    position: 'absolute',
+    top: 50,
+    right: 20,
+    width: 40,
+    height: 40,
+    borderRadius: 20,
+    backgroundColor: 'rgba(255,255,255,0.14)',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  viewerFooter: {
+    position: 'absolute',
+    bottom: 40,
+    alignItems: 'center',
+    gap: 10,
+  },
+  viewerError: {
+    color: colors.red,
+  },
+  viewerSaveButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    height: 48,
+    paddingHorizontal: 24,
+    borderRadius: 24,
+    backgroundColor: colors.onInk,
+  },
+  viewerSaveText: {
+    color: colors.ink,
   },
   attachRow: {
     flexDirection: 'row',

@@ -300,7 +300,7 @@ export function TaskDetailModal({ taskId, onClose, onClaimed }: Props) {
             accessibilityRole="button"
             accessibilityLabel={`Share ${task.title} to chat`}
           >
-            <Icon name="chat" size={15} color={colors.muted} strokeWidth={1.8} />
+            <Icon name="chat" size={15} color={colors.purple} strokeWidth={1.8} />
             <Text style={[type.button, styles.shareToChatText]}>
               {sharing ? 'Sharing…' : shared ? 'Shared to chat' : 'Share to chat'}
             </Text>
@@ -503,19 +503,22 @@ const styles = StyleSheet.create({
   assignNameActive: {
     color: colors.purple,
   },
+  // Matches claimButton's weight, not the neutral border it had before —
+  // a muted-gray outline read as the least important thing on the sheet,
+  // which is why "increase the visibility" was a fair complaint.
   shareToChat: {
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'center',
     gap: 6,
-    height: 44,
-    borderRadius: 22,
+    height: 48,
+    borderRadius: 24,
     borderWidth: 1.5,
-    borderColor: colors.border,
+    borderColor: colors.purple,
     marginTop: 8,
   },
   shareToChatText: {
-    color: colors.muted,
+    color: colors.purple,
   },
   deleteLink: {
     alignSelf: 'center',
