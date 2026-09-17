@@ -3,6 +3,7 @@ import { Session } from '@supabase/supabase-js';
 import * as AuthSession from 'expo-auth-session';
 import * as WebBrowser from 'expo-web-browser';
 import { supabase } from '../lib/supabase';
+import { removeLastPushToken } from './pushNotifications';
 
 // Lets the in-app browser hand control back to the app when the OAuth
 // redirect lands, instead of leaving the tab open behind the app.
@@ -128,6 +129,10 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   }
 
   async function signOut() {
+    // Before signOut(), not after — unregister_push_token checks
+    // auth.uid() against the token's owner, so it needs the still-live
+    // session to identify which row to remove.
+    await removeLastPushToken().catch(() => {});
     await supabase.auth.signOut();
   }
 

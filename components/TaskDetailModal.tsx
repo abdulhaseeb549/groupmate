@@ -10,6 +10,7 @@ import { Task, Priority, TaskStatus } from '../data/tasks';
 import { useAuth } from '../state/AuthProvider';
 import { shareTask } from '../state/messages';
 import { useNavigation } from '../state/NavigationProvider';
+import { notifyMessage } from '../state/pushNotifications';
 import { useProject } from '../state/ProjectRepository';
 import { colors, layout, type } from '../theme';
 import { formatShortDate } from '../utils/dates';
@@ -42,7 +43,7 @@ const STATUS_LABEL: Record<TaskStatus, string> = {
 export function TaskDetailModal({ taskId, onClose, onClaimed }: Props) {
   const insets = useSafeAreaInsets();
   const { project, tasks, members, setTaskStatus, reassignTask, claimTask, generateTaskHelp, removeTask } = useProject();
-  const { session } = useAuth();
+  const { session, profile } = useAuth();
   const { goToChat } = useNavigation();
   const currentUserId = session?.user.id;
   const [helpOpen, setHelpOpen] = useState(false);
@@ -122,6 +123,13 @@ export function TaskDetailModal({ taskId, onClose, onClaimed }: Props) {
     setShareError(null);
     try {
       await shareTask(project.id, currentUserId, task.id);
+      // Task-claim cards always broadcast to the whole group (see
+      // shareTask's own comment) — notify every other member, not a DM.
+      const senderName = profile?.fullName ?? 'Someone';
+      for (const member of members) {
+        if (member.id === currentUserId) continue;
+        notifyMessage(member.id, senderName, `Shared a task: ${task.title}`, project.id);
+      }
       setShared(true);
       setSharing(false);
       // Sharing is only useful if you land where it landed — jump straight

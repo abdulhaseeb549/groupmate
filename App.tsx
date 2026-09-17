@@ -3,6 +3,7 @@ import { useFonts } from '@expo-google-fonts/manrope';
 import { View } from 'react-native';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
 import { LoadingScreen } from './components/LoadingScreen';
+import { PushNotificationRegistrar } from './components/PushNotificationRegistrar';
 import { PreviewGate } from './dev/PreviewGate';
 import { isSupabaseConfigured } from './lib/supabase';
 import { AuthScreen } from './screens/AuthScreen';
@@ -49,6 +50,7 @@ function AppShell() {
   return (
     <NavigationProvider>
       <ProjectProvider>
+        <PushNotificationRegistrar userId={session.user.id} />
         <ProjectTabs />
       </ProjectProvider>
     </NavigationProvider>

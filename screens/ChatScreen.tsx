@@ -42,6 +42,7 @@ import {
   subscribeToMessages,
   subscribeToReactions,
 } from '../state/messages';
+import { notifyMessage } from '../state/pushNotifications';
 import { pickDocument, pickMedia } from '../utils/filePicker';
 import { useProject } from '../state/ProjectRepository';
 import { colors, gradients, layout, radius, type } from '../theme';
@@ -87,7 +88,7 @@ const ATTACH_KINDS: AttachKind[] = [
 export function ChatScreen({ conversation, onBack }: Props) {
   const insets = useSafeAreaInsets();
   const { project, tasks, members, membersById, claimTask } = useProject();
-  const { session } = useAuth();
+  const { session, profile } = useAuth();
   const currentUserId = session?.user.id;
   const [messages, setMessages] = useState<Message[] | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
@@ -230,6 +231,26 @@ export function ChatScreen({ conversation, onBack }: Props) {
     return unsubscribe;
   }, [project.id]);
 
+  /**
+   * Fire-and-forget push to everyone else in this conversation — the
+   * sender's own display name and the text just sent are already in
+   * scope here, so there's no need to re-fetch anything to write the
+   * notification (see state/pushNotifications.ts). A group thread loops
+   * every member but the sender; a DM has exactly one recipient.
+   */
+  function notifyOthers(preview: string) {
+    if (!currentUserId) return;
+    const senderName = profile?.fullName ?? 'Someone';
+    if (conversation.type === 'dm') {
+      notifyMessage(conversation.otherUserId, senderName, preview, project.id, currentUserId);
+    } else {
+      for (const member of members) {
+        if (member.id === currentUserId) continue;
+        notifyMessage(member.id, senderName, preview, project.id);
+      }
+    }
+  }
+
   async function handleSend() {
     const body = input.trim();
     if (!body || sending || !currentUserId) return;
@@ -237,6 +258,7 @@ export function ChatScreen({ conversation, onBack }: Props) {
     setInput('');
     try {
       await sendMessage(project.id, currentUserId, body, conversation.type === 'dm' ? conversation.otherUserId : null);
+      notifyOthers(body);
     } catch {
       setInput(body);
     }
@@ -256,6 +278,7 @@ export function ChatScreen({ conversation, onBack }: Props) {
     setAttaching(true);
     try {
       await sendAttachment(project.id, currentUserId, file, conversation.type === 'dm' ? conversation.otherUserId : null);
+      notifyOthers(`Sent ${file.filename}`);
     } catch (err) {
       setAttachError(err instanceof Error ? err.message : 'Could not send that file.');
     }

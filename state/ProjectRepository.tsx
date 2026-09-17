@@ -35,6 +35,7 @@ import {
   updateTaskHelp,
 } from './projectQueries';
 import type { ProjectSummary } from './projectQueries';
+import { notifyTaskAssigned } from './pushNotifications';
 import { generateTaskHelp as generateTaskHelpQuery } from './taskHelp';
 
 export type NewTaskFields = {
@@ -318,6 +319,12 @@ function ProjectProviderReady({
   function reassignTask(taskId: string, memberId: string | null) {
     setTasks((prev) => prev.map((t) => (t.id === taskId ? { ...t, assigneeId: memberId } : t)));
     void persistTaskAssignee(taskId, memberId);
+    // Only when it lands on someone else — assigning a task to yourself
+    // (including via this same picker) needs no notification, you already know.
+    if (memberId && memberId !== userId) {
+      const task = tasks.find((t) => t.id === taskId);
+      if (task) notifyTaskAssigned(memberId, task.title, project.name, project.id, taskId);
+    }
   }
 
   // A genuinely different shape from every setter above: this can lose a
