@@ -36,6 +36,7 @@ import {
 } from './projectQueries';
 import type { ProjectSummary } from './projectQueries';
 import { notifyTaskAssigned } from './pushNotifications';
+import { subscribeToPresence } from './presence';
 import { generateTaskHelp as generateTaskHelpQuery } from './taskHelp';
 
 export type NewTaskFields = {
@@ -86,6 +87,8 @@ type ProjectRepository = {
   projects: ProjectSummary[];
   /** Switches which project the app is showing, and remembers it for next launch. */
   switchProject: (projectId: string) => void;
+  /** User ids with the app currently open, from Realtime presence — not persisted, see state/presence.ts. */
+  onlineUserIds: Set<string>;
 };
 
 // Exported for dev/PreviewGate only, which supplies a fixture value so the
@@ -251,6 +254,7 @@ function ProjectProviderReady({
   // Who arrived while the app was open. This is the only signal a join
   // produces — without it, someone joining is completely silent.
   const [justJoined, setJustJoined] = useState<Member | null>(null);
+  const [onlineUserIds, setOnlineUserIds] = useState<Set<string>>(new Set());
 
   const membersById = useMemo(
     () => Object.fromEntries(members.map((m) => [m.id, m])) as Record<string, Member>,
@@ -296,6 +300,11 @@ function ProjectProviderReady({
     );
     return unsubscribe;
   }, [project.id]);
+
+  useEffect(() => {
+    if (!userId) return;
+    return subscribeToPresence(project.id, userId, setOnlineUserIds);
+  }, [project.id, userId]);
 
   const projectState = useMemo(
     () => deriveProjectState(tasks, requirements, taskRequirements, project, new Date()),
@@ -501,6 +510,7 @@ function ProjectProviderReady({
     refetch,
     projects,
     switchProject,
+    onlineUserIds,
   };
 
   return (

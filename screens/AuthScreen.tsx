@@ -17,7 +17,7 @@ import { useAuth } from '../state/AuthProvider';
 import { colors, layout, type } from '../theme';
 import { useIncomingInviteCode } from '../utils/inviteLink';
 
-type Mode = 'signIn' | 'signUp';
+type Mode = 'signIn' | 'signUp' | 'forgotPassword';
 type InviteLookup =
   | { status: 'idle' }
   | { status: 'checking' }
@@ -26,7 +26,7 @@ type InviteLookup =
 
 export function AuthScreen() {
   const insets = useSafeAreaInsets();
-  const { signIn, signUp, signInWithGoogle } = useAuth();
+  const { signIn, signUp, signInWithGoogle, resetPassword } = useAuth();
   const [mode, setMode] = useState<Mode>('signIn');
   const [googleBusy, setGoogleBusy] = useState(false);
   // Hidden until the project confirms Google is actually switched on — the
@@ -41,6 +41,7 @@ export function AuthScreen() {
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [signedUp, setSignedUp] = useState(false);
+  const [resetSent, setResetSent] = useState(false);
 
   // Opened from a shared invite link: jump to Create account with the code
   // already filled in, since joining is the only reason to follow one.
@@ -62,13 +63,16 @@ export function AuthScreen() {
   }, []);
 
   const isSignUp = mode === 'signUp';
-  const canSubmit =
-    email.trim().length > 0 && password.length >= 6 && (!isSignUp || fullName.trim().length > 0);
+  const isForgotPassword = mode === 'forgotPassword';
+  const canSubmit = isForgotPassword
+    ? email.trim().length > 0
+    : email.trim().length > 0 && password.length >= 6 && (!isSignUp || fullName.trim().length > 0);
 
   function switchMode(next: Mode) {
     setMode(next);
     setError(null);
     setSignedUp(false);
+    setResetSent(false);
   }
 
   // Debounced preview — "You'll join {Project Name}" — so a mistyped code
@@ -111,12 +115,16 @@ export function AuthScreen() {
     if (!canSubmit || submitting) return;
     setSubmitting(true);
     setError(null);
-    const result = isSignUp
-      ? await signUp(email.trim(), password, fullName.trim(), inviteCode.trim() || undefined)
-      : await signIn(email.trim(), password);
+    const result = isForgotPassword
+      ? await resetPassword(email.trim())
+      : isSignUp
+        ? await signUp(email.trim(), password, fullName.trim(), inviteCode.trim() || undefined)
+        : await signIn(email.trim(), password);
     setSubmitting(false);
     if (result.error) {
       setError(result.error);
+    } else if (isForgotPassword) {
+      setResetSent(true);
     } else if (isSignUp) {
       // Sign-up without email confirmation logs the user straight in — with
       // it on, there's no session yet, so say so rather than looking stuck.
@@ -144,12 +152,30 @@ export function AuthScreen() {
           </Text>
         </View>
 
-        <View style={styles.tabs}>
-          <ModeTab label="Sign in" active={mode === 'signIn'} onPress={() => switchMode('signIn')} />
-          <ModeTab label="Create account" active={mode === 'signUp'} onPress={() => switchMode('signUp')} />
-        </View>
+        {isForgotPassword ? (
+          <Pressable
+            onPress={() => switchMode('signIn')}
+            accessibilityRole="button"
+            hitSlop={8}
+            style={styles.backRow}
+          >
+            <Icon name="chevronLeft" size={18} color={colors.muted} strokeWidth={2.2} />
+            <Text style={[type.button, styles.muted]}>Back to sign in</Text>
+          </Pressable>
+        ) : (
+          <View style={styles.tabs}>
+            <ModeTab label="Sign in" active={mode === 'signIn'} onPress={() => switchMode('signIn')} />
+            <ModeTab label="Create account" active={mode === 'signUp'} onPress={() => switchMode('signUp')} />
+          </View>
+        )}
 
         <View style={styles.form}>
+          {isForgotPassword ? (
+            <Text style={[type.body, styles.muted]}>
+              Enter your account email and we'll send you a link to set a new password.
+            </Text>
+          ) : null}
+
           {isSignUp ? (
             <Field label="Your name">
               <TextInput
@@ -177,17 +203,25 @@ export function AuthScreen() {
             />
           </Field>
 
-          <Field label="Password">
-            <TextInput
-              value={password}
-              onChangeText={setPassword}
-              placeholder={isSignUp ? 'At least 6 characters' : '••••••••'}
-              placeholderTextColor={colors.faint}
-              secureTextEntry
-              autoComplete={isSignUp ? 'new-password' : 'current-password'}
-              style={styles.input}
-            />
-          </Field>
+          {isForgotPassword ? null : (
+            <Field label="Password">
+              <TextInput
+                value={password}
+                onChangeText={setPassword}
+                placeholder={isSignUp ? 'At least 6 characters' : '••••••••'}
+                placeholderTextColor={colors.faint}
+                secureTextEntry
+                autoComplete={isSignUp ? 'new-password' : 'current-password'}
+                style={styles.input}
+              />
+            </Field>
+          )}
+
+          {mode === 'signIn' ? (
+            <Pressable onPress={() => switchMode('forgotPassword')} hitSlop={4} style={styles.forgotLink}>
+              <Text style={[type.caption, styles.forgotLinkText]}>Forgot password?</Text>
+            </Pressable>
+          ) : null}
 
           {isSignUp ? (
             <Field label="Invite code (optional)">
@@ -230,6 +264,15 @@ export function AuthScreen() {
             </View>
           ) : null}
 
+          {resetSent ? (
+            <View style={styles.noticeBox}>
+              <Icon name="check" size={16} color={colors.mintText} strokeWidth={2.4} />
+              <Text style={[type.caption, styles.noticeText]}>
+                If that email has an account, a reset link is on its way.
+              </Text>
+            </View>
+          ) : null}
+
           <Pressable
             onPress={submit}
             disabled={!canSubmit || submitting}
@@ -245,12 +288,12 @@ export function AuthScreen() {
               <ActivityIndicator color={colors.onInk} />
             ) : (
               <Text style={[type.button, styles.submitLabel]}>
-                {isSignUp ? 'Create account' : 'Sign in'}
+                {isForgotPassword ? 'Send reset link' : isSignUp ? 'Create account' : 'Sign in'}
               </Text>
             )}
           </Pressable>
 
-          {googleAvailable ? (
+          {googleAvailable && !isForgotPassword ? (
             <>
               <View style={styles.divider}>
                 <View style={styles.dividerLine} />
@@ -357,6 +400,19 @@ const styles = StyleSheet.create({
     shadowRadius: 8,
     shadowOffset: { width: 0, height: 2 },
     elevation: 2,
+  },
+  backRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+    alignSelf: 'flex-start',
+  },
+  forgotLink: {
+    alignSelf: 'flex-end',
+    marginTop: -8,
+  },
+  forgotLinkText: {
+    color: colors.purple,
   },
   form: {
     gap: 16,

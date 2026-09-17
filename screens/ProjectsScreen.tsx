@@ -1,5 +1,5 @@
 import { useMemo, useState } from 'react';
-import { Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
+import { LayoutAnimation, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { LinearGradient } from 'expo-linear-gradient';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Avatar } from '../components/Avatar';
@@ -8,6 +8,7 @@ import { CapacityModal } from '../components/CapacityModal';
 import { Card } from '../components/Card';
 import { DistributionEditor } from '../components/DistributionEditor';
 import { DueDateModal } from '../components/DueDateModal';
+import { FadeIn } from '../components/FadeIn';
 import { Icon } from '../components/Icon';
 import { ProjectTimeline } from '../components/projects/ProjectTimeline';
 import { RebalanceSuggestions } from '../components/RebalanceSuggestions';
@@ -48,12 +49,22 @@ export function ProjectsScreen({ activeTab, onSelectTab }: Props) {
   const { session } = useAuth();
   const { hasUnread } = useChatUnread();
   const currentUserId = session?.user.id;
-  const [filter, setFilter] = useState<(typeof FILTERS)[number]>('My tasks');
+  const [filter, setFilterState] = useState<(typeof FILTERS)[number]>('My tasks');
   const [capacityVisible, setCapacityVisible] = useState(false);
   const [switcherVisible, setSwitcherVisible] = useState(false);
   const [dueDateVisible, setDueDateVisible] = useState(false);
   const [editingRequirement, setEditingRequirement] = useState<Requirement | null>(null);
-  const [section, setSection] = useState<Section>('Timeline');
+  const [section, setSectionState] = useState<Section>('Timeline');
+
+  function setSection(next: Section) {
+    LayoutAnimation.configureNext(LayoutAnimation.Presets.easeInEaseOut);
+    setSectionState(next);
+  }
+
+  function setFilter(next: (typeof FILTERS)[number]) {
+    LayoutAnimation.configureNext(LayoutAnimation.Presets.easeInEaseOut);
+    setFilterState(next);
+  }
   const filteredMemberIds =
     filter === 'My tasks' ? (currentUserId ? [currentUserId] : []) : members.map((m) => m.id);
   const today = useMemo(() => new Date(), []);
@@ -77,6 +88,7 @@ export function ProjectsScreen({ activeTab, onSelectTab }: Props) {
         ]}
         showsVerticalScrollIndicator={false}
       >
+        <FadeIn>
         <View style={styles.header}>
           <Pressable
             onPress={() => setSwitcherVisible(true)}
@@ -105,7 +117,9 @@ export function ProjectsScreen({ activeTab, onSelectTab }: Props) {
             </Pressable>
           </View>
         </View>
+        </FadeIn>
 
+        <FadeIn delay={60}>
         <View style={styles.statusCard}>
           <View style={styles.statusTop}>
             <View style={[styles.healthPill, { backgroundColor: health.bg }]}>
@@ -127,6 +141,7 @@ export function ProjectsScreen({ activeTab, onSelectTab }: Props) {
             {projectState.taskProgress.done} of {projectState.taskProgress.total} tasks done
           </Text>
         </View>
+        </FadeIn>
 
         {schedule.projectAtRisk ? (
           <View style={styles.scheduleWarning}>
@@ -159,6 +174,7 @@ export function ProjectsScreen({ activeTab, onSelectTab }: Props) {
           })}
         </ScrollView>
 
+        <FadeIn key={section}>
         {section === 'Timeline' ? (
           <View style={styles.section}>
             <ProjectTimeline tasks={tasks} schedule={schedule} dueDate={project.dueDate} today={today} />
@@ -259,6 +275,7 @@ export function ProjectsScreen({ activeTab, onSelectTab }: Props) {
             </View>
           </View>
         ) : null}
+        </FadeIn>
       </ScrollView>
 
       <BottomNav active={activeTab} onSelect={onSelectTab} chatUnread={hasUnread} />

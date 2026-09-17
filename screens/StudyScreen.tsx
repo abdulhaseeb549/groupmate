@@ -38,6 +38,7 @@ import {
   recordBestScore,
 } from '../state/studyQuiz';
 import { colors, layout, radius, type } from '../theme';
+import { useHardwareBackHandler } from '../utils/hardwareBack';
 import { pickPdf, PdfFileInput } from '../utils/pdfPicker';
 
 const MIN_LENGTH = 40;
@@ -244,6 +245,15 @@ export function StudyScreen({ activeTab, onSelectTab }: Props) {
 
   const canSubmit = studyText.trim().length >= MIN_LENGTH || syllabusFile !== null;
   const busy = phase === 'setup' && generating;
+
+  useHardwareBackHandler(() => {
+    if (phase === 'setup') {
+      setPhase('list');
+    } else if (phase === 'quiz' || phase === 'results') {
+      setPhase('list');
+      void refreshList();
+    }
+  }, phase !== 'list' && !busy);
 
   return (
     <View style={styles.screen}>

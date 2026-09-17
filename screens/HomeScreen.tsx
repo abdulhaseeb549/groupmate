@@ -38,12 +38,11 @@ type Props = {
 export function HomeScreen({ activeTab, onSelectTab }: Props) {
   const insets = useSafeAreaInsets();
   const { project, tasks, projectState, members, schedule, setTaskStatus } = useProject();
-  const { session, profile, signOut } = useAuth();
+  const { session, profile } = useAuth();
   const { hasUnread, summaries } = useChatUnread();
-  const { goToChat } = useNavigation();
+  const { goToChat, openSettings } = useNavigation();
   const currentUserId = session?.user.id;
   const [showAllAttention, setShowAllAttention] = useState(false);
-  const [signOutVisible, setSignOutVisible] = useState(false);
   const [activityOpen, setActivityOpen] = useState(false);
   // Null until the stored stamp has loaded — before that nothing can be
   // called unseen, or the dot would flash on every cold start.
@@ -84,11 +83,6 @@ export function HomeScreen({ activeTab, onSelectTab }: Props) {
       void markActivitySeen(project.id, currentUserId);
       setLastSeen(new Date().toISOString());
     }
-  }
-
-  function handleSignOut() {
-    setSignOutVisible(false);
-    void signOut();
   }
 
   async function handleCheckForUpdate() {
@@ -149,9 +143,9 @@ export function HomeScreen({ activeTab, onSelectTab }: Props) {
         <View style={styles.intro}>
           <View style={styles.header}>
             <Pressable
-              onPress={() => setSignOutVisible(true)}
+              onPress={openSettings}
               accessibilityRole="button"
-              accessibilityLabel="Account, sign out"
+              accessibilityLabel="Account settings"
               style={({ pressed }) => [styles.avatar, pressed && styles.pressed]}
             >
               <Text style={[type.avatarInitials, styles.avatarText]}>{initials}</Text>
@@ -301,16 +295,6 @@ export function HomeScreen({ activeTab, onSelectTab }: Props) {
         visible={activityOpen}
         onClose={() => setActivityOpen(false)}
         onOpenConversation={goToChat}
-      />
-
-      <ConfirmDialog
-        visible={signOutVisible}
-        title="Sign out"
-        message={session?.user.email ? `Signed in as ${session.user.email}` : undefined}
-        confirmLabel="Sign out"
-        destructive
-        onConfirm={handleSignOut}
-        onCancel={() => setSignOutVisible(false)}
       />
 
       <ConfirmDialog

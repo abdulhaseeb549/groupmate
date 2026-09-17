@@ -27,10 +27,13 @@ export type ExtractedProjectData = {
   tasks: ExtractedTask[];
 };
 
+/** A PDF has no mimeType (the Edge Function assumes application/pdf); a camera photo sets it so the Edge Function sends input_image instead of input_file. */
+export type BriefAttachment = { filename: string; base64: string; mimeType?: string };
+
 export type ParseBriefInput = {
   /** Typed/pasted text. Alongside a file it's treated as additional notes, not a replacement. */
   briefText?: string;
-  briefFile?: PdfFileInput;
+  briefFile?: BriefAttachment;
   /** Optional — used only for general constraints/context (citation style, policies), never as a source of requirements. */
   syllabusFile?: PdfFileInput;
 };

@@ -8,6 +8,9 @@ type NavigationState = {
   newProjectOpen: boolean;
   openNewProject: () => void;
   closeNewProject: () => void;
+  settingsOpen: boolean;
+  openSettings: () => void;
+  closeSettings: () => void;
   /** Set by the "+" menu's Study shortcut — StudyScreen reads this once on
    *  mount to jump straight into the new-quiz setup instead of the quiz
    *  list, then clears it. */
@@ -37,6 +40,7 @@ const NavigationContext = createContext<NavigationState | null>(null);
 export function NavigationProvider({ children }: { children: ReactNode }) {
   const [activeTab, setActiveTab] = useState<NavTab>('home');
   const [newProjectOpen, setNewProjectOpen] = useState(false);
+  const [settingsOpen, setSettingsOpen] = useState(false);
   const [studySetupRequested, setStudySetupRequested] = useState(false);
   const [requestedConversation, setRequestedConversation] = useState<Conversation | null>(null);
 
@@ -58,6 +62,9 @@ export function NavigationProvider({ children }: { children: ReactNode }) {
         newProjectOpen,
         openNewProject: () => setNewProjectOpen(true),
         closeNewProject: () => setNewProjectOpen(false),
+        settingsOpen,
+        openSettings: () => setSettingsOpen(true),
+        closeSettings: () => setSettingsOpen(false),
         studySetupRequested,
         goToNewQuiz,
         clearStudySetupRequest: () => setStudySetupRequested(false),

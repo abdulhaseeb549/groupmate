@@ -3,6 +3,7 @@ import { NavTab } from '../components/BottomNav';
 import { useNavigation } from '../state/NavigationProvider';
 import { Conversation } from '../state/messages';
 import { useChatUnread } from '../state/chatUnread';
+import { useHardwareBackHandler } from '../utils/hardwareBack';
 import { ChatListScreen } from './ChatListScreen';
 import { ChatScreen } from './ChatScreen';
 
@@ -45,6 +46,8 @@ export function ChatTab({ activeTab, onSelectTab }: Props) {
     if (conversation) markRead(conversation);
     setConversation(null);
   }
+
+  useHardwareBackHandler(closeConversation, conversation !== null);
 
   if (conversation) {
     return <ChatScreen conversation={conversation} onBack={closeConversation} />;

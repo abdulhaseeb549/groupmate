@@ -95,7 +95,15 @@ export function ChatUnreadProvider({
   // Chat dot immediately instead of at the next cold start.
   useEffect(() => {
     if (!userId) return;
-    return subscribeToMessages(
+    let cancelled = false;
+    // Same reconnect gap as ChatScreen's subscription: Realtime doesn't
+    // replay inserts missed while the socket was down (backgrounded app,
+    // dropped connection), so a reconnect needs its own refetch or a
+    // message sent during that gap leaves the unread dot/preview stale for
+    // the rest of the session — this provider isn't remounted just by
+    // switching tabs, unlike ChatScreen.
+    let hasConnectedBefore = false;
+    const unsubscribe = subscribeToMessages(
       projectId,
       (message) => {
         const conversation = conversationOf(message, userId);
@@ -115,10 +123,24 @@ export function ChatUnreadProvider({
           };
         });
       },
-      undefined,
+      (isLive) => {
+        if (cancelled || !isLive) return;
+        if (hasConnectedBefore) {
+          fetchConversationSummaries(projectId, userId)
+            .then((next) => {
+              if (!cancelled) setSummaries(next);
+            })
+            .catch(() => {});
+        }
+        hasConnectedBefore = true;
+      },
       // Its own topic: ChatScreen watches the same project concurrently.
       'unread'
     );
+    return () => {
+      cancelled = true;
+      unsubscribe();
+    };
   }, [projectId, userId]);
 
   const markRead = useCallback(

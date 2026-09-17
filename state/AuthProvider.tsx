@@ -3,6 +3,8 @@ import { Session } from '@supabase/supabase-js';
 import * as AuthSession from 'expo-auth-session';
 import * as WebBrowser from 'expo-web-browser';
 import { supabase } from '../lib/supabase';
+import { computeInitials } from '../utils/initials';
+import { passwordResetRedirectUrl } from '../utils/passwordRecovery';
 import { removeLastPushToken } from './pushNotifications';
 
 // Lets the in-app browser hand control back to the app when the OAuth
@@ -29,6 +31,12 @@ type AuthState = {
   signIn: (email: string, password: string) => Promise<AuthResult>;
   /** Opens Google's consent screen in a system browser sheet and exchanges the returned code for a session. Cancelling is not an error. */
   signInWithGoogle: () => Promise<AuthResult>;
+  /** Emails a reset link — always resolves without error even for an unregistered address, matching Supabase's own anti-enumeration behavior. */
+  resetPassword: (email: string) => Promise<AuthResult>;
+  /** Only meaningful with a recovery session already active (see useIncomingPasswordRecovery) — set on a normal session and it just changes that account's password instead. */
+  updatePassword: (newPassword: string) => Promise<AuthResult>;
+  /** Recomputes initials client-side (see utils/initials.ts) so the avatar never goes stale after a rename. */
+  updateProfile: (fullName: string) => Promise<AuthResult>;
   signOut: () => Promise<void>;
 };
 
@@ -128,6 +136,32 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     return { error: exchangeError?.message ?? null };
   }
 
+  async function resetPassword(email: string): Promise<AuthResult> {
+    const { error } = await supabase.auth.resetPasswordForEmail(email, {
+      redirectTo: passwordResetRedirectUrl(),
+    });
+    return { error: error?.message ?? null };
+  }
+
+  async function updatePassword(newPassword: string): Promise<AuthResult> {
+    const { error } = await supabase.auth.updateUser({ password: newPassword });
+    return { error: error?.message ?? null };
+  }
+
+  async function updateProfile(fullName: string): Promise<AuthResult> {
+    const userId = session?.user.id;
+    if (!userId) return { error: 'Not signed in.' };
+    const trimmed = fullName.trim();
+    const initials = computeInitials(trimmed);
+    const { error } = await supabase
+      .from('profiles')
+      .update({ full_name: trimmed, initials })
+      .eq('id', userId);
+    if (error) return { error: error.message };
+    setProfile((prev) => (prev ? { ...prev, fullName: trimmed, initials } : prev));
+    return { error: null };
+  }
+
   async function signOut() {
     // Before signOut(), not after — unregister_push_token checks
     // auth.uid() against the token's owner, so it needs the still-live
@@ -137,7 +171,19 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   }
 
   return (
-    <AuthContext.Provider value={{ session, profile, signUp, signIn, signInWithGoogle, signOut }}>
+    <AuthContext.Provider
+      value={{
+        session,
+        profile,
+        signUp,
+        signIn,
+        signInWithGoogle,
+        resetPassword,
+        updatePassword,
+        updateProfile,
+        signOut,
+      }}
+    >
       {children}
     </AuthContext.Provider>
   );

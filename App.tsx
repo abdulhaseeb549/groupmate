@@ -11,11 +11,14 @@ import { ChatTab } from './screens/ChatTab';
 import { HomeScreen } from './screens/HomeScreen';
 import { NewProjectScreen } from './screens/NewProjectScreen';
 import { ProjectsScreen } from './screens/ProjectsScreen';
+import { ResetPasswordScreen } from './screens/ResetPasswordScreen';
+import { SettingsScreen } from './screens/SettingsScreen';
 import { SetupNeededScreen } from './screens/SetupNeededScreen';
 import { StudyScreen } from './screens/StudyScreen';
 import { AuthProvider, useAuth } from './state/AuthProvider';
 import { NavigationProvider, useNavigation } from './state/NavigationProvider';
 import { ProjectProvider } from './state/ProjectRepository';
+import { useIncomingPasswordRecovery } from './utils/passwordRecovery';
 import {
   Manrope_400Regular,
   Manrope_500Medium,
@@ -37,6 +40,16 @@ function AppShell() {
   }
 
   const { session } = useAuth();
+  const recovery = useIncomingPasswordRecovery();
+
+  // Checked before the normal session split: tapping a reset-password
+  // email link usually establishes a real session, but landing straight
+  // in Home with it would skip the one thing that link was for, and
+  // landing on the sign-in form would strand someone who just proved
+  // account ownership via email.
+  if (recovery.state !== 'idle') {
+    return <ResetPasswordScreen status={recovery} onDone={recovery.reset} />;
+  }
 
   // undefined = the first getSession() call hasn't resolved yet.
   if (session === undefined) {
@@ -57,12 +70,16 @@ function AppShell() {
   );
 }
 
-/** Swaps in NewProjectScreen over the whole tab area — it needs useProject() to refetch after replacing the project. */
+/** Swaps in NewProjectScreen or SettingsScreen over the whole tab area — NewProjectScreen needs useProject() to refetch after replacing the project. */
 function ProjectTabs() {
-  const { newProjectOpen, activeTab, setActiveTab } = useNavigation();
+  const { newProjectOpen, settingsOpen, activeTab, setActiveTab } = useNavigation();
 
   if (newProjectOpen) {
     return <NewProjectScreen />;
+  }
+
+  if (settingsOpen) {
+    return <SettingsScreen />;
   }
 
   return (

@@ -6,6 +6,9 @@ import { supabase } from '../lib/supabase';
 
 const LAST_TOKEN_KEY = 'groupmate:pushToken';
 
+/** Passed as `channelId` in every push sent via send-push — see the comment in configureNotificationHandler below. */
+export const MESSAGE_CHANNEL_ID = 'messages';
+
 let handlerConfigured = false;
 
 /** Foreground banner + sound, and an Android notification channel. Called once from PushNotificationRegistrar; safe to call more than once. */
@@ -23,9 +26,19 @@ export function configureNotificationHandler(): void {
   });
 
   if (Platform.OS === 'android') {
-    void Notifications.setNotificationChannelAsync('default', {
-      name: 'default',
-      importance: Notifications.AndroidImportance.DEFAULT,
+    // A new channel id, not 'default': Android treats a channel's
+    // vibration/sound settings as fixed once created, so a device that
+    // already ran an earlier build (which created 'default' with no
+    // vibrationPattern) would keep silently vibrating never, no matter
+    // what this code changes, unless the id itself changes. send-push
+    // must pass this same id as channelId, or Expo falls back to
+    // 'default' and this has no effect.
+    void Notifications.setNotificationChannelAsync(MESSAGE_CHANNEL_ID, {
+      name: 'Messages & tasks',
+      importance: Notifications.AndroidImportance.HIGH,
+      vibrationPattern: [0, 250, 250, 250],
+      enableVibrate: true,
+      sound: 'default',
     });
   }
 }

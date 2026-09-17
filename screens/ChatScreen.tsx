@@ -163,23 +163,36 @@ export function ChatScreen({ conversation, onBack }: Props) {
   useEffect(() => {
     if (!currentUserId) return;
     let cancelled = false;
+    // True once this channel has reported SUBSCRIBED at least once — a
+    // later SUBSCRIBED after that is a *reconnect* (socket dropped while
+    // backgrounded, e.g. during a notification tap that reopens an
+    // already-mounted conversation, where this effect's deps don't change
+    // so the mount-time fetch below never re-runs). Realtime doesn't
+    // replay missed inserts after reconnecting, so a reconnect needs its
+    // own refetch or a message sent while the socket was down is silently
+    // missing until something else remounts this screen.
+    let hasConnectedBefore = false;
     setMessages(null);
     setLoadError(null);
     settledIdsRef.current = new Set();
 
-    fetchMessages(project.id, currentUserId, conversation)
-      .then((data) => {
-        if (cancelled) return;
-        for (const m of data) settledIdsRef.current.add(m.id);
-        setMessages(data);
-        return fetchReactions(data.map((m) => m.id));
-      })
-      .then((data) => {
-        if (!cancelled && data) setReactions(data);
-      })
-      .catch((err: unknown) => {
-        if (!cancelled) setLoadError(err instanceof Error ? err.message : 'Could not load messages.');
-      });
+    function loadMessages() {
+      return fetchMessages(project.id, currentUserId as string, conversation)
+        .then((data) => {
+          if (cancelled) return;
+          for (const m of data) settledIdsRef.current.add(m.id);
+          setMessages(data);
+          return fetchReactions(data.map((m) => m.id));
+        })
+        .then((data) => {
+          if (!cancelled && data) setReactions(data);
+        })
+        .catch((err: unknown) => {
+          if (!cancelled) setLoadError(err instanceof Error ? err.message : 'Could not load messages.');
+        });
+    }
+
+    void loadMessages();
 
     const unsubscribe = subscribeToMessages(
       project.id,
@@ -192,7 +205,10 @@ export function ChatScreen({ conversation, onBack }: Props) {
         });
       },
       (isLive) => {
-        if (!cancelled) setLive(isLive);
+        if (cancelled) return;
+        setLive(isLive);
+        if (isLive && hasConnectedBefore) void loadMessages();
+        hasConnectedBefore = true;
       },
       // Distinct from the unread tracker's subscription, which watches the
       // same project at the same time.

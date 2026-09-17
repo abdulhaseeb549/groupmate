@@ -1,4 +1,4 @@
-import { StyleSheet, Text, View } from 'react-native';
+import { Image, StyleSheet, Text, View } from 'react-native';
 import { Icon } from './Icon';
 import { colors, type } from '../theme';
 
@@ -9,9 +9,11 @@ type Props = {
   size?: number;
   borderColor?: string;
   style?: object;
+  /** A real photo, when set — named to match Member/Profile's own field so `<Avatar {...member} />` picks it up with no call-site changes. */
+  avatarUrl?: string | null;
 };
 
-export function Avatar({ initials, bg, fg, size = 36, borderColor, style }: Props) {
+export function Avatar({ initials, bg, fg, size = 36, borderColor, style, avatarUrl }: Props) {
   return (
     <View
       style={[
@@ -23,13 +25,16 @@ export function Avatar({ initials, bg, fg, size = 36, borderColor, style }: Prop
           backgroundColor: bg,
           borderColor: borderColor ?? colors.surface,
           borderWidth: borderColor ? 2 : 0,
+          overflow: 'hidden',
         },
         style,
       ]}
     >
-      <Text style={[type.avatarInitials, { color: fg, fontSize: size <= 30 ? 10 : 13 }]}>
-        {initials}
-      </Text>
+      {avatarUrl ? (
+        <Image source={{ uri: avatarUrl }} style={{ width: size, height: size }} resizeMode="cover" />
+      ) : (
+        <Text style={[type.avatarInitials, { color: fg, fontSize: size <= 30 ? 10 : 13 }]}>{initials}</Text>
+      )}
     </View>
   );
 }

@@ -59,6 +59,9 @@ const FAKE_AUTH: any = {
   signUp: async () => ({ error: null }),
   signIn: async () => ({ error: null }),
   signInWithGoogle: async () => ({ error: null }),
+  resetPassword: async () => ({ error: null }),
+  updatePassword: async () => ({ error: null }),
+  updateProfile: async () => ({ error: null }),
   signOut: async () => {},
 };
 

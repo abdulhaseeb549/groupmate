@@ -13,11 +13,13 @@ import { AttachRow } from '../components/AttachRow';
 import { BriefReview } from '../components/BriefReview';
 import { Icon } from '../components/Icon';
 import { KeyboardAvoider } from '../components/KeyboardAvoider';
-import { commitExtractedProject, ExtractedProjectData, parseBrief } from '../state/briefParsing';
+import { BriefAttachment, commitExtractedProject, ExtractedProjectData, parseBrief } from '../state/briefParsing';
 import { useNavigation } from '../state/NavigationProvider';
 import { useProject } from '../state/ProjectRepository';
 import { colors, layout, type } from '../theme';
-import { pickPdf, PdfFileInput } from '../utils/pdfPicker';
+import { captureBriefPhoto } from '../utils/briefCamera';
+import { useHardwareBackHandler } from '../utils/hardwareBack';
+import { pickPdf } from '../utils/pdfPicker';
 
 const MIN_LENGTH = 40;
 type Phase = 'input' | 'loading' | 'review' | 'committing';
@@ -29,8 +31,7 @@ export function NewProjectScreen() {
 
   const [phase, setPhase] = useState<Phase>('input');
   const [briefText, setBriefText] = useState('');
-  const [briefFile, setBriefFile] = useState<PdfFileInput | null>(null);
-  const [syllabusFile, setSyllabusFile] = useState<PdfFileInput | null>(null);
+  const [briefFile, setBriefFile] = useState<BriefAttachment | null>(null);
   const [extracted, setExtracted] = useState<ExtractedProjectData | null>(null);
   const [error, setError] = useState<string | null>(null);
   const today = useMemo(() => new Date(), []);
@@ -38,7 +39,9 @@ export function NewProjectScreen() {
   const canSubmit = briefText.trim().length >= MIN_LENGTH || briefFile !== null;
   const busy = phase === 'loading' || phase === 'committing';
 
-  async function pickFile(kind: 'brief' | 'syllabus') {
+  useHardwareBackHandler(closeNewProject, !busy);
+
+  async function attachPdf() {
     const { file, error: pickError } = await pickPdf();
     if (pickError) {
       setError(pickError);
@@ -46,11 +49,18 @@ export function NewProjectScreen() {
     }
     if (!file) return;
     setError(null);
-    if (kind === 'brief') {
-      setBriefFile(file);
-    } else {
-      setSyllabusFile(file);
+    setBriefFile(file);
+  }
+
+  async function attachPhoto() {
+    const { file, error: captureError } = await captureBriefPhoto();
+    if (captureError) {
+      setError(captureError);
+      return;
     }
+    if (!file) return;
+    setError(null);
+    setBriefFile(file);
   }
 
   async function readBrief() {
@@ -59,7 +69,6 @@ export function NewProjectScreen() {
     const result = await parseBrief({
       briefText: briefText.trim() || undefined,
       briefFile: briefFile ?? undefined,
-      syllabusFile: syllabusFile ?? undefined,
     });
     if (result.error) {
       setError(result.error);
@@ -89,7 +98,6 @@ export function NewProjectScreen() {
     setExtracted(null);
     setError(null);
     setBriefFile(null);
-    setSyllabusFile(null);
     setPhase('input');
   }
 
@@ -129,8 +137,8 @@ export function NewProjectScreen() {
                 I'll <Text style={styles.purple}>read it.</Text>
               </Text>
               <Text style={[type.body, styles.muted, styles.subtitle]}>
-                Paste the brief or attach it as a PDF. I'll find the requirements and divide the work across your
-                team — you'll see the plan before anything changes.
+                Paste the brief, attach it as a PDF, or take a photo of it. I'll find the requirements and divide the
+                work across your team — you'll see the plan before anything changes.
               </Text>
             </View>
 
@@ -146,20 +154,36 @@ export function NewProjectScreen() {
             />
 
             <View style={styles.attachSection}>
-              <AttachRow
-                label="Attach brief PDF instead"
-                file={briefFile}
-                onAttach={() => pickFile('brief')}
-                onRemove={() => setBriefFile(null)}
-                disabled={phase === 'loading'}
-              />
-              <AttachRow
-                label="Add syllabus (optional)"
-                file={syllabusFile}
-                onAttach={() => pickFile('syllabus')}
-                onRemove={() => setSyllabusFile(null)}
-                disabled={phase === 'loading'}
-              />
+              {briefFile ? (
+                <AttachRow
+                  label=""
+                  file={briefFile}
+                  onAttach={() => {}}
+                  onRemove={() => setBriefFile(null)}
+                  disabled={phase === 'loading'}
+                />
+              ) : (
+                <View style={styles.attachChoices}>
+                  <Pressable
+                    onPress={attachPdf}
+                    disabled={phase === 'loading'}
+                    accessibilityRole="button"
+                    style={({ pressed }) => [styles.attachChoice, pressed && styles.pressed]}
+                  >
+                    <Icon name="document" size={16} color={colors.purple} strokeWidth={1.8} />
+                    <Text style={[type.button, styles.purple]}>Attach a PDF</Text>
+                  </Pressable>
+                  <Pressable
+                    onPress={attachPhoto}
+                    disabled={phase === 'loading'}
+                    accessibilityRole="button"
+                    style={({ pressed }) => [styles.attachChoice, pressed && styles.pressed]}
+                  >
+                    <Icon name="camera" size={16} color={colors.purple} strokeWidth={1.8} />
+                    <Text style={[type.button, styles.purple]}>Take a photo</Text>
+                  </Pressable>
+                </View>
+              )}
             </View>
 
             {error ? (
@@ -249,6 +273,22 @@ const styles = StyleSheet.create({
   },
   attachSection: {
     gap: 8,
+  },
+  attachChoices: {
+    flexDirection: 'row',
+    gap: 8,
+  },
+  attachChoice: {
+    flex: 1,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 8,
+    height: 48,
+    borderRadius: 14,
+    borderWidth: 1.5,
+    borderColor: colors.border,
+    borderStyle: 'dashed',
   },
   errorBox: {
     flexDirection: 'row',
