@@ -16,7 +16,7 @@
     "android": {
       "package": "com.groupmate.app",
       "adaptiveIcon": {
-        "backgroundColor": "#F5F2FF",
+        "backgroundColor": "#2E1EC4",
         "foregroundImage": "./assets/android-icon-foreground.png"
       },
       "predictiveBackGestureEnabled": false,
