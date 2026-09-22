@@ -30,6 +30,7 @@ import {
   addReaction,
   belongsToConversation,
   Conversation,
+  conversationKey,
   deleteMessage,
   fetchMessages,
   fetchReactions,
@@ -43,6 +44,7 @@ import {
   subscribeToReactions,
 } from '../state/messages';
 import { notifyMessage } from '../state/pushNotifications';
+import { subscribeToTyping } from '../state/presence';
 import { pickDocument, pickMedia } from '../utils/filePicker';
 import { useProject } from '../state/ProjectRepository';
 import { colors, gradients, layout, radius, type } from '../theme';
@@ -103,7 +105,11 @@ export function ChatScreen({ conversation, onBack }: Props) {
   const [anchor, setAnchor] = useState<PickerAnchor | null>(null);
   const [deletingId, setDeletingId] = useState<string | null>(null);
   const [deleteError, setDeleteError] = useState<string | null>(null);
+  const [typingUserId, setTypingUserId] = useState<string | null>(null);
   const listRef = useRef<FlatList<Message>>(null);
+  const sendTypingRef = useRef<((key: string) => void) | null>(null);
+  const typingTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const lastTypingSentRef = useRef(0);
   // Messages already on screen when the thread opened. Anything not in here
   // is genuinely new and animates in; history doesn't re-animate on scroll.
   const settledIdsRef = useRef<Set<string>>(new Set());
@@ -160,12 +166,17 @@ export function ChatScreen({ conversation, onBack }: Props) {
   // which is why it read as permanently "online" regardless of whether the
   // other person actually had the app open.
   const otherOnline = conversation.type === 'dm' ? onlineUserIds.has(conversation.otherUserId) : null;
+  const typingName = typingUserId ? (membersById[typingUserId]?.name ?? 'Someone') : null;
   const subtitle =
-    conversation.type === 'group'
-      ? `${members.length} ${members.length === 1 ? 'person' : 'people'} in chat`
-      : otherOnline
-        ? 'Active now'
-        : 'Offline';
+    typingName
+      ? conversation.type === 'group'
+        ? `${typingName} is typing`
+        : 'Typing'
+      : conversation.type === 'group'
+        ? `${members.length} ${members.length === 1 ? 'person' : 'people'} in chat`
+        : otherOnline
+          ? 'Active now'
+          : 'Offline';
   const headerDotOn = conversation.type === 'dm' ? otherOnline : live;
 
   useEffect(() => {
@@ -255,6 +266,40 @@ export function ChatScreen({ conversation, onBack }: Props) {
     return unsubscribe;
   }, [project.id]);
 
+  // Broadcast, not DB-backed (see state/presence.ts) — "stopped typing" isn't
+  // its own event, so a fresh event just restarts a 3s timer, and silence
+  // for 3s reads as done. One channel per project like the reactions effect
+  // above; filtered to this conversation here rather than subscribed per-thread.
+  useEffect(() => {
+    if (!currentUserId) return;
+    setTypingUserId(null);
+    const { sendTyping, unsubscribe } = subscribeToTyping(project.id, currentUserId, (event) => {
+      if (event.conversationKey !== conversationKey(conversation)) return;
+      setTypingUserId(event.userId);
+      if (typingTimeoutRef.current) clearTimeout(typingTimeoutRef.current);
+      typingTimeoutRef.current = setTimeout(() => setTypingUserId(null), 3000);
+    });
+    sendTypingRef.current = sendTyping;
+    return () => {
+      unsubscribe();
+      sendTypingRef.current = null;
+      if (typingTimeoutRef.current) clearTimeout(typingTimeoutRef.current);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [project.id, currentUserId, conversation.type, conversation.type === 'dm' ? conversation.otherUserId : null]);
+
+  // Throttled, not per-keystroke — a broadcast every 2.5s is plenty to keep
+  // the other side's 3s timeout alive without spamming the channel.
+  function handleInputChange(text: string) {
+    setInput(text);
+    if (text.trim().length === 0) return;
+    const now = Date.now();
+    if (now - lastTypingSentRef.current > 2500) {
+      lastTypingSentRef.current = now;
+      sendTypingRef.current?.(conversationKey(conversation));
+    }
+  }
+
   /**
    * Fire-and-forget push to everyone else in this conversation — the
    * sender's own display name and the text just sent are already in
@@ -332,6 +377,7 @@ export function ChatScreen({ conversation, onBack }: Props) {
               <Text style={[type.caption, styles.muted]} numberOfLines={1}>
                 {subtitle}
               </Text>
+              {typingName ? <TypingDots /> : null}
             </View>
           </View>
           {/* Balances the back button's width so the title stays optically centered — invisible, not an empty-looking button. */}
@@ -430,7 +476,7 @@ export function ChatScreen({ conversation, onBack }: Props) {
         <View style={[styles.composer, { marginBottom: Math.max(insets.bottom, 12) + 6 }]}>
           <TextInput
             value={input}
-            onChangeText={setInput}
+            onChangeText={handleInputChange}
             placeholder={conversation.type === 'group' ? 'Message your team…' : `Message ${title}…`}
             placeholderTextColor={colors.faint}
             multiline
@@ -489,6 +535,33 @@ export function ChatScreen({ conversation, onBack }: Props) {
         onCancel={() => setDeletingId(null)}
       />
     </>
+  );
+}
+
+/** Three dots pulsing in a stagger, next to the "Typing…" subtitle. */
+function TypingDots() {
+  const values = useRef([0, 1, 2].map(() => new Animated.Value(0.3))).current;
+
+  useEffect(() => {
+    const loops = values.map((v, i) =>
+      Animated.loop(
+        Animated.sequence([
+          Animated.delay(i * 150),
+          Animated.timing(v, { toValue: 1, duration: 300, useNativeDriver: true }),
+          Animated.timing(v, { toValue: 0.3, duration: 300, useNativeDriver: true }),
+        ])
+      )
+    );
+    loops.forEach((loop) => loop.start());
+    return () => loops.forEach((loop) => loop.stop());
+  }, [values]);
+
+  return (
+    <View style={styles.typingDots}>
+      {values.map((v, i) => (
+        <Animated.View key={i} style={[styles.typingDot, { opacity: v }]} />
+      ))}
+    </View>
   );
 }
 
@@ -1185,6 +1258,17 @@ const styles = StyleSheet.create({
   },
   liveDotOff: {
     backgroundColor: colors.faint,
+  },
+  typingDots: {
+    flexDirection: 'row',
+    gap: 3,
+    marginLeft: 2,
+  },
+  typingDot: {
+    width: 4,
+    height: 4,
+    borderRadius: 2,
+    backgroundColor: colors.muted,
   },
   pressed: {
     opacity: 0.6,
