@@ -1,3 +1,4 @@
+import { AppState, AppStateStatus } from 'react-native';
 import { supabase } from '../lib/supabase';
 
 /**
@@ -30,7 +31,22 @@ export function subscribeToPresence(
       }
     });
 
+  // Realtime only notices a dropped socket via a missed heartbeat, which
+  // can lag a real disconnect by up to a minute — too slow for "closed the
+  // app" to read as offline. Backgrounding untracks immediately instead of
+  // waiting on that timeout; foregrounding re-tracks. A force-quit or
+  // uninstall still has to fall back to the heartbeat timeout, since there's
+  // no JS left running to untrack with.
+  const appStateSubscription = AppState.addEventListener('change', (state: AppStateStatus) => {
+    if (state === 'active') {
+      void channel.track({ online_at: new Date().toISOString() });
+    } else {
+      void channel.untrack();
+    }
+  });
+
   return () => {
+    appStateSubscription.remove();
     void supabase.removeChannel(channel);
   };
 }
