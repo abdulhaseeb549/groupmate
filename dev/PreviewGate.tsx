@@ -4,6 +4,7 @@ import { NavTab } from '../components/BottomNav';
 import { ChatTab } from '../screens/ChatTab';
 import { HomeScreen } from '../screens/HomeScreen';
 import { ProjectsScreen } from '../screens/ProjectsScreen';
+import { SettingsScreen } from '../screens/SettingsScreen';
 import { StudyScreen } from '../screens/StudyScreen';
 import { AuthContext } from '../state/AuthProvider';
 import { NavigationProvider, useNavigation } from '../state/NavigationProvider';
@@ -147,6 +148,7 @@ function FakeProject() {
       },
     ],
     switchProject: () => {},
+    onlineUserIds: new Set<string>(),
   };
 
   return (
@@ -160,9 +162,10 @@ function FakeProject() {
 
 /** Mirrors App.tsx's ProjectTabs, minus the new-project flow it has no data for. */
 function Tabs() {
-  const { activeTab, setActiveTab } = useNavigation();
+  const { activeTab, setActiveTab, settingsOpen } = useNavigation();
   const props = { activeTab, onSelectTab: setActiveTab as (t: NavTab) => void };
 
+  if (settingsOpen) return <SettingsScreen />;
   if (activeTab === 'projects') return <ProjectsScreen {...props} />;
   if (activeTab === 'chat') return <ChatTab {...props} />;
   if (activeTab === 'study') return <StudyScreen {...props} />;
