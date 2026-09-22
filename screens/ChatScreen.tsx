@@ -87,7 +87,7 @@ const ATTACH_KINDS: AttachKind[] = [
  */
 export function ChatScreen({ conversation, onBack }: Props) {
   const insets = useSafeAreaInsets();
-  const { project, tasks, members, membersById, claimTask } = useProject();
+  const { project, tasks, members, membersById, claimTask, onlineUserIds } = useProject();
   const { session, profile } = useAuth();
   const currentUserId = session?.user.id;
   const [messages, setMessages] = useState<Message[] | null>(null);
@@ -155,10 +155,18 @@ export function ChatScreen({ conversation, onBack }: Props) {
   }
 
   const title = conversation.type === 'group' ? project.name : (membersById[conversation.otherUserId]?.name ?? 'Direct message');
+  // Real presence (state/presence.ts), not the `live` connection dot below —
+  // that only ever reflects whether THIS device's own socket is connected,
+  // which is why it read as permanently "online" regardless of whether the
+  // other person actually had the app open.
+  const otherOnline = conversation.type === 'dm' ? onlineUserIds.has(conversation.otherUserId) : null;
   const subtitle =
     conversation.type === 'group'
       ? `${members.length} ${members.length === 1 ? 'person' : 'people'} in chat`
-      : 'Direct message';
+      : otherOnline
+        ? 'Active now'
+        : 'Offline';
+  const headerDotOn = conversation.type === 'dm' ? otherOnline : live;
 
   useEffect(() => {
     if (!currentUserId) return;
@@ -320,7 +328,7 @@ export function ChatScreen({ conversation, onBack }: Props) {
               {title}
             </Text>
             <View style={styles.headerSubRow}>
-              <View style={[styles.liveDot, live ? styles.liveDotOn : styles.liveDotOff]} />
+              <View style={[styles.liveDot, headerDotOn ? styles.liveDotOn : styles.liveDotOff]} />
               <Text style={[type.caption, styles.muted]} numberOfLines={1}>
                 {subtitle}
               </Text>

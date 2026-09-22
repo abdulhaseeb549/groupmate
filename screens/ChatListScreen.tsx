@@ -25,7 +25,7 @@ type Props = {
  */
 export function ChatListScreen({ activeTab, onSelectTab, onOpenConversation }: Props) {
   const insets = useSafeAreaInsets();
-  const { project, members } = useProject();
+  const { project, members, onlineUserIds } = useProject();
   const { session } = useAuth();
   const { summaries, isUnread, hasUnread } = useChatUnread();
   const currentUserId = session?.user.id;
@@ -103,7 +103,10 @@ export function ChatListScreen({ activeTab, onSelectTab, onOpenConversation }: P
                 accessibilityLabel={`Direct message with ${member.name}${unread ? ', unread' : ''}`}
                 style={({ pressed }) => [styles.row, pressed && styles.rowPressed]}
               >
-                <Avatar {...member} size={42} />
+                <View style={styles.avatarWrap}>
+                  <Avatar {...member} size={42} />
+                  {onlineUserIds.has(member.id) ? <View style={styles.onlineDot} /> : null}
+                </View>
                 <View style={styles.rowText}>
                   <Text style={[type.taskTitle, styles.ink]} numberOfLines={1}>
                     {member.name}
@@ -189,6 +192,20 @@ const styles = StyleSheet.create({
   },
   rowPressed: {
     backgroundColor: colors.surfaceMuted,
+  },
+  avatarWrap: {
+    position: 'relative',
+  },
+  onlineDot: {
+    position: 'absolute',
+    right: -1,
+    bottom: -1,
+    width: 12,
+    height: 12,
+    borderRadius: 6,
+    backgroundColor: colors.green,
+    borderWidth: 2,
+    borderColor: colors.surface,
   },
   groupTile: {
     width: 42,
