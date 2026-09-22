@@ -18,6 +18,7 @@ import { ProjectHealth, RequirementStatus } from '../state/projectState';
 import { ProjectSwitcher } from '../components/ProjectSwitcher';
 import { useAuth } from '../state/AuthProvider';
 import { useChatUnread } from '../state/chatUnread';
+import { notifyNudge } from '../state/pushNotifications';
 import { useProject } from '../state/ProjectRepository';
 import { colors, gradients, layout, radius, spacing, type } from '../theme';
 import { formatDueDate } from '../utils/dates';
@@ -46,7 +47,7 @@ const HEALTH: Record<ProjectHealth, { label: string; bg: string; dot: string; te
 export function ProjectsScreen({ activeTab, onSelectTab }: Props) {
   const insets = useSafeAreaInsets();
   const { project, tasks, projectState, schedule, members, projects } = useProject();
-  const { session } = useAuth();
+  const { session, profile } = useAuth();
   const { hasUnread } = useChatUnread();
   const currentUserId = session?.user.id;
   const [filter, setFilterState] = useState<(typeof FILTERS)[number]>('My tasks');
@@ -55,6 +56,15 @@ export function ProjectsScreen({ activeTab, onSelectTab }: Props) {
   const [dueDateVisible, setDueDateVisible] = useState(false);
   const [editingRequirement, setEditingRequirement] = useState<Requirement | null>(null);
   const [section, setSectionState] = useState<Section>('Timeline');
+  // Session-only — a nudge is a nudge, not a queue; once sent this view
+  // shows it as sent rather than letting the same tap fire again.
+  const [nudgedIds, setNudgedIds] = useState<Set<string>>(new Set());
+
+  function handleNudge(memberId: string) {
+    if (nudgedIds.has(memberId)) return;
+    setNudgedIds((prev) => new Set(prev).add(memberId));
+    notifyNudge(memberId, profile?.fullName ?? 'Someone', project.name, project.id);
+  }
 
   function setSection(next: Section) {
     LayoutAnimation.configureNext(LayoutAnimation.Presets.easeInEaseOut);
@@ -232,6 +242,34 @@ export function ProjectsScreen({ activeTab, onSelectTab }: Props) {
                       <Text style={[type.metadata, { color: colors.muted }]}>
                         {w.done}/{w.total}
                       </Text>
+                      {w.member.id !== currentUserId ? (
+                        <Pressable
+                          onPress={() => handleNudge(w.member.id)}
+                          disabled={nudgedIds.has(w.member.id)}
+                          hitSlop={8}
+                          accessibilityRole="button"
+                          accessibilityLabel={
+                            nudgedIds.has(w.member.id) ? `Nudged ${w.member.name}` : `Nudge ${w.member.name}`
+                          }
+                          style={({ pressed }) => [
+                            styles.nudgeButton,
+                            nudgedIds.has(w.member.id) && styles.nudgeButtonSent,
+                            pressed && !nudgedIds.has(w.member.id) && styles.nudgeButtonPressed,
+                          ]}
+                        >
+                          <Icon
+                            name={nudgedIds.has(w.member.id) ? 'check' : 'bell'}
+                            size={12}
+                            color={nudgedIds.has(w.member.id) ? colors.mintText : colors.purple}
+                            strokeWidth={2.2}
+                          />
+                          <Text
+                            style={[type.tinyLabel, nudgedIds.has(w.member.id) ? styles.nudgeTextSent : styles.nudgeText]}
+                          >
+                            {nudgedIds.has(w.member.id) ? 'Nudged' : 'Nudge'}
+                          </Text>
+                        </Pressable>
+                      ) : null}
                     </View>
                     <View style={styles.workloadTrack}>
                       <LinearGradient
@@ -482,5 +520,26 @@ const styles = StyleSheet.create({
   workloadFill: {
     height: '100%',
     borderRadius: 3,
+  },
+  nudgeButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+    height: 26,
+    paddingHorizontal: 9,
+    borderRadius: 13,
+    backgroundColor: colors.purpleSoft,
+  },
+  nudgeButtonPressed: {
+    opacity: 0.7,
+  },
+  nudgeButtonSent: {
+    backgroundColor: colors.mint,
+  },
+  nudgeText: {
+    color: colors.purple,
+  },
+  nudgeTextSent: {
+    color: colors.mintText,
   },
 });

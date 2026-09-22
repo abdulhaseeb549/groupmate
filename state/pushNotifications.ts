@@ -128,3 +128,20 @@ export function notifyTaskAssigned(assigneeId: string, taskTitle: string, projec
     },
   });
 }
+
+/**
+ * Fire-and-forget — see notifyMessage. The Workload view's one-tap "Nudge":
+ * peer pressure instead of another AI suggestion nobody opens. Deliberately
+ * generic wording — this points at "the team's workload", not at the one
+ * person's slice of it, so it reads as a nudge, not an accusation.
+ */
+export function notifyNudge(recipientId: string, senderName: string, projectName: string, projectId: string): void {
+  void supabase.functions.invoke('send-push', {
+    body: {
+      targetUserId: recipientId,
+      title: `${senderName} nudged you`,
+      body: `Your team could use a hand on ${projectName}.`,
+      data: { kind: 'nudge', projectId },
+    },
+  });
+}

@@ -5,7 +5,7 @@ import { configureNotificationHandler, registerForPushNotificationsAsync, savePu
 import { useProject } from '../state/ProjectRepository';
 
 type NotificationData = {
-  kind?: 'message' | 'task_assigned';
+  kind?: 'message' | 'task_assigned' | 'nudge';
   projectId?: string;
   conversationOtherUserId?: string | null;
 };
@@ -44,7 +44,7 @@ export function PushNotificationRegistrar({ userId }: { userId: string }) {
 
       if (data.kind === 'message') {
         goToChat(data.conversationOtherUserId ? { type: 'dm', otherUserId: data.conversationOtherUserId } : { type: 'group' });
-      } else if (data.kind === 'task_assigned') {
+      } else if (data.kind === 'task_assigned' || data.kind === 'nudge') {
         setActiveTab('projects');
       }
     });
