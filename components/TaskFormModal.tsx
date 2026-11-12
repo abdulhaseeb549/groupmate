@@ -1,11 +1,15 @@
-import { useEffect, useState } from 'react';
-import { ActivityIndicator, Modal, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
-import { Avatar, UnclaimedAvatar } from './Avatar';
+import { ReactNode, useEffect, useState } from 'react';
+import { Pressable, ScrollView, StyleSheet, Text, TextInput, TextInputProps, View } from 'react-native';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import { Avatar } from './Avatar';
+import { GradientButton } from './GradientButton';
 import { Icon } from './Icon';
+import { KeyboardAvoider } from './KeyboardAvoider';
+import { Segmented } from './Segmented';
+import { Sheet } from './Sheet';
 import { Priority, Task } from '../data/tasks';
 import { useProject } from '../state/ProjectRepository';
-import { colors, layout, type } from '../theme';
-import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import { colors, type } from '../theme';
 
 type Props = {
   visible: boolean;
@@ -18,6 +22,7 @@ type Props = {
 
 const PRIORITIES: Priority[] = ['high', 'medium', 'low'];
 const PRIORITY_LABEL: Record<Priority, string> = { high: 'High', medium: 'Medium', low: 'Low' };
+const PRIORITY_DOT: Record<Priority, string> = { high: colors.red, medium: colors.amber, low: '#C9C5D3' };
 const STEP = 0.5;
 const MIN_HOURS = 0.5;
 const MAX_HOURS = 40;
@@ -27,12 +32,9 @@ function formatHours(n: number): string {
 }
 
 /**
- * Shared create/edit form for a task's hand-correctable fields — title,
- * priority, effort, due label, section reference, and which requirements it
- * counts toward. Never touches guidance/outline (AI-written) or status/
- * assignee-on-an-existing-task (their own dedicated flows already live in
- * TaskDetailModal) — assignee only appears here when creating, since a new
- * task needs one from the start.
+ * New / edit task (board GTaskForm). The hand-correctable fields only —
+ * title, who (new tasks only), priority, effort, due, section, and what it
+ * counts toward. AI help, status and reassignment live in task detail.
  */
 export function TaskFormModal({ visible, task, defaultAssignee, onClose }: Props) {
   const insets = useSafeAreaInsets();
@@ -91,9 +93,7 @@ export function TaskFormModal({ visible, task, defaultAssignee, onClose }: Props
       dueLabel: dueLabel.trim() || undefined,
       requirementIds,
     };
-    const result = task
-      ? await updateTask(task.id, fields)
-      : await addTask({ ...fields, assigneeId });
+    const result = task ? await updateTask(task.id, fields) : await addTask({ ...fields, assigneeId });
     setSaving(false);
     if (result.error) {
       setError(result.error);
@@ -103,349 +103,319 @@ export function TaskFormModal({ visible, task, defaultAssignee, onClose }: Props
   }
 
   return (
-    <Modal visible={visible} transparent animationType="slide" onRequestClose={onClose}>
-      <View style={styles.backdrop}>
-        <Pressable style={StyleSheet.absoluteFill} onPress={onClose} />
+    <Sheet
+      visible={visible}
+      onClose={onClose}
+      full
+      footer={
+        <GradientButton label={isEdit ? 'Save changes' : 'Create task'} onPress={save} disabled={!canSave} loading={saving} />
+      }
+    >
+      <KeyboardAvoider style={styles.flex}>
         <ScrollView
-          style={styles.sheet}
-          contentContainerStyle={{ paddingBottom: 20 + Math.max(insets.bottom, 14) }}
+          contentContainerStyle={[styles.body, { paddingBottom: 56 + 28 + 40 + Math.max(insets.bottom, 0) }]}
           keyboardShouldPersistTaps="handled"
           showsVerticalScrollIndicator={false}
         >
-          <View style={styles.handle} />
           <View style={styles.header}>
-            <Text style={type.pageTitle}>{isEdit ? 'Edit task' : 'New task'}</Text>
-            <Pressable style={styles.closeButton} onPress={onClose} accessibilityRole="button" accessibilityLabel="Close">
-              <Icon name="close" size={16} color={colors.ink} strokeWidth={2.2} />
+            <Text style={styles.h1} accessibilityRole="header">
+              {isEdit ? 'Edit task' : 'New task'}
+            </Text>
+            <Pressable
+              onPress={onClose}
+              accessibilityRole="button"
+              accessibilityLabel="Close"
+              style={({ pressed }) => [styles.softButton, pressed && styles.pressed]}
+            >
+              <Icon name="close" size={18} color={colors.ink} strokeWidth={2} />
             </Pressable>
           </View>
 
-          <Field label="Title">
-            <TextInput
-              value={title}
-              onChangeText={setTitle}
-              placeholder="What needs to get done?"
-              placeholderTextColor={colors.faint}
-              style={styles.input}
-            />
-          </Field>
+          <View style={styles.fields}>
+            <Field label="Title">
+              <Input value={title} onChangeText={setTitle} placeholder="What needs to get done?" autoFocus={!isEdit} />
+            </Field>
 
-          {!isEdit ? (
-            <Field label="Assigned to">
-              <View style={styles.assignRow}>
-                <Pressable
-                  onPress={() => setAssigneeId(null)}
-                  hitSlop={4}
-                  accessibilityRole="button"
-                  accessibilityLabel="Leave unclaimed"
-                  style={styles.assignOption}
+            {!isEdit ? (
+              <Field label="Who">
+                <ScrollView
+                  horizontal
+                  showsHorizontalScrollIndicator={false}
+                  contentContainerStyle={styles.picks}
+                  accessibilityRole="radiogroup"
+                  accessibilityLabel="Assigned to"
                 >
-                  <UnclaimedAvatar size={40} borderColor={assigneeId === null ? colors.purple : undefined} />
-                  <Text style={[type.tinyLabel, assigneeId === null ? styles.assignNameActive : styles.muted]} numberOfLines={1}>
-                    Unclaimed
-                  </Text>
-                </Pressable>
-                {members.map((member) => (
-                  <Pressable
-                    key={member.id}
-                    onPress={() => setAssigneeId(member.id)}
-                    hitSlop={4}
-                    accessibilityRole="button"
-                    accessibilityLabel={`Assign to ${member.name}`}
-                    style={styles.assignOption}
-                  >
-                    <Avatar
-                      {...member}
-                      size={40}
-                      borderColor={member.id === assigneeId ? colors.purple : colors.surface}
+                  <Pick
+                    label="Nobody"
+                    selected={assigneeId === null}
+                    onPress={() => setAssigneeId(null)}
+                    face={<View style={styles.nobodyFace} />}
+                  />
+                  {members.map((member) => (
+                    <Pick
+                      key={member.id}
+                      label={member.name.split(' ')[0]}
+                      selected={member.id === assigneeId}
+                      onPress={() => setAssigneeId(member.id)}
+                      face={<Avatar initials={member.initials} bg={member.bg} fg={member.fg} size={44} />}
                     />
-                    <Text
-                      style={[type.tinyLabel, member.id === assigneeId ? styles.assignNameActive : styles.muted]}
-                      numberOfLines={1}
-                    >
-                      {member.name}
-                    </Text>
-                  </Pressable>
-                ))}
-              </View>
-            </Field>
-          ) : null}
+                  ))}
+                </ScrollView>
+              </Field>
+            ) : null}
 
-          <Field label="Priority">
-            <View style={styles.pillRow}>
-              {PRIORITIES.map((p) => {
-                const active = p === priority;
-                return (
+            <Field label="Priority">
+              <Segmented<Priority>
+                label="Priority"
+                value={priority}
+                onChange={setPriority}
+                options={PRIORITIES.map((p) => ({
+                  value: p,
+                  label: PRIORITY_LABEL[p],
+                  leading: () => <View style={[styles.dot, { backgroundColor: PRIORITY_DOT[p] }]} />,
+                }))}
+              />
+            </Field>
+
+            <View style={styles.pair}>
+              <Field label="Effort" style={styles.effortCol}>
+                <View style={[styles.field, styles.stepper]}>
                   <Pressable
-                    key={p}
-                    onPress={() => setPriority(p)}
-                    style={[styles.pill, active && styles.pillActive]}
+                    onPress={() => setEffortHours((h) => Math.max(MIN_HOURS, h - STEP))}
+                    disabled={effortHours <= MIN_HOURS}
                     accessibilityRole="button"
+                    accessibilityLabel="Less effort"
+                    style={({ pressed }) => [styles.step, (pressed || effortHours <= MIN_HOURS) && styles.pressed]}
                   >
-                    <Text style={[type.button, { color: active ? colors.onInk : colors.muted }]}>{PRIORITY_LABEL[p]}</Text>
+                    <Icon name="minus" size={16} color={colors.ink} strokeWidth={2.2} />
                   </Pressable>
-                );
-              })}
+                  <Text style={styles.stepValue}>{formatHours(effortHours)}</Text>
+                  <Pressable
+                    onPress={() => setEffortHours((h) => Math.min(MAX_HOURS, h + STEP))}
+                    disabled={effortHours >= MAX_HOURS}
+                    accessibilityRole="button"
+                    accessibilityLabel="More effort"
+                    style={({ pressed }) => [styles.step, (pressed || effortHours >= MAX_HOURS) && styles.pressed]}
+                  >
+                    <Icon name="plus" size={16} color={colors.ink} strokeWidth={2.2} />
+                  </Pressable>
+                </View>
+              </Field>
+              <Field label="Due" style={styles.flex}>
+                <Input value={dueLabel} onChangeText={setDueLabel} placeholder="e.g. Thu" />
+              </Field>
             </View>
-          </Field>
 
-          <Field label="Effort">
-            <View style={styles.stepper}>
-              <Pressable
-                onPress={() => setEffortHours((h) => Math.max(MIN_HOURS, h - STEP))}
-                disabled={effortHours <= MIN_HOURS}
-                hitSlop={8}
-                accessibilityRole="button"
-                accessibilityLabel="Decrease effort"
-                style={[styles.stepButton, effortHours <= MIN_HOURS && styles.stepButtonDisabled]}
-              >
-                <Icon name="minus" size={14} color={colors.ink} strokeWidth={2.4} />
-              </Pressable>
-              <Text style={[type.button, styles.stepValue]}>{formatHours(effortHours)}</Text>
-              <Pressable
-                onPress={() => setEffortHours((h) => Math.min(MAX_HOURS, h + STEP))}
-                disabled={effortHours >= MAX_HOURS}
-                hitSlop={8}
-                accessibilityRole="button"
-                accessibilityLabel="Increase effort"
-                style={[styles.stepButton, effortHours >= MAX_HOURS && styles.stepButtonDisabled]}
-              >
-                <Icon name="plus" size={14} color={colors.ink} strokeWidth={2.4} />
-              </Pressable>
-            </View>
-          </Field>
-
-          <View style={styles.row2}>
-            <Field label="Due (optional)" style={styles.flex1}>
-              <TextInput
-                value={dueLabel}
-                onChangeText={setDueLabel}
-                placeholder="e.g. Thu"
-                placeholderTextColor={colors.faint}
-                style={styles.input}
-              />
+            <Field label="Section">
+              <Input value={sectionRef} onChangeText={setSectionRef} placeholder="e.g. §3.2" />
             </Field>
-            <Field label="Reference (optional)" style={styles.flex1}>
-              <TextInput
-                value={sectionRef}
-                onChangeText={setSectionRef}
-                placeholder="e.g. §3.2"
-                placeholderTextColor={colors.faint}
-                style={styles.input}
-              />
-            </Field>
-          </View>
 
-          {requirements.length > 0 ? (
-            <Field label="Counts toward">
-              <View style={styles.chipRow}>
-                {requirements.map((r) => {
-                  const active = requirementIds.includes(r.id);
-                  return (
-                    <Pressable
-                      key={r.id}
-                      onPress={() => toggleRequirement(r.id)}
-                      style={[styles.chip, active && styles.chipActive]}
-                      accessibilityRole="button"
-                      accessibilityState={{ selected: active }}
-                    >
-                      <Text style={[type.caption, { color: active ? colors.purple : colors.muted }]} numberOfLines={1}>
-                        {r.label}
-                      </Text>
-                    </Pressable>
-                  );
-                })}
+            {requirements.length > 0 ? (
+              <Field label="Counts toward">
+                <View style={styles.chips}>
+                  {requirements.map((r) => {
+                    const active = requirementIds.includes(r.id);
+                    return (
+                      <Pressable
+                        key={r.id}
+                        onPress={() => toggleRequirement(r.id)}
+                        accessibilityRole="button"
+                        accessibilityState={{ selected: active }}
+                        style={({ pressed }) => [styles.chip, active && styles.chipOn, pressed && styles.pressed]}
+                      >
+                        {active ? <Icon name="tick" size={14} color={colors.purple} strokeWidth={2.4} /> : null}
+                        <Text style={[styles.chipText, active && styles.chipTextOn]} numberOfLines={1}>
+                          {r.label}
+                        </Text>
+                      </Pressable>
+                    );
+                  })}
+                </View>
+              </Field>
+            ) : null}
+
+            {error ? (
+              <View style={styles.errorBox} accessibilityRole="alert">
+                <Icon name="exclamation" size={18} color={colors.redText} strokeWidth={2.2} />
+                <Text style={styles.errorText}>{error}</Text>
               </View>
-            </Field>
-          ) : null}
-
-          {error ? (
-            <View style={styles.errorBox}>
-              <Icon name="exclamation" size={16} color={colors.redText} strokeWidth={2.2} />
-              <Text style={[type.caption, styles.errorText]}>{error}</Text>
-            </View>
-          ) : null}
-
-          <Pressable
-            onPress={save}
-            disabled={!canSave || saving}
-            accessibilityRole="button"
-            style={[styles.saveButton, (!canSave || saving) && styles.saveButtonDisabled]}
-          >
-            {saving ? (
-              <ActivityIndicator color={colors.onInk} />
-            ) : (
-              <Text style={[type.button, { color: colors.onInk }]}>{isEdit ? 'Save changes' : 'Create task'}</Text>
-            )}
-          </Pressable>
+            ) : null}
+          </View>
         </ScrollView>
-      </View>
-    </Modal>
+      </KeyboardAvoider>
+    </Sheet>
   );
 }
 
-function Field({ label, children, style }: { label: string; children: React.ReactNode; style?: object }) {
+function Field({ label, children, style }: { label: string; children: ReactNode; style?: object }) {
   return (
-    <View style={[styles.field, style]}>
-      <Text style={[type.metadata, styles.eyebrow]}>{label.toUpperCase()}</Text>
+    <View style={[styles.fl, style]}>
+      <Text style={styles.label}>{label}</Text>
       {children}
     </View>
   );
 }
 
+/** KIT .field: 54 high, white, hairline border that turns purple with a soft ring on focus. */
+function Input(props: TextInputProps) {
+  const [focused, setFocused] = useState(false);
+  return (
+    <View style={[styles.field, focused && styles.fieldFocus]}>
+      <TextInput
+        {...props}
+        placeholderTextColor={colors.faint}
+        onFocus={(e) => {
+          setFocused(true);
+          props.onFocus?.(e);
+        }}
+        onBlur={(e) => {
+          setFocused(false);
+          props.onBlur?.(e);
+        }}
+        style={styles.input}
+      />
+    </View>
+  );
+}
+
+function Pick({ label, selected, onPress, face }: { label: string; selected: boolean; onPress: () => void; face: ReactNode }) {
+  return (
+    <Pressable
+      onPress={onPress}
+      accessibilityRole="radio"
+      accessibilityState={{ checked: selected }}
+      accessibilityLabel={label}
+      style={({ pressed }) => [styles.pick, pressed && styles.pressed]}
+    >
+      <View style={[styles.pickRing, selected && styles.pickRingOn]}>{face}</View>
+      <Text style={[styles.pickLabel, selected && styles.pickLabelOn]} numberOfLines={1}>
+        {label}
+      </Text>
+    </Pressable>
+  );
+}
+
 const styles = StyleSheet.create({
-  backdrop: {
+  flex: { flex: 1 },
+  pressed: { opacity: 0.55 },
+  body: { paddingHorizontal: 20 },
+  header: { flexDirection: 'row', alignItems: 'center', gap: 12, paddingTop: 14 },
+  h1: {
     flex: 1,
-    backgroundColor: 'rgba(20,16,30,0.45)',
-    justifyContent: 'flex-end',
+    fontFamily: type.pageTitle.fontFamily,
+    fontSize: 32,
+    lineHeight: 35,
+    letterSpacing: -0.9,
+    color: colors.ink,
   },
-  sheet: {
-    backgroundColor: colors.bg,
-    borderTopLeftRadius: 28,
-    borderTopRightRadius: 28,
-    paddingHorizontal: 20,
-    paddingTop: 10,
-    maxHeight: '90%',
+  softButton: {
+    width: 44,
+    height: 44,
+    borderRadius: 22,
+    backgroundColor: 'rgba(21,21,26,0.05)',
+    alignItems: 'center',
+    justifyContent: 'center',
   },
-  handle: {
-    width: 40,
-    height: 4,
-    borderRadius: 2,
-    backgroundColor: colors.border,
-    alignSelf: 'center',
-    marginBottom: 14,
+  fields: { gap: 18, marginTop: 16 },
+  fl: { gap: 8 },
+  label: {
+    fontFamily: type.taskTitle.fontFamily,
+    fontSize: 13,
+    lineHeight: 18,
+    color: colors.muted,
   },
-  header: {
+  field: {
+    height: 54,
+    borderRadius: 16,
+    backgroundColor: colors.surface,
+    borderWidth: 1,
+    borderColor: colors.border,
     flexDirection: 'row',
     alignItems: 'center',
-    justifyContent: 'space-between',
-    marginBottom: 16,
+    paddingHorizontal: 16,
   },
-  closeButton: {
+  fieldFocus: {
+    borderWidth: 1.5,
+    borderColor: colors.purple,
+    shadowColor: colors.purple,
+    shadowOpacity: 0.18,
+    shadowRadius: 5,
+    shadowOffset: { width: 0, height: 0 },
+  },
+  input: {
+    flex: 1,
+    height: '100%',
+    fontFamily: type.body.fontFamily,
+    fontSize: 16,
+    color: colors.ink,
+    padding: 0,
+  },
+  picks: { flexDirection: 'row', alignItems: 'flex-start', gap: 12, paddingVertical: 2 },
+  pick: { width: 56, alignItems: 'center', gap: 6 },
+  pickRing: {
+    width: 52,
+    height: 52,
+    borderRadius: 26,
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderWidth: 2,
+    borderColor: 'transparent',
+  },
+  pickRingOn: { borderColor: colors.purple },
+  nobodyFace: {
     width: 44,
     height: 44,
     borderRadius: 22,
     backgroundColor: colors.surface,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  field: {
-    gap: 8,
-    marginBottom: 16,
-  },
-  eyebrow: {
-    color: colors.muted,
-    letterSpacing: 0.4,
-  },
-  input: {
-    height: 48,
-    borderRadius: 14,
-    paddingHorizontal: 14,
-    backgroundColor: colors.surface,
     borderWidth: 1.5,
-    borderColor: colors.border,
-    color: colors.ink,
-    fontFamily: type.body.fontFamily,
-    fontSize: type.body.fontSize,
+    borderStyle: 'dashed',
+    borderColor: '#C9C5D3',
   },
-  row2: {
-    flexDirection: 'row',
-    gap: 12,
-  },
-  flex1: {
-    flex: 1,
-  },
-  assignRow: {
-    flexDirection: 'row',
-    gap: 16,
-  },
-  assignOption: {
-    alignItems: 'center',
-    gap: 6,
-    width: layout.checkboxSize + 44,
-  },
-  assignNameActive: {
-    color: colors.purple,
-  },
-  muted: {
-    color: colors.muted,
-  },
-  pillRow: {
-    flexDirection: 'row',
-    gap: 8,
-  },
-  pill: {
-    flex: 1,
+  pickLabel: { fontFamily: type.metadata.fontFamily, fontSize: 12, lineHeight: 16, color: colors.muted },
+  pickLabelOn: { fontFamily: type.badge.fontFamily, color: colors.purple },
+  dot: { width: 8, height: 8, borderRadius: 4 },
+  pair: { flexDirection: 'row', alignItems: 'flex-start', gap: 12 },
+  effortCol: { flex: 1.15, minWidth: 0 },
+  stepper: { paddingHorizontal: 5, justifyContent: 'space-between' },
+  step: {
+    width: 44,
     height: 44,
-    borderRadius: 22,
-    borderWidth: 1.5,
-    borderColor: colors.border,
+    borderRadius: 14,
+    backgroundColor: 'rgba(21,21,26,0.05)',
     alignItems: 'center',
     justifyContent: 'center',
-  },
-  pillActive: {
-    backgroundColor: colors.ink,
-    borderColor: colors.ink,
-  },
-  stepper: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 14,
-  },
-  stepButton: {
-    width: 40,
-    height: 40,
-    borderRadius: 20,
-    backgroundColor: colors.surfaceMuted,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  stepButtonDisabled: {
-    opacity: 0.4,
   },
   stepValue: {
+    fontFamily: type.sectionHeading.fontFamily,
+    fontSize: 17,
+    lineHeight: 22,
     color: colors.ink,
-    minWidth: 50,
-    textAlign: 'center',
     fontVariant: ['tabular-nums'],
   },
-  chipRow: {
-    flexDirection: 'row',
-    flexWrap: 'wrap',
-    gap: 8,
-  },
+  chips: { flexDirection: 'row', flexWrap: 'wrap', gap: 8 },
   chip: {
-    height: 36,
+    height: 40,
     paddingHorizontal: 14,
-    borderRadius: 18,
-    backgroundColor: colors.surfaceMuted,
+    borderRadius: 20,
+    backgroundColor: colors.surface,
+    borderWidth: 1,
+    borderColor: colors.border,
+    flexDirection: 'row',
     alignItems: 'center',
-    justifyContent: 'center',
+    gap: 6,
+    maxWidth: '100%',
   },
-  chipActive: {
-    backgroundColor: colors.purpleSoft,
-  },
+  chipOn: { backgroundColor: colors.purpleSoft, borderColor: colors.track },
+  chipText: { fontFamily: type.taskTitle.fontFamily, fontSize: 14, lineHeight: 20, color: colors.muted, flexShrink: 1 },
+  chipTextOn: { fontFamily: type.button.fontFamily, color: colors.purple },
   errorBox: {
     flexDirection: 'row',
     alignItems: 'flex-start',
-    gap: 8,
+    gap: 10,
     backgroundColor: colors.redSoft,
-    borderRadius: 12,
-    padding: 12,
-    marginBottom: 16,
+    borderRadius: 18,
+    paddingVertical: 14,
+    paddingHorizontal: 16,
   },
-  errorText: {
-    flex: 1,
-    color: colors.redText,
-  },
-  saveButton: {
-    height: 52,
-    borderRadius: 26,
-    backgroundColor: colors.purple,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  saveButtonDisabled: {
-    opacity: 0.5,
-  },
+  errorText: { flex: 1, fontFamily: type.caption.fontFamily, fontSize: 14, lineHeight: 20, color: colors.redText },
 });
