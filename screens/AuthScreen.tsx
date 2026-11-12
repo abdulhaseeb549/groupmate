@@ -1,20 +1,23 @@
 import { useEffect, useState } from 'react';
 import {
-  ActivityIndicator,
   Pressable,
   ScrollView,
   StyleSheet,
   Text,
-  TextInput,
+  useWindowDimensions,
   View,
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import { FadeIn } from '../components/FadeIn';
+import { FormField as Field } from '../components/FormField';
+import { Glow } from '../components/Glow';
 import { GoogleMark } from '../components/GoogleMark';
+import { GradientButton, WhiteButton } from '../components/GradientButton';
 import { Icon } from '../components/Icon';
 import { KeyboardAvoider } from '../components/KeyboardAvoider';
 import { isGoogleSignInEnabled, supabase } from '../lib/supabase';
 import { useAuth } from '../state/AuthProvider';
-import { colors, layout, type } from '../theme';
+import { colors, type } from '../theme';
 import { useIncomingInviteCode } from '../utils/inviteLink';
 
 type Mode = 'signIn' | 'signUp' | 'forgotPassword';
@@ -24,8 +27,10 @@ type InviteLookup =
   | { status: 'found'; projectName: string }
   | { status: 'not_found' };
 
+/** GSignIn board. Sign in, Create account and Forgot password share one screen. */
 export function AuthScreen() {
   const insets = useSafeAreaInsets();
+  const { width } = useWindowDimensions();
   const { signIn, signUp, signInWithGoogle, resetPassword } = useAuth();
   const [mode, setMode] = useState<Mode>('signIn');
   const [googleBusy, setGoogleBusy] = useState(false);
@@ -132,194 +137,197 @@ export function AuthScreen() {
     }
   }
 
+  // Board .wash: a 60% x 55% ellipse at 50% 40% of a box that overhangs the
+  // screen by 60 each side and 120 at the top, fading out at 70%.
+  const washWidth = width + 120;
+
   return (
     <KeyboardAvoider style={styles.screen}>
       <ScrollView
         contentContainerStyle={[
           styles.content,
-          { paddingTop: Math.max(insets.top, 32) + 40, paddingBottom: insets.bottom + 32 },
+          { paddingTop: Math.max(insets.top, 40) + 32, paddingBottom: insets.bottom + 32 },
         ]}
         keyboardShouldPersistTaps="handled"
         showsVerticalScrollIndicator={false}
       >
-        <View style={styles.brand}>
-          <View style={styles.mark}>
-            <Icon name="document" size={26} color={colors.purple} strokeWidth={1.8} />
-          </View>
-          <Text style={[type.pageTitle, styles.ink]}>GroupMate</Text>
-          <Text style={[type.body, styles.muted, styles.tagline]}>
-            Turn assignments into teamwork.
-          </Text>
-        </View>
+        <Glow
+          width={washWidth}
+          height={420}
+          cy={168}
+          rx={washWidth * 0.6}
+          ry={231}
+          opacity={0.16}
+          fadeAt={0.7}
+          style={styles.wash}
+        />
 
-        {isForgotPassword ? (
-          <Pressable
-            onPress={() => switchMode('signIn')}
-            accessibilityRole="button"
-            hitSlop={8}
-            style={styles.backRow}
-          >
-            <Icon name="chevronLeft" size={18} color={colors.muted} strokeWidth={2.2} />
-            <Text style={[type.button, styles.muted]}>Back to sign in</Text>
-          </Pressable>
-        ) : (
-          <View style={styles.tabs}>
-            <ModeTab label="Sign in" active={mode === 'signIn'} onPress={() => switchMode('signIn')} />
-            <ModeTab label="Create account" active={mode === 'signUp'} onPress={() => switchMode('signUp')} />
-          </View>
-        )}
-
-        <View style={styles.form}>
-          {isForgotPassword ? (
-            <Text style={[type.body, styles.muted]}>
-              Enter your account email and we'll send you a link to set a new password.
-            </Text>
-          ) : null}
-
-          {isSignUp ? (
-            <Field label="Your name">
-              <TextInput
-                value={fullName}
-                onChangeText={setFullName}
-                placeholder="Your full name"
-                placeholderTextColor={colors.faint}
-                autoCapitalize="words"
-                autoComplete="name"
-                style={styles.input}
-              />
-            </Field>
-          ) : null}
-
-          <Field label="Email">
-            <TextInput
-              value={email}
-              onChangeText={setEmail}
-              placeholder="you@university.edu"
-              placeholderTextColor={colors.faint}
-              autoCapitalize="none"
-              autoComplete="email"
-              keyboardType="email-address"
-              style={styles.input}
-            />
-          </Field>
-
-          {isForgotPassword ? null : (
-            <Field label="Password">
-              <TextInput
-                value={password}
-                onChangeText={setPassword}
-                placeholder={isSignUp ? 'At least 6 characters' : '••••••••'}
-                placeholderTextColor={colors.faint}
-                secureTextEntry
-                autoComplete={isSignUp ? 'new-password' : 'current-password'}
-                style={styles.input}
-              />
-            </Field>
-          )}
-
-          {mode === 'signIn' ? (
-            <Pressable onPress={() => switchMode('forgotPassword')} hitSlop={4} style={styles.forgotLink}>
-              <Text style={[type.caption, styles.forgotLinkText]}>Forgot password?</Text>
-            </Pressable>
-          ) : null}
-
-          {isSignUp ? (
-            <Field label="Invite code (optional)">
-              <TextInput
-                value={inviteCode}
-                onChangeText={setInviteCode}
-                placeholder="e.g. 7F3KQ9LP"
-                placeholderTextColor={colors.faint}
-                autoCapitalize="characters"
-                autoCorrect={false}
-                style={styles.input}
-              />
-              {inviteLookup.status === 'found' ? (
-                <Text style={[type.caption, styles.inviteFound]}>
-                  You'll join <Text style={styles.inviteFoundName}>{inviteLookup.projectName}</Text>
-                </Text>
-              ) : inviteLookup.status === 'not_found' ? (
-                <Text style={[type.caption, styles.inviteNotFound]}>No project uses that code — check it and try again.</Text>
-              ) : (
-                <Text style={[type.caption, styles.muted]}>
-                  Have a code from a teammate? Enter it to join their project instead of starting your own.
-                </Text>
-              )}
-            </Field>
-          ) : null}
-
-          {error ? (
-            <View style={styles.errorBox}>
-              <Icon name="exclamation" size={16} color={colors.redText} strokeWidth={2.2} />
-              <Text style={[type.caption, styles.errorText]}>{error}</Text>
-            </View>
-          ) : null}
-
-          {signedUp ? (
-            <View style={styles.noticeBox}>
-              <Icon name="check" size={16} color={colors.mintText} strokeWidth={2.4} />
-              <Text style={[type.caption, styles.noticeText]}>
-                Account created. Check your email to confirm it, then sign in.
-              </Text>
-            </View>
-          ) : null}
-
-          {resetSent ? (
-            <View style={styles.noticeBox}>
-              <Icon name="check" size={16} color={colors.mintText} strokeWidth={2.4} />
-              <Text style={[type.caption, styles.noticeText]}>
-                If that email has an account, a reset link is on its way.
-              </Text>
-            </View>
-          ) : null}
-
-          <Pressable
-            onPress={submit}
-            disabled={!canSubmit || submitting}
-            accessibilityRole="button"
-            accessibilityState={{ disabled: !canSubmit || submitting }}
-            style={({ pressed }) => [
-              styles.submit,
-              (!canSubmit || submitting) && styles.submitDisabled,
-              pressed && canSubmit && !submitting && styles.submitPressed,
-            ]}
-          >
-            {submitting ? (
-              <ActivityIndicator color={colors.onInk} />
-            ) : (
-              <Text style={[type.button, styles.submitLabel]}>
-                {isForgotPassword ? 'Send reset link' : isSignUp ? 'Create account' : 'Sign in'}
-              </Text>
-            )}
-          </Pressable>
-
-          {googleAvailable && !isForgotPassword ? (
-            <>
-              <View style={styles.divider}>
-                <View style={styles.dividerLine} />
-                <Text style={[type.caption, styles.muted]}>or</Text>
-                <View style={styles.dividerLine} />
+        <View style={styles.top}>
+          <FadeIn>
+            <View style={styles.brand}>
+              <View style={styles.mark}>
+                <Icon name="documentLines" size={28} color={colors.purple} strokeWidth={1.8} />
               </View>
+              <View style={styles.brandText}>
+                <Text style={styles.title} accessibilityRole="header">
+                  GroupMate
+                </Text>
+                <Text style={styles.tagline}>Turn assignments into teamwork.</Text>
+              </View>
+            </View>
+          </FadeIn>
 
+          <FadeIn delay={60}>
+            {isForgotPassword ? (
               <Pressable
-                onPress={handleGoogle}
-                disabled={googleBusy}
+                onPress={() => switchMode('signIn')}
                 accessibilityRole="button"
-                accessibilityState={{ disabled: googleBusy }}
-                style={({ pressed }) => [styles.googleButton, googleBusy && styles.submitDisabled, pressed && styles.googlePressed]}
+                style={({ pressed }) => [styles.backRow, pressed && styles.pressed]}
               >
-                {googleBusy ? (
-                  <ActivityIndicator color={colors.ink} />
-                ) : (
-                  <>
-                    <GoogleMark size={18} />
-                    <Text style={[type.button, styles.ink]}>Continue with Google</Text>
-                  </>
-                )}
+                <Icon name="back" size={18} color={colors.muted} strokeWidth={2} />
+                <Text style={styles.backText}>Back to sign in</Text>
               </Pressable>
-            </>
-          ) : null}
+            ) : (
+              <View style={styles.segs} accessibilityRole="tablist" accessibilityLabel="Account">
+                <ModeTab label="Sign in" active={mode === 'signIn'} onPress={() => switchMode('signIn')} />
+                <ModeTab label="Create account" active={mode === 'signUp'} onPress={() => switchMode('signUp')} />
+              </View>
+            )}
+          </FadeIn>
+
+          <FadeIn delay={120}>
+            <View style={styles.form}>
+              {isForgotPassword ? (
+                <Text style={styles.helper}>
+                  Enter your account email and we'll send you a link to set a new password.
+                </Text>
+              ) : null}
+
+              {isSignUp ? (
+                <Field
+                  label="Your name"
+                  value={fullName}
+                  onChangeText={setFullName}
+                  placeholder="Your full name"
+                  autoCapitalize="words"
+                  autoComplete="name"
+                />
+              ) : null}
+
+              <Field
+                label="Email"
+                value={email}
+                onChangeText={setEmail}
+                placeholder="you@university.edu"
+                autoCapitalize="none"
+                autoComplete="email"
+                keyboardType="email-address"
+              />
+
+              {isForgotPassword ? null : (
+                <Field
+                  label="Password"
+                  value={password}
+                  onChangeText={setPassword}
+                  placeholder={isSignUp ? 'At least 6 characters' : '••••••••'}
+                  secureTextEntry
+                  autoComplete={isSignUp ? 'new-password' : 'current-password'}
+                  // Board: the masked dots sit at 18px with 3px tracking.
+                  inputStyle={password.length > 0 ? styles.dots : undefined}
+                />
+              )}
+
+              {mode === 'signIn' ? (
+                <Pressable
+                  onPress={() => switchMode('forgotPassword')}
+                  accessibilityRole="button"
+                  style={({ pressed }) => [styles.forgot, pressed && styles.pressed]}
+                >
+                  <Text style={styles.link}>Forgot password?</Text>
+                </Pressable>
+              ) : null}
+
+              {isSignUp ? (
+                <Field
+                  label="Invite code (optional)"
+                  value={inviteCode}
+                  onChangeText={setInviteCode}
+                  placeholder="e.g. 7F3KQ9LP"
+                  autoCapitalize="characters"
+                  autoCorrect={false}
+                >
+                  {inviteLookup.status === 'found' ? (
+                    <Text style={styles.m}>
+                      You'll join <Text style={styles.foundName}>{inviteLookup.projectName}</Text>
+                    </Text>
+                  ) : inviteLookup.status === 'not_found' ? (
+                    <Text style={[styles.m, styles.coral]}>No project uses that code — check it and try again.</Text>
+                  ) : (
+                    <Text style={styles.m}>
+                      Have a code from a teammate? Enter it to join their project instead of starting your own.
+                    </Text>
+                  )}
+                </Field>
+              ) : null}
+
+              {error ? (
+                <FadeIn>
+                  <View style={styles.errorBox}>
+                    <Icon name="exclamation" size={18} color={colors.redText} strokeWidth={2.2} />
+                    <Text style={styles.errorText}>{error}</Text>
+                  </View>
+                </FadeIn>
+              ) : null}
+
+              {signedUp ? (
+                <FadeIn>
+                  <View style={styles.noticeBox}>
+                    <Icon name="joined" size={18} color={colors.mintText} strokeWidth={2.2} />
+                    <Text style={styles.noticeText}>Account created. Check your email to confirm it, then sign in.</Text>
+                  </View>
+                </FadeIn>
+              ) : null}
+
+              {resetSent ? (
+                <FadeIn>
+                  <View style={styles.noticeBox}>
+                    <Icon name="joined" size={18} color={colors.mintText} strokeWidth={2.2} />
+                    <Text style={styles.noticeText}>If that email has an account, a reset link is on its way.</Text>
+                  </View>
+                </FadeIn>
+              ) : null}
+            </View>
+          </FadeIn>
         </View>
+
+        <View style={styles.spacer} />
+
+        <FadeIn delay={180}>
+          <View style={styles.bottom}>
+            <GradientButton
+              label={isForgotPassword ? 'Send reset link' : isSignUp ? 'Create account' : 'Sign in'}
+              onPress={submit}
+              disabled={!canSubmit}
+              loading={submitting}
+            />
+
+            {googleAvailable && !isForgotPassword ? (
+              <>
+                <View style={styles.or} accessibilityElementsHidden importantForAccessibility="no-hide-descendants">
+                  <View style={styles.orLine} />
+                  <Text style={styles.orText}>or</Text>
+                  <View style={styles.orLine} />
+                </View>
+                <WhiteButton
+                  label="Continue with Google"
+                  onPress={handleGoogle}
+                  loading={googleBusy}
+                  leading={<GoogleMark size={18} />}
+                />
+              </>
+            ) : null}
+          </View>
+        </FadeIn>
       </ScrollView>
     </KeyboardAvoider>
   );
@@ -331,19 +339,12 @@ function ModeTab({ label, active, onPress }: { label: string; active: boolean; o
       onPress={onPress}
       accessibilityRole="tab"
       aria-selected={active}
-      style={[styles.tab, active && styles.tabActive]}
+      style={({ pressed }) => [styles.seg, active && styles.segOn, pressed && !active && styles.pressed]}
     >
-      <Text style={[type.button, active ? styles.ink : styles.muted]}>{label}</Text>
+      <Text style={[styles.segText, active && styles.segTextOn]} numberOfLines={1}>
+        {label}
+      </Text>
     </Pressable>
-  );
-}
-
-function Field({ label, children }: { label: string; children: React.ReactNode }) {
-  return (
-    <View style={styles.field}>
-      <Text style={[type.metadata, styles.muted]}>{label}</Text>
-      {children}
-    </View>
   );
 }
 
@@ -354,156 +355,187 @@ const styles = StyleSheet.create({
   },
   content: {
     flexGrow: 1,
-    paddingHorizontal: layout.screenPadding,
-    justifyContent: 'center',
-    gap: layout.sectionGap,
+    paddingHorizontal: 20,
   },
-  ink: {
-    color: colors.ink,
+  wash: {
+    position: 'absolute',
+    left: -60,
+    top: -120,
   },
-  muted: {
-    color: colors.muted,
+  pressed: {
+    opacity: 0.6,
   },
+  top: {
+    gap: 32,
+  },
+  spacer: {
+    flex: 1,
+    minHeight: 32,
+  },
+  // Brand: 60 white tile, 14 gap, Cabinet 34/38 and a 15/21 muted line.
   brand: {
     alignItems: 'center',
-    gap: 10,
+    gap: 14,
   },
   mark: {
-    width: 56,
-    height: 56,
-    borderRadius: 18,
-    backgroundColor: colors.purpleSoft,
+    width: 60,
+    height: 60,
+    borderRadius: 20,
+    backgroundColor: colors.surface,
     alignItems: 'center',
     justifyContent: 'center',
-    marginBottom: 4,
+    boxShadow: '0 10px 26px rgba(88,54,214,0.16), 0 0 0 0.5px rgba(17,17,17,0.06)',
   },
-  tagline: {
+  brandText: {
+    alignItems: 'center',
+    gap: 6,
+  },
+  title: {
+    fontFamily: type.pageTitle.fontFamily,
+    fontSize: 34,
+    lineHeight: 38,
+    letterSpacing: -0.9,
+    color: colors.ink,
     textAlign: 'center',
   },
-  tabs: {
-    flexDirection: 'row',
-    backgroundColor: colors.surfaceMuted,
-    borderRadius: 16,
-    padding: 4,
+  tagline: {
+    fontFamily: type.caption.fontFamily,
+    fontSize: 15,
+    lineHeight: 21,
+    color: colors.muted,
+    textAlign: 'center',
   },
-  tab: {
+  // KIT .segs / .seg / .seg.on
+  segs: {
+    flexDirection: 'row',
+    gap: 4,
+    padding: 4,
+    borderRadius: 16,
+    backgroundColor: 'rgba(21,21,26,0.05)',
+  },
+  seg: {
     flex: 1,
-    height: 40,
+    height: 44,
     borderRadius: 12,
     alignItems: 'center',
     justifyContent: 'center',
   },
-  tabActive: {
+  segOn: {
     backgroundColor: colors.surface,
-    shadowColor: '#1C1633',
-    shadowOpacity: 0.08,
-    shadowRadius: 8,
-    shadowOffset: { width: 0, height: 2 },
-    elevation: 2,
+    boxShadow: '0 2px 8px rgba(28,22,51,0.08), 0 0 0 0.5px rgba(17,17,17,0.06)',
+  },
+  segText: {
+    fontFamily: type.taskTitle.fontFamily,
+    fontSize: 15,
+    lineHeight: 20,
+    color: colors.muted,
+  },
+  segTextOn: {
+    fontFamily: type.button.fontFamily,
+    color: colors.ink,
   },
   backRow: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 4,
+    gap: 6,
+    height: 44,
     alignSelf: 'flex-start',
   },
-  forgotLink: {
-    alignSelf: 'flex-end',
-    marginTop: -8,
-  },
-  forgotLinkText: {
-    color: colors.purple,
+  backText: {
+    fontFamily: type.button.fontFamily,
+    fontSize: 14,
+    lineHeight: 20,
+    color: colors.muted,
   },
   form: {
     gap: 16,
   },
-  field: {
-    gap: 6,
+  helper: {
+    fontFamily: type.caption.fontFamily,
+    fontSize: 15,
+    lineHeight: 21,
+    color: colors.muted,
   },
-  input: {
-    height: 50,
-    borderRadius: 14,
-    paddingHorizontal: 16,
-    backgroundColor: colors.surface,
-    borderWidth: 1.5,
-    borderColor: colors.border,
-    color: colors.ink,
-    fontFamily: type.body.fontFamily,
-    fontSize: type.body.fontSize,
+  dots: {
+    fontSize: 18,
+    letterSpacing: 3,
+  },
+  // KIT .link, right-aligned 10 under the password field.
+  forgot: {
+    alignSelf: 'flex-end',
+    height: 44,
+    justifyContent: 'center',
+    marginTop: -6,
+  },
+  link: {
+    fontFamily: type.button.fontFamily,
+    fontSize: 14,
+    lineHeight: 20,
+    color: colors.purple,
+  },
+  m: {
+    fontFamily: type.caption.fontFamily,
+    fontSize: 13,
+    lineHeight: 18,
+    color: colors.muted,
+  },
+  coral: {
+    color: colors.redText,
+  },
+  foundName: {
+    fontFamily: type.taskTitle.fontFamily,
+    color: colors.mintText,
   },
   errorBox: {
     flexDirection: 'row',
     alignItems: 'flex-start',
-    gap: 8,
+    gap: 10,
     backgroundColor: colors.redSoft,
-    borderRadius: 12,
-    padding: 12,
+    borderRadius: 18,
+    paddingVertical: 14,
+    paddingHorizontal: 16,
   },
   errorText: {
     flex: 1,
-    color: colors.redText,
-  },
-  inviteFound: {
-    color: colors.muted,
-  },
-  inviteFoundName: {
-    color: colors.mintText,
-    fontFamily: type.metadata.fontFamily,
-  },
-  inviteNotFound: {
+    fontFamily: type.caption.fontFamily,
+    fontSize: 14,
+    lineHeight: 20,
     color: colors.redText,
   },
   noticeBox: {
     flexDirection: 'row',
     alignItems: 'flex-start',
-    gap: 8,
+    gap: 10,
     backgroundColor: colors.mint,
-    borderRadius: 12,
-    padding: 12,
+    borderRadius: 18,
+    paddingVertical: 14,
+    paddingHorizontal: 16,
   },
   noticeText: {
     flex: 1,
+    fontFamily: type.caption.fontFamily,
+    fontSize: 14,
+    lineHeight: 20,
     color: colors.mintText,
   },
-  submit: {
-    height: 52,
-    borderRadius: 16,
-    backgroundColor: colors.purple,
-    alignItems: 'center',
-    justifyContent: 'center',
-    marginTop: 4,
+  bottom: {
+    gap: 16,
   },
-  submitDisabled: {
-    opacity: 0.5,
-  },
-  submitPressed: {
-    opacity: 0.85,
-  },
-  submitLabel: {
-    color: colors.onInk,
-  },
-  divider: {
+  // Board .or: 13px faint "or" between two .5 #DCD8E3 rules, 12 apart.
+  or: {
     flexDirection: 'row',
     alignItems: 'center',
     gap: 12,
   },
-  dividerLine: {
+  orLine: {
     flex: 1,
-    height: StyleSheet.hairlineWidth,
-    backgroundColor: colors.border,
+    height: 0.5,
+    backgroundColor: '#DCD8E3',
   },
-  googleButton: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center',
-    gap: 10,
-    height: 52,
-    borderRadius: 16,
-    backgroundColor: colors.surface,
-    borderWidth: 1.5,
-    borderColor: colors.border,
-  },
-  googlePressed: {
-    backgroundColor: colors.surfaceMuted,
+  orText: {
+    fontFamily: type.caption.fontFamily,
+    fontSize: 13,
+    lineHeight: 18,
+    color: colors.faint,
   },
 });

@@ -1,10 +1,13 @@
-import { Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
+import { Image, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { BottomNav, NavTab } from '../components/BottomNav';
+import { FadeIn } from '../components/FadeIn';
 import { GlassScene, GlassTarget } from '../components/Glass';
-import { Icon, IconName } from '../components/Icon';
+import { Glow } from '../components/Glow';
+import { GradientButton } from '../components/GradientButton';
+import { Icon } from '../components/Icon';
 import { useNavigation } from '../state/NavigationProvider';
-import { colors, layout, type } from '../theme';
+import { colors, type } from '../theme';
 import { OnboardingScreen } from './OnboardingScreen';
 import { StudyScreen } from './StudyScreen';
 
@@ -40,13 +43,9 @@ export function NoProjectShell({ onDone }: { onDone: () => void }) {
     return (
       <EmptyTab
         tab={activeTab}
-        icon={activeTab === 'projects' ? 'folder' : 'chat'}
+        pageTitle={activeTab === 'projects' ? 'Projects' : 'Chats'}
         title={activeTab === 'projects' ? 'No project yet' : 'No one to chat with yet'}
-        body={
-          activeTab === 'projects'
-            ? 'Once you add a brief, every requirement in it turns into tasks your team can claim — they land here.'
-            : 'Your team chat and a direct message with each teammate open up as soon as you have a project and someone joins it.'
-        }
+        body={activeTab === 'projects' ? 'Add a brief. Its tasks land here.' : 'Team chat opens once someone joins.'}
         onSelectTab={setActiveTab}
         onGetStarted={() => setActiveTab('home')}
       />
@@ -57,20 +56,20 @@ export function NoProjectShell({ onDone }: { onDone: () => void }) {
 }
 
 /**
- * A tab that exists but has nothing in it yet. Says what will be here and
- * points at the one action that fills it, rather than showing a bare tab
- * bar over an empty page.
+ * GNoProject board: a tab that exists but has nothing in it yet. Says what
+ * will be here and points at the one action that fills it. The mascot is
+ * the Projects empty state only (one per flow); Chat gets a quiet icon.
  */
 function EmptyTab({
   tab,
-  icon,
+  pageTitle,
   title,
   body,
   onSelectTab,
   onGetStarted,
 }: {
   tab: NavTab;
-  icon: IconName;
+  pageTitle: string;
   title: string;
   body: string;
   onSelectTab: (tab: NavTab) => void;
@@ -84,25 +83,45 @@ function EmptyTab({
       <ScrollView
         contentContainerStyle={[
           styles.content,
-          { paddingTop: Math.max(insets.top, 40) + 14, paddingBottom: 130 + insets.bottom },
+          { paddingTop: Math.max(insets.top, 40) + 14, paddingBottom: 120 + insets.bottom },
         ]}
         showsVerticalScrollIndicator={false}
       >
-        <View style={styles.center}>
-          <View style={styles.iconTile}>
-            <Icon name={icon} size={24} color={colors.muted} strokeWidth={1.7} />
-          </View>
-          <Text style={[type.projectTitle, styles.ink]} accessibilityRole="header">
-            {title}
+        <FadeIn>
+          <Text style={styles.h1} accessibilityRole="header">
+            {pageTitle}
           </Text>
-          <Text style={[type.body, styles.muted, styles.body]}>{body}</Text>
-          <Pressable
-            onPress={onGetStarted}
-            accessibilityRole="button"
-            style={({ pressed }) => [styles.button, pressed && styles.pressed]}
-          >
-            <Text style={[type.button, styles.onInk]}>Start a project</Text>
-          </Pressable>
+        </FadeIn>
+
+        <View style={styles.center}>
+          <FadeIn delay={60}>
+            <View style={styles.art}>
+              {tab === 'projects' ? (
+                <>
+                  <Glow width={280} height={220} opacity={0.18} style={styles.glow} />
+                  <Image
+                    source={require('../assets/Mascot-png.png')}
+                    style={styles.mascot}
+                    resizeMode="contain"
+                    accessibilityIgnoresInvertColors
+                  />
+                </>
+              ) : (
+                <View style={styles.iconTile}>
+                  <Icon name="chat" size={26} color={colors.muted} strokeWidth={1.7} />
+                </View>
+              )}
+            </View>
+          </FadeIn>
+          <FadeIn delay={120}>
+            <View style={styles.text}>
+              <Text style={styles.title}>{title}</Text>
+              <Text style={styles.body}>{body}</Text>
+            </View>
+          </FadeIn>
+          <FadeIn delay={180}>
+            <GradientButton label="Start a project" onPress={onGetStarted} style={styles.button} />
+          </FadeIn>
         </View>
       </ScrollView>
       </GlassTarget>
@@ -118,46 +137,70 @@ const styles = StyleSheet.create({
     backgroundColor: colors.bg,
   },
   content: {
-    flexGrow: 1,
-    justifyContent: 'center',
-    paddingHorizontal: layout.screenPadding,
+    paddingHorizontal: 20,
   },
+  h1: {
+    fontFamily: type.pageTitle.fontFamily,
+    fontSize: 32,
+    lineHeight: 35,
+    letterSpacing: -0.9,
+    color: colors.ink,
+  },
+  // Board: the block's top sits 190 down, i.e. 131 under the 35-high title
+  // that starts at 24; it is inset 28 from the screen edges.
   center: {
+    marginTop: 131,
+    paddingHorizontal: 8,
     alignItems: 'center',
-    gap: 10,
+    gap: 22,
+  },
+  art: {
+    alignSelf: 'stretch',
+    height: 170,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  glow: {
+    position: 'absolute',
+    left: '50%',
+    top: '50%',
+    marginLeft: -140,
+    marginTop: -110,
+  },
+  // Mascot source is 1.2:1.
+  mascot: {
+    width: 190,
+    height: 158,
   },
   iconTile: {
-    width: 56,
-    height: 56,
-    borderRadius: 20,
+    width: 64,
+    height: 64,
+    borderRadius: 22,
     backgroundColor: colors.surface,
     alignItems: 'center',
     justifyContent: 'center',
-    marginBottom: 4,
+    boxShadow: '0 8px 22px rgba(28,22,51,0.06), 0 0 0 0.5px rgba(17,17,17,0.06)',
   },
-  ink: {
+  text: {
+    alignItems: 'center',
+    gap: 8,
+  },
+  title: {
+    fontFamily: type.pageTitle.fontFamily,
+    fontSize: 28,
+    lineHeight: 32,
+    letterSpacing: -0.7,
     color: colors.ink,
-  },
-  muted: {
-    color: colors.muted,
-  },
-  onInk: {
-    color: colors.onInk,
+    textAlign: 'center',
   },
   body: {
+    fontFamily: type.caption.fontFamily,
+    fontSize: 15,
+    lineHeight: 22,
+    color: colors.muted,
     textAlign: 'center',
-    maxWidth: 300,
   },
   button: {
-    height: 52,
-    paddingHorizontal: 28,
-    borderRadius: 16,
-    backgroundColor: colors.purple,
-    alignItems: 'center',
-    justifyContent: 'center',
-    marginTop: 12,
-  },
-  pressed: {
-    opacity: 0.85,
+    width: 220,
   },
 });

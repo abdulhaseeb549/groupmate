@@ -1,27 +1,27 @@
-import { useState } from 'react';
-import { ActivityIndicator, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
+import { ReactNode, useState } from 'react';
+import { Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { Avatar } from '../components/Avatar';
-import { Card, CardDivider } from '../components/Card';
 import { ConfirmDialog } from '../components/ConfirmDialog';
-import { Icon } from '../components/Icon';
+import { FadeIn } from '../components/FadeIn';
+import { FormField, ReadOnlyField } from '../components/FormField';
+import { GlassButton } from '../components/Glass';
+import { GradientButton } from '../components/GradientButton';
+import { Icon, IconName } from '../components/Icon';
 import { KeyboardAvoider } from '../components/KeyboardAvoider';
 import { useAuth } from '../state/AuthProvider';
 import { useNavigation } from '../state/NavigationProvider';
-import { colors, layout, radius, type } from '../theme';
+import { colors, type } from '../theme';
 import { useHardwareBackHandler } from '../utils/hardwareBack';
 
 type SettingsView = 'list' | 'profile' | 'password';
 
-const ROW_DIVIDER_INSET = 16;
-
 /**
- * Reached by tapping the avatar on Home (previously a straight sign-out
- * confirm — Log Out now lives here as one row among others, which is also
- * why the sign-out dialog moved from HomeScreen to here). A local `view`
- * stack, not three routed screens, since it's exactly two levels deep and
- * every other multi-step flow in this app (Study, Chat) already does the
- * same rather than reaching for real navigation.
+ * GSettings board. Reached by tapping the avatar on Home (previously a
+ * straight sign-out confirm — Log out now lives here as one row among
+ * others, which is also why the sign-out dialog moved from HomeScreen to
+ * here). A local `view` stack, not three routed screens, since it's exactly
+ * two levels deep and every other multi-step flow in this app (Study, Chat)
+ * already does the same rather than reaching for real navigation.
  */
 export function SettingsScreen() {
   const insets = useSafeAreaInsets();
@@ -33,33 +33,28 @@ export function SettingsScreen() {
   return (
     <KeyboardAvoider style={styles.screen}>
       <ScrollView
+        key={view}
         contentContainerStyle={[
           styles.content,
-          { paddingTop: Math.max(insets.top, 32) + 14, paddingBottom: insets.bottom + 32 },
+          { paddingTop: Math.max(insets.top, 40) + 6, paddingBottom: insets.bottom + 32 },
         ]}
         keyboardShouldPersistTaps="handled"
         showsVerticalScrollIndicator={false}
       >
-        <View style={styles.header}>
-          <Pressable
+        <FadeIn>
+          <GlassButton
+            label={view === 'list' ? 'Close' : 'Back'}
             onPress={() => (view === 'list' ? closeSettings() : setView('list'))}
-            accessibilityRole="button"
-            accessibilityLabel={view === 'list' ? 'Close' : 'Back'}
-            style={({ pressed }) => [styles.headerButton, pressed && styles.pressed]}
           >
-            <Icon
-              name={view === 'list' ? 'chevronDown' : 'chevronLeft'}
-              size={20}
-              color={colors.ink}
-              strokeWidth={2}
-            />
-          </Pressable>
-          {view !== 'list' ? (
-            <Text style={[type.projectTitle, styles.ink]}>
-              {view === 'profile' ? 'My Profile' : 'Change Password'}
-            </Text>
-          ) : null}
-        </View>
+            <Icon name={view === 'list' ? 'close' : 'back'} size={20} color={colors.ink} strokeWidth={2} />
+          </GlassButton>
+        </FadeIn>
+
+        <FadeIn delay={40}>
+          <Text style={styles.h1} accessibilityRole="header">
+            {view === 'list' ? 'Settings' : view === 'profile' ? 'My Profile' : 'Change Password'}
+          </Text>
+        </FadeIn>
 
         {view === 'list' ? (
           <SettingsList onOpenProfile={() => setView('profile')} onOpenPassword={() => setView('password')} />
@@ -73,40 +68,69 @@ export function SettingsScreen() {
   );
 }
 
+/** Initials in a circle, sized by the board (56 → 18/600). */
+function Initials({ size }: { size: number }) {
+  const { profile } = useAuth();
+  return (
+    <View
+      style={[
+        styles.initials,
+        {
+          width: size,
+          height: size,
+          borderRadius: size / 2,
+          backgroundColor: profile?.avatarBg ?? colors.purpleSoft,
+        },
+      ]}
+    >
+      <Text
+        style={[
+          styles.initialsText,
+          { color: profile?.avatarFg ?? colors.purple, fontSize: Math.round(size * 0.32), lineHeight: Math.round(size * 0.44) },
+        ]}
+      >
+        {profile?.initials ?? '··'}
+      </Text>
+    </View>
+  );
+}
+
 function SettingsList({ onOpenProfile, onOpenPassword }: { onOpenProfile: () => void; onOpenPassword: () => void }) {
   const { session, profile, signOut } = useAuth();
   const [signOutVisible, setSignOutVisible] = useState(false);
 
   return (
     <>
-      <Text style={[type.pageTitle, styles.ink, styles.title]}>Settings</Text>
-
-      <Card style={styles.profileCard}>
-        <Avatar
-          initials={profile?.initials ?? '··'}
-          bg={profile?.avatarBg ?? colors.purpleSoft}
-          fg={profile?.avatarFg ?? colors.purple}
-          size={52}
-        />
-        <View style={styles.profileText}>
-          <Text style={[type.projectTitle, styles.ink]} numberOfLines={1}>
-            {profile?.fullName ?? 'Loading…'}
-          </Text>
-          <Text style={[type.body, styles.muted]} numberOfLines={1}>
-            {session?.user.email}
-          </Text>
+      <FadeIn delay={80}>
+        <View style={styles.who}>
+          <Initials size={56} />
+          <View style={styles.whoText}>
+            <Text style={styles.lead} numberOfLines={1}>
+              {profile?.fullName ?? 'Loading…'}
+            </Text>
+            <Text style={styles.email} numberOfLines={1}>
+              {session?.user.email}
+            </Text>
+          </View>
         </View>
-      </Card>
+      </FadeIn>
 
-      <Card>
-        <SettingsRow label="Profile" onPress={onOpenProfile} />
-        <CardDivider inset={ROW_DIVIDER_INSET} />
-        <SettingsRow label="Change Password" onPress={onOpenPassword} />
-      </Card>
+      <FadeIn delay={120}>
+        <View style={styles.section}>
+          <Text style={styles.eyebrow}>Account</Text>
+          <View style={styles.list}>
+            <Item icon="person" label="Profile" onPress={onOpenProfile} />
+            <View style={styles.hair} />
+            <Item icon="lock" label="Password" onPress={onOpenPassword} />
+          </View>
+        </View>
+      </FadeIn>
 
-      <Card>
-        <SettingsRow label="Log Out" destructive onPress={() => setSignOutVisible(true)} />
-      </Card>
+      <FadeIn delay={160}>
+        <View style={styles.list}>
+          <Item icon="logout" label="Log out" destructive onPress={() => setSignOutVisible(true)} />
+        </View>
+      </FadeIn>
 
       <ConfirmDialog
         visible={signOutVisible}
@@ -124,16 +148,48 @@ function SettingsList({ onOpenProfile, onOpenPassword }: { onOpenProfile: () => 
   );
 }
 
-function SettingsRow({ label, onPress, destructive }: { label: string; onPress: () => void; destructive?: boolean }) {
+/** Board .item: 56 high, a 22-wide muted icon column, 16/500 label, a faint chevron (none on Log out). */
+function Item({
+  icon,
+  label,
+  onPress,
+  destructive,
+}: {
+  icon: IconName;
+  label: string;
+  onPress: () => void;
+  destructive?: boolean;
+}) {
+  const tint = destructive ? colors.redText : colors.muted;
   return (
     <Pressable
       onPress={onPress}
       accessibilityRole="button"
-      style={({ pressed }) => [styles.row, pressed && styles.rowPressed]}
+      style={({ pressed }) => [styles.item, pressed && styles.itemPressed]}
     >
-      <Text style={[type.body, destructive ? styles.destructive : styles.ink, styles.rowLabel]}>{label}</Text>
-      <Icon name="chevronRight" size={18} color={destructive ? colors.redText : colors.faint} strokeWidth={2} />
+      <View style={styles.itemIcon}>
+        <Icon name={icon} size={20} color={tint} strokeWidth={1.7} />
+      </View>
+      <Text style={[styles.itemLabel, destructive ? styles.coral : styles.flex]}>{label}</Text>
+      {destructive ? null : <Icon name="next" size={16} color={colors.faint} strokeWidth={2} />}
     </Pressable>
+  );
+}
+
+function Notice({ tone, children }: { tone: 'good' | 'bad'; children: ReactNode }) {
+  const good = tone === 'good';
+  return (
+    <FadeIn>
+      <View style={[styles.notice, { backgroundColor: good ? colors.mint : colors.redSoft }]}>
+        <Icon
+          name={good ? 'joined' : 'exclamation'}
+          size={18}
+          color={good ? colors.mintText : colors.redText}
+          strokeWidth={2.2}
+        />
+        <Text style={[styles.noticeText, { color: good ? colors.mintText : colors.redText }]}>{children}</Text>
+      </View>
+    </FadeIn>
   );
 }
 
@@ -161,71 +217,33 @@ function ProfileView() {
   }
 
   return (
-    <View style={styles.form}>
-      <View style={styles.avatarRow}>
-        <Avatar
-          initials={profile?.initials ?? '··'}
-          bg={profile?.avatarBg ?? colors.purpleSoft}
-          fg={profile?.avatarFg ?? colors.purple}
-          size={88}
-        />
-      </View>
+    <FadeIn delay={80}>
+      <View style={styles.form}>
+        <View style={styles.avatarRow}>
+          <Initials size={88} />
+        </View>
 
-      <Field label="Name">
-        <TextInput
+        <FormField
+          label="Name"
           value={name}
           onChangeText={(next) => {
             setName(next);
             setSaved(false);
           }}
           placeholder="Your full name"
-          placeholderTextColor={colors.faint}
           autoCapitalize="words"
-          style={styles.input}
         />
-      </Field>
 
-      <Field label="Email">
-        <View style={[styles.input, styles.inputDisabled]}>
-          <Text style={[type.body, styles.muted]} numberOfLines={1}>
-            {session?.user.email}
-          </Text>
-        </View>
-        <Text style={[type.caption, styles.muted]}>Email can't be changed here.</Text>
-      </Field>
+        <ReadOnlyField label="Email" value={session?.user.email}>
+          <Text style={styles.m}>Email can't be changed here.</Text>
+        </ReadOnlyField>
 
-      {error ? (
-        <View style={styles.errorBox}>
-          <Icon name="exclamation" size={16} color={colors.redText} strokeWidth={2.2} />
-          <Text style={[type.caption, styles.errorText]}>{error}</Text>
-        </View>
-      ) : null}
+        {error ? <Notice tone="bad">{error}</Notice> : null}
+        {saved ? <Notice tone="good">Profile updated.</Notice> : null}
 
-      {saved ? (
-        <View style={styles.noticeBox}>
-          <Icon name="check" size={16} color={colors.mintText} strokeWidth={2.4} />
-          <Text style={[type.caption, styles.noticeText]}>Profile updated.</Text>
-        </View>
-      ) : null}
-
-      <Pressable
-        onPress={submit}
-        disabled={!canSubmit || submitting}
-        accessibilityRole="button"
-        accessibilityState={{ disabled: !canSubmit || submitting }}
-        style={({ pressed }) => [
-          styles.submit,
-          (!canSubmit || submitting) && styles.submitDisabled,
-          pressed && canSubmit && !submitting && styles.submitPressed,
-        ]}
-      >
-        {submitting ? (
-          <ActivityIndicator color={colors.onInk} />
-        ) : (
-          <Text style={[type.button, styles.submitLabel]}>Save</Text>
-        )}
-      </Pressable>
-    </View>
+        <GradientButton label="Save" onPress={submit} disabled={!canSubmit} loading={submitting} style={styles.save} />
+      </View>
+    </FadeIn>
   );
 }
 
@@ -256,73 +274,36 @@ function ChangePasswordView() {
   }
 
   return (
-    <View style={styles.form}>
-      <Field label="New password">
-        <TextInput
+    <FadeIn delay={80}>
+      <View style={styles.form}>
+        <FormField
+          label="New password"
           value={password}
           onChangeText={setPassword}
           placeholder="At least 6 characters"
-          placeholderTextColor={colors.faint}
           secureTextEntry
           autoComplete="new-password"
-          style={styles.input}
+          inputStyle={password.length > 0 ? styles.dots : undefined}
         />
-      </Field>
 
-      <Field label="Confirm password">
-        <TextInput
+        <FormField
+          label="Confirm password"
           value={confirm}
           onChangeText={setConfirm}
           placeholder="Type it again"
-          placeholderTextColor={colors.faint}
           secureTextEntry
           autoComplete="new-password"
-          style={styles.input}
-        />
-        {mismatch ? <Text style={[type.caption, styles.errorInline]}>Passwords don't match.</Text> : null}
-      </Field>
+          inputStyle={confirm.length > 0 ? styles.dots : undefined}
+        >
+          {mismatch ? <Text style={[styles.m, styles.coral]}>Passwords don't match.</Text> : null}
+        </FormField>
 
-      {error ? (
-        <View style={styles.errorBox}>
-          <Icon name="exclamation" size={16} color={colors.redText} strokeWidth={2.2} />
-          <Text style={[type.caption, styles.errorText]}>{error}</Text>
-        </View>
-      ) : null}
+        {error ? <Notice tone="bad">{error}</Notice> : null}
+        {saved ? <Notice tone="good">Password changed.</Notice> : null}
 
-      {saved ? (
-        <View style={styles.noticeBox}>
-          <Icon name="check" size={16} color={colors.mintText} strokeWidth={2.4} />
-          <Text style={[type.caption, styles.noticeText]}>Password changed.</Text>
-        </View>
-      ) : null}
-
-      <Pressable
-        onPress={submit}
-        disabled={!canSubmit || submitting}
-        accessibilityRole="button"
-        accessibilityState={{ disabled: !canSubmit || submitting }}
-        style={({ pressed }) => [
-          styles.submit,
-          (!canSubmit || submitting) && styles.submitDisabled,
-          pressed && canSubmit && !submitting && styles.submitPressed,
-        ]}
-      >
-        {submitting ? (
-          <ActivityIndicator color={colors.onInk} />
-        ) : (
-          <Text style={[type.button, styles.submitLabel]}>Save</Text>
-        )}
-      </Pressable>
-    </View>
-  );
-}
-
-function Field({ label, children }: { label: string; children: React.ReactNode }) {
-  return (
-    <View style={styles.field}>
-      <Text style={[type.metadata, styles.muted]}>{label}</Text>
-      {children}
-    </View>
+        <GradientButton label="Save" onPress={submit} disabled={!canSubmit} loading={submitting} style={styles.save} />
+      </View>
+    </FadeIn>
   );
 }
 
@@ -331,60 +312,103 @@ const styles = StyleSheet.create({
     flex: 1,
     backgroundColor: colors.bg,
   },
+  // Board: padding 20 20 0, 24 between the close button, title and sections.
   content: {
-    paddingHorizontal: layout.screenPadding,
-    gap: layout.sectionGap,
+    paddingHorizontal: 20,
+    gap: 24,
   },
-  header: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 12,
+  flex: {
+    flex: 1,
   },
-  headerButton: {
-    width: 40,
-    height: 40,
-    borderRadius: 20,
-    backgroundColor: colors.surface,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  pressed: {
-    opacity: 0.6,
-  },
-  ink: {
+  h1: {
+    fontFamily: type.pageTitle.fontFamily,
+    fontSize: 32,
+    lineHeight: 35,
+    letterSpacing: -0.9,
     color: colors.ink,
   },
-  muted: {
-    color: colors.muted,
-  },
-  destructive: {
-    color: colors.redText,
-  },
-  title: {
-    marginTop: -8,
-  },
-  profileCard: {
+  who: {
     flexDirection: 'row',
     alignItems: 'center',
     gap: 14,
-    padding: layout.cardPaddingLg,
   },
-  profileText: {
-    flex: 1,
+  whoText: {
+    flexShrink: 1,
     minWidth: 0,
     gap: 2,
   },
-  row: {
+  initials: {
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  initialsText: {
+    fontFamily: type.button.fontFamily,
+  },
+  lead: {
+    fontFamily: type.sectionHeading.fontFamily,
+    fontSize: 18,
+    lineHeight: 24,
+    letterSpacing: -0.2,
+    color: colors.ink,
+  },
+  email: {
+    fontFamily: type.caption.fontFamily,
+    fontSize: 14,
+    lineHeight: 20,
+    color: colors.muted,
+  },
+  section: {
+    gap: 10,
+  },
+  eyebrow: {
+    fontFamily: type.metadata.fontFamily,
+    fontSize: 12,
+    lineHeight: 16,
+    letterSpacing: 0.6,
+    textTransform: 'uppercase',
+    color: colors.muted,
+    paddingLeft: 4,
+  },
+  // Board .list: one white 20-radius block per group, a .5 hairline ring, no shadow.
+  list: {
+    backgroundColor: colors.surface,
+    borderRadius: 20,
+    overflow: 'hidden',
+    boxShadow: '0 0 0 0.5px rgba(17,17,17,0.07)',
+  },
+  item: {
     flexDirection: 'row',
     alignItems: 'center',
-    minHeight: 52,
+    gap: 14,
+    height: 56,
     paddingHorizontal: 16,
   },
-  rowPressed: {
-    backgroundColor: colors.surfaceMuted,
+  itemPressed: {
+    backgroundColor: 'rgba(21,21,26,0.04)',
   },
-  rowLabel: {
-    flex: 1,
+  itemIcon: {
+    width: 22,
+    alignItems: 'center',
+  },
+  itemLabel: {
+    fontFamily: type.taskTitle.fontFamily,
+    fontSize: 16,
+    lineHeight: 22,
+    color: colors.ink,
+  },
+  coral: {
+    color: colors.redText,
+  },
+  hair: {
+    height: 0.5,
+    backgroundColor: colors.border,
+    marginLeft: 52,
+  },
+  m: {
+    fontFamily: type.caption.fontFamily,
+    fontSize: 13,
+    lineHeight: 18,
+    color: colors.muted,
   },
   form: {
     gap: 16,
@@ -393,65 +417,25 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     marginBottom: 4,
   },
-  field: {
-    gap: 6,
+  dots: {
+    fontSize: 18,
+    letterSpacing: 3,
   },
-  input: {
-    height: 50,
-    borderRadius: radius.control,
+  notice: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    gap: 10,
+    borderRadius: 18,
+    paddingVertical: 14,
     paddingHorizontal: 16,
-    backgroundColor: colors.surface,
-    borderWidth: 1.5,
-    borderColor: colors.border,
-    color: colors.ink,
-    fontFamily: type.body.fontFamily,
-    fontSize: type.body.fontSize,
-    justifyContent: 'center',
-  },
-  inputDisabled: {
-    backgroundColor: colors.surfaceMuted,
-  },
-  errorInline: {
-    color: colors.redText,
-  },
-  errorBox: {
-    flexDirection: 'row',
-    alignItems: 'flex-start',
-    gap: 8,
-    backgroundColor: colors.redSoft,
-    borderRadius: 12,
-    padding: 12,
-  },
-  errorText: {
-    flex: 1,
-    color: colors.redText,
-  },
-  noticeBox: {
-    flexDirection: 'row',
-    alignItems: 'flex-start',
-    gap: 8,
-    backgroundColor: colors.mint,
-    borderRadius: 12,
-    padding: 12,
   },
   noticeText: {
     flex: 1,
-    color: colors.mintText,
+    fontFamily: type.caption.fontFamily,
+    fontSize: 14,
+    lineHeight: 20,
   },
-  submit: {
-    height: 52,
-    borderRadius: radius.control,
-    backgroundColor: colors.purple,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  submitDisabled: {
-    opacity: 0.5,
-  },
-  submitPressed: {
-    opacity: 0.85,
-  },
-  submitLabel: {
-    color: colors.onInk,
+  save: {
+    marginTop: 8,
   },
 });

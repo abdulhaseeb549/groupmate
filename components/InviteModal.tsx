@@ -1,9 +1,13 @@
 import { useState } from 'react';
-import { Modal, Pressable, Share, StyleSheet, Text, View } from 'react-native';
+import { Pressable, Share, StyleSheet, Text, View } from 'react-native';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { ConfirmDialog } from './ConfirmDialog';
+import { FadeIn } from './FadeIn';
+import { GradientButton, WhiteButton } from './GradientButton';
 import { Icon } from './Icon';
+import { Sheet } from './Sheet';
 import { useProject } from '../state/ProjectRepository';
-import { colors, layout, radius, type } from '../theme';
+import { colors, type } from '../theme';
 
 type Props = {
   visible: boolean;
@@ -16,13 +20,14 @@ export function inviteLink(code: string): string {
 }
 
 /**
- * Shows the project's invite code and lets its owner share it or generate a
- * fresh one. No clipboard library is in this app yet, so "share" goes
- * through the OS share sheet (Share.share) rather than a dedicated copy
- * button — every share sheet on both platforms includes a copy option of
- * its own.
+ * GInvite board: a bottom sheet with the project's invite code, a share
+ * action and a way to make a fresh code. No clipboard library is in this
+ * app yet, so "share" goes through the OS share sheet (Share.share) rather
+ * than a dedicated copy button — every share sheet on both platforms
+ * includes a copy option of its own.
  */
 export function InviteModal({ visible, onClose }: Props) {
+  const insets = useSafeAreaInsets();
   const { project, regenerateInviteCode } = useProject();
   const [confirmingRegenerate, setConfirmingRegenerate] = useState(false);
   const [regenerating, setRegenerating] = useState(false);
@@ -55,59 +60,56 @@ export function InviteModal({ visible, onClose }: Props) {
 
   return (
     <>
-      <Modal visible={visible} transparent animationType="fade" onRequestClose={onClose}>
-        <Pressable style={styles.backdrop} onPress={onClose}>
-          <Pressable style={styles.card} onPress={(e) => e.stopPropagation()}>
-            <Text style={[type.projectTitle, styles.ink]}>Invite teammates</Text>
-            <Text style={[type.body, styles.muted]}>
-              Anyone with this code can join {project.name} — at sign-up, or from "Join a project" if they already
-              have an account. Once they're in, they'll show up in your chats.
-            </Text>
+      <Sheet visible={visible} onClose={onClose}>
+        <View
+          accessibilityLabel="Invite teammates"
+          style={[styles.body, { paddingBottom: Math.max(insets.bottom, 0) + 32 }]}
+        >
+          <FadeIn>
+            <View style={styles.head}>
+              <Text style={styles.title} accessibilityRole="header">
+                Invite teammates
+              </Text>
+              <Text style={styles.sub}>This code joins {project.name}.</Text>
+            </View>
+          </FadeIn>
 
+          <FadeIn delay={60}>
             <View style={styles.codeBox}>
-              <Text style={[type.pageTitle, styles.code]} selectable>
+              <Text style={styles.code} selectable>
                 {project.inviteCode}
               </Text>
+              <Text style={styles.m}>Works at sign-up too</Text>
             </View>
+          </FadeIn>
 
-            {error ? (
-              <View style={styles.errorBox}>
-                <Icon name="exclamation" size={16} color={colors.redText} strokeWidth={2.2} />
-                <Text style={[type.caption, styles.errorText]}>{error}</Text>
-              </View>
-            ) : null}
+          {error ? (
+            <View style={styles.errorBox}>
+              <Icon name="exclamation" size={18} color={colors.redText} strokeWidth={2.2} />
+              <Text style={styles.errorText}>{error}</Text>
+            </View>
+          ) : null}
 
-            <Pressable
-              onPress={share}
-              accessibilityRole="button"
-              style={({ pressed }) => [styles.button, styles.shareButton, pressed && styles.pressed]}
-            >
-              <Icon name="users" size={16} color={colors.onInk} strokeWidth={2} />
-              <Text style={[type.button, styles.onInk]}>Share invite</Text>
-            </Pressable>
-
-            <Pressable
-              onPress={() => setConfirmingRegenerate(true)}
-              disabled={regenerating}
-              hitSlop={8}
-              accessibilityRole="button"
-              style={styles.regenerateLink}
-            >
-              <Text style={[type.caption, styles.link]}>
-                {regenerating ? 'Generating a new code…' : 'Generate a new code'}
-              </Text>
-            </Pressable>
-
-            <Pressable
-              onPress={onClose}
-              accessibilityRole="button"
-              style={({ pressed }) => [styles.button, styles.closeButton, pressed && styles.pressed]}
-            >
-              <Text style={[type.button, styles.ink]}>Done</Text>
-            </Pressable>
-          </Pressable>
-        </Pressable>
-      </Modal>
+          <FadeIn delay={120}>
+            <View style={styles.actions}>
+              <GradientButton
+                label="Share invite"
+                onPress={share}
+                leading={<Icon name="share" size={18} color={colors.onInk} strokeWidth={2} />}
+              />
+              <WhiteButton label="Done" onPress={onClose} />
+              <Pressable
+                onPress={() => setConfirmingRegenerate(true)}
+                disabled={regenerating}
+                accessibilityRole="button"
+                style={({ pressed }) => [styles.newCode, pressed && styles.pressed]}
+              >
+                <Text style={styles.newCodeText}>{regenerating ? 'Making a new code…' : 'New code'}</Text>
+              </Pressable>
+            </View>
+          </FadeIn>
+        </View>
+      </Sheet>
 
       <ConfirmDialog
         visible={confirmingRegenerate}
@@ -123,80 +125,85 @@ export function InviteModal({ visible, onClose }: Props) {
 }
 
 const styles = StyleSheet.create({
-  backdrop: {
-    flex: 1,
-    backgroundColor: 'rgba(17,15,26,0.45)',
-    alignItems: 'center',
-    justifyContent: 'center',
-    padding: layout.screenPadding,
+  // Board: 20 in from the sides, 20 under the grab bar (Sheet's grab zone is 21; the board's is 13), 22 between blocks.
+  body: {
+    paddingHorizontal: 20,
+    paddingTop: 12,
+    gap: 22,
   },
-  card: {
-    width: '100%',
-    maxWidth: 340,
-    backgroundColor: colors.surface,
-    borderRadius: radius.card,
-    padding: 20,
-    gap: 10,
+  head: {
+    gap: 6,
   },
-  ink: {
+  title: {
+    fontFamily: type.pageTitle.fontFamily,
+    fontSize: 26,
+    lineHeight: 30,
+    letterSpacing: -0.6,
     color: colors.ink,
   },
-  muted: {
+  sub: {
+    fontFamily: type.caption.fontFamily,
+    fontSize: 15,
+    lineHeight: 21,
     color: colors.muted,
   },
-  onInk: {
-    color: colors.onInk,
-  },
   codeBox: {
-    height: 64,
-    borderRadius: 16,
-    backgroundColor: colors.surfaceMuted,
-    borderWidth: 1.5,
-    borderColor: colors.border,
-    borderStyle: 'dashed',
     alignItems: 'center',
-    justifyContent: 'center',
-    marginVertical: 4,
+    gap: 6,
+    paddingVertical: 22,
+    paddingHorizontal: 16,
+    borderRadius: 22,
+    backgroundColor: colors.surfaceMuted,
+    boxShadow: 'inset 0 0 0 1px #E6DFFC',
   },
   code: {
-    color: colors.purple,
-    letterSpacing: 3,
+    fontFamily: type.hero.fontFamily,
+    fontSize: 40,
+    lineHeight: 44,
+    letterSpacing: 5,
+    color: colors.ink,
+  },
+  m: {
+    fontFamily: type.caption.fontFamily,
+    fontSize: 13,
+    lineHeight: 18,
+    color: colors.muted,
   },
   errorBox: {
     flexDirection: 'row',
     alignItems: 'flex-start',
-    gap: 8,
+    gap: 10,
     backgroundColor: colors.redSoft,
-    borderRadius: 12,
-    padding: 12,
+    borderRadius: 18,
+    paddingVertical: 14,
+    paddingHorizontal: 16,
   },
   errorText: {
     flex: 1,
+    fontFamily: type.caption.fontFamily,
+    fontSize: 14,
+    lineHeight: 20,
     color: colors.redText,
   },
-  button: {
-    flexDirection: 'row',
-    height: 48,
-    borderRadius: 14,
-    alignItems: 'center',
-    justifyContent: 'center',
-    gap: 8,
+  actions: {
+    gap: 10,
   },
   pressed: {
-    opacity: 0.75,
+    opacity: 0.6,
   },
-  shareButton: {
-    backgroundColor: colors.purple,
-    marginTop: 4,
-  },
-  regenerateLink: {
+  // Board: a quiet 44-high text button, 14/500 muted, underlined in #DCD8E3.
+  newCode: {
+    height: 44,
     alignSelf: 'center',
-    paddingVertical: 8,
+    justifyContent: 'center',
+    paddingHorizontal: 12,
   },
-  link: {
-    color: colors.purple,
-  },
-  closeButton: {
-    backgroundColor: colors.surfaceMuted,
+  newCodeText: {
+    fontFamily: type.taskTitle.fontFamily,
+    fontSize: 14,
+    lineHeight: 20,
+    color: colors.muted,
+    textDecorationLine: 'underline',
+    textDecorationColor: '#DCD8E3',
   },
 });
