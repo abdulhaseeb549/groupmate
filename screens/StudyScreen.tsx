@@ -56,7 +56,7 @@ const CUSTOM = -1;
 const KEYS = ['A', 'B', 'C', 'D', 'E', 'F'];
 const MASCOT = require('../assets/Mascot-png.png');
 
-type Phase = 'list' | 'setup' | 'quiz' | 'results';
+type Phase = 'list' | 'notes' | 'setup' | 'quiz' | 'results';
 type Insets = { top: number; bottom: number };
 
 type Props = {
@@ -264,7 +264,7 @@ export function StudyScreen({ activeTab, onSelectTab }: Props) {
   const canSubmit = studyText.trim().length >= MIN_LENGTH || syllabusFile !== null;
 
   useHardwareBackHandler(() => {
-    if (phase === 'setup') setPhase('list');
+    if (phase === 'setup' || phase === 'notes') setPhase('list');
     else if (phase === 'quiz' || phase === 'results') backToList();
   }, phase !== 'list' && !generating);
 
@@ -280,7 +280,10 @@ export function StudyScreen({ activeTab, onSelectTab }: Props) {
             onNewQuiz={openSetup}
             onOpenQuiz={openExistingQuiz}
             onDeleteQuiz={setDeleteTarget}
+            onOpenNotes={() => setPhase('notes')}
           />
+        ) : phase === 'notes' && pointers ? (
+          <NotesView insets={insets} title={pointers.title} pages={pointers.pages} onBack={() => setPhase('list')} />
         ) : phase === 'setup' && generating ? (
           <WritingView count={questionCount} source={syllabusFile ? stripPdf(syllabusFile.filename) : 'Your notes'} />
         ) : phase === 'setup' ? (
@@ -343,6 +346,48 @@ function stripPdf(name: string) {
 }
 
 /* ------------------------------------------------------------------ */
+/* GNotes — every pointer card, one at a time, full screen             */
+/* ------------------------------------------------------------------ */
+
+function NotesView({
+  insets,
+  title,
+  pages,
+  onBack,
+}: {
+  insets: Insets;
+  title: string;
+  pages: NotePage[];
+  onBack: () => void;
+}) {
+  const [noteIndex, setNoteIndex] = useState(0);
+  return (
+    <View style={[styles.flex, { paddingTop: Math.max(insets.top, 40) + 6, paddingBottom: 32 + insets.bottom }]}>
+      <View style={styles.notesHeader}>
+        <GlassButton onPress={onBack} label="Back">
+          <Icon name="chevronLeft" size={20} color={colors.ink} strokeWidth={2.2} />
+        </GlassButton>
+        <View style={styles.flexText}>
+          <Text style={styles.notesTitle} numberOfLines={1}>
+            Points to remember
+          </Text>
+          <Text style={styles.m} numberOfLines={1}>
+            {title}
+          </Text>
+        </View>
+        <Text style={styles.counter} accessibilityLabel={`Card ${noteIndex + 1} of ${pages.length}`}>
+          {noteIndex + 1}
+          <Text style={styles.counterOf}> / {pages.length}</Text>
+        </Text>
+      </View>
+      <View style={styles.notesBody}>
+        <NotePager pages={pages} full onIndexChange={setNoteIndex} />
+      </View>
+    </View>
+  );
+}
+
+/* ------------------------------------------------------------------ */
 /* GStudy                                                              */
 /* ------------------------------------------------------------------ */
 
@@ -354,6 +399,7 @@ function ListView({
   onNewQuiz,
   onOpenQuiz,
   onDeleteQuiz,
+  onOpenNotes,
 }: {
   insets: Insets;
   quizzes: QuizSummary[] | null;
@@ -362,6 +408,7 @@ function ListView({
   onNewQuiz: () => void;
   onOpenQuiz: (summary: QuizSummary) => void;
   onDeleteQuiz: (summary: QuizSummary) => void;
+  onOpenNotes: () => void;
 }) {
   return (
     <ScrollView
@@ -400,12 +447,29 @@ function ListView({
       {/* Points to remember: one flashcard at a time. */}
       <FadeIn delay={80}>
         <View style={styles.section}>
-          <View style={styles.leadBlock}>
-            <Text style={styles.lead}>Points to remember</Text>
-            {pointers ? <Text style={styles.m}>{pointers.title}</Text> : null}
+          <View style={styles.leadRow}>
+            <View style={[styles.leadBlock, styles.flexText]}>
+              <Text style={styles.lead}>Points to remember</Text>
+              {pointers ? (
+                <Text style={styles.m} numberOfLines={1}>
+                  {pointers.title}
+                </Text>
+              ) : null}
+            </View>
+            {pointers ? (
+              <Pressable
+                onPress={onOpenNotes}
+                accessibilityRole="button"
+                accessibilityLabel="See all points to remember"
+                style={({ pressed }) => [styles.seeAll, pressed && styles.pressedSmall]}
+              >
+                <Text style={styles.linkText}>See all</Text>
+                <Icon name="chevronRight" size={14} color={colors.purple} strokeWidth={2.4} />
+              </Pressable>
+            ) : null}
           </View>
           {pointers ? (
-            <NotePager key={pointers.quizId} pages={pointers.pages} compact />
+            <NotePager key={pointers.quizId} pages={pointers.pages} compact onOpen={onOpenNotes} />
           ) : (
             <View style={[styles.card, styles.emptyCard]}>
               <Text style={styles.t}>Nothing to revise yet</Text>
@@ -1216,6 +1280,45 @@ const styles = StyleSheet.create({
   },
   section: {
     gap: 12,
+  },
+  leadRow: {
+    flexDirection: 'row',
+    alignItems: 'flex-end',
+    gap: 12,
+  },
+  seeAll: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 2,
+    height: 44,
+    marginBottom: -10,
+  },
+  notesHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 12,
+    paddingHorizontal: 20,
+  },
+  notesTitle: {
+    fontFamily: type.sectionHeading.fontFamily,
+    fontSize: 15,
+    lineHeight: 21,
+    color: colors.ink,
+  },
+  counter: {
+    fontFamily: type.taskTitle.fontFamily,
+    fontSize: 13,
+    lineHeight: 18,
+    color: colors.ink,
+    fontVariant: ['tabular-nums'],
+  },
+  counterOf: {
+    color: colors.faint,
+  },
+  notesBody: {
+    flex: 1,
+    paddingHorizontal: 20,
+    paddingTop: 28,
   },
   leadBlock: {
     gap: 2,
