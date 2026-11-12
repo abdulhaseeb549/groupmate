@@ -166,7 +166,19 @@ export function ProjectTimeline({ tasks, schedule, dueDate, today, nudgedIds, on
           </View>
         </View>
 
-        <View style={styles.hair} />
+        {daysLeft > 0 ? (
+          <Runway
+            today={startOfDay(today)}
+            due={due}
+            points={rows.map((r) => ({
+              id: r.task.id,
+              kind: r.kind,
+              at: startOfDay(schedule.byTaskId[r.task.id].latestFinish),
+            }))}
+          />
+        ) : (
+          <View style={styles.hair} />
+        )}
 
         <View>
           {rows.map((row, i) => {
@@ -237,7 +249,129 @@ export function ProjectTimeline({ tasks, schedule, dueDate, today, nudgedIds, on
   );
 }
 
+const TRACK_DOT = 14;
+const LETTERS = ['S', 'M', 'T', 'W', 'T', 'F', 'S'];
+
+/**
+ * Board "A · Runway", inside the dark card: today on the left, hand-in on
+ * the right, each checkpoint on its real latest-safe finish date. Anything
+ * already past its date sits at today, because that is when it has to happen.
+ */
+function Runway({
+  today,
+  due,
+  points,
+}: {
+  today: Date;
+  due: Date;
+  points: { id: string; kind: Kind; at: Date }[];
+}) {
+  const [width, setWidth] = useState(0);
+  const span = Math.round((due.getTime() - today.getTime()) / 86_400_000);
+  const xFor = (d: Date) => {
+    const days = Math.round((d.getTime() - today.getTime()) / 86_400_000);
+    return (Math.min(Math.max(days, 0), span) / span) * width;
+  };
+  const showLetters = span <= 14;
+  const days = Array.from({ length: span + 1 }, (_, i) => new Date(today.getFullYear(), today.getMonth(), today.getDate() + i));
+
+  return (
+    <View style={styles.runway} onLayout={(e) => setWidth(e.nativeEvent.layout.width - TRACK_DOT)}>
+      <View style={styles.trackLine} />
+      {width > 0
+        ? points.map((p) => (
+            <View
+              key={p.id}
+              style={[styles.trackDot, TRACK_DOT_STYLE[p.kind], { left: xFor(p.at) }]}
+            />
+          ))
+        : null}
+      {width > 0 ? (
+        <View style={[styles.trackFlag, { left: width - 3 }]}>
+          <Icon name="flagSolid" size={9} color={CARD} strokeWidth={2} />
+        </View>
+      ) : null}
+      {showLetters ? (
+        <View style={styles.letters}>
+          {days.map((d, i) => (
+            <Text key={i} style={[styles.letter, (i === 0 || i === span) && styles.letterStrong]}>
+              {LETTERS[d.getDay()]}
+            </Text>
+          ))}
+        </View>
+      ) : null}
+      <View style={styles.runwayLabels}>
+        <Text style={styles.runwayLabel}>Today</Text>
+        <Text style={styles.runwayLabel}>Hand in</Text>
+      </View>
+    </View>
+  );
+}
+
+const TRACK_DOT_STYLE: Record<Kind, object> = {
+  done: { backgroundColor: MINT },
+  behind: { backgroundColor: CORAL },
+  mine: { backgroundColor: LAVENDER },
+  theirs: { backgroundColor: CARD, borderWidth: 2, borderColor: '#FFFFFF' },
+  nobody: { backgroundColor: CARD, borderWidth: 1.5, borderColor: 'rgba(255,255,255,0.45)', borderStyle: 'dashed' },
+};
+
 const styles = StyleSheet.create({
+  runway: {
+    paddingTop: 4,
+  },
+  trackLine: {
+    marginHorizontal: TRACK_DOT / 2,
+    marginTop: TRACK_DOT / 2 - 1.5,
+    height: 3,
+    borderRadius: 2,
+    backgroundColor: 'rgba(255,255,255,0.12)',
+  },
+  trackDot: {
+    position: 'absolute',
+    top: 4,
+    width: TRACK_DOT,
+    height: TRACK_DOT,
+    borderRadius: TRACK_DOT / 2,
+  },
+  trackFlag: {
+    position: 'absolute',
+    top: 1,
+    width: 20,
+    height: 20,
+    borderRadius: 6,
+    backgroundColor: '#FFFFFF',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  letters: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    marginTop: 14,
+  },
+  letter: {
+    width: TRACK_DOT,
+    textAlign: 'center',
+    fontFamily: type.caption.fontFamily,
+    fontSize: 11,
+    lineHeight: 14,
+    color: 'rgba(255,255,255,0.4)',
+  },
+  letterStrong: {
+    fontFamily: type.sectionHeading.fontFamily,
+    color: '#FFFFFF',
+  },
+  runwayLabels: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    marginTop: 8,
+  },
+  runwayLabel: {
+    fontFamily: type.caption.fontFamily,
+    fontSize: 12,
+    lineHeight: 16,
+    color: 'rgba(255,255,255,0.55)',
+  },
   card: {
     backgroundColor: CARD,
     borderRadius: 26,
