@@ -1,49 +1,32 @@
-import { createContext, ReactNode, RefObject, useContext, useRef } from 'react';
+import { ReactNode } from 'react';
 import { Platform, Pressable, StyleProp, StyleSheet, View, ViewStyle } from 'react-native';
-import { BlurTargetView, BlurView } from 'expo-blur';
+import { BlurView } from 'expo-blur';
 
 /**
  * Glass is for things that FLOAT over scrolling content: the tab bar, round
  * header buttons, sticky headers, composers and bottom action bars. Cards
  * stay solid white so text stays sharp.
  *
- * iOS and web blur whatever sits behind a BlurView on their own. Android
- * needs to be told what to blur: wrap the scrolling content in <GlassTarget>
- * and put the <Glass> pieces next to it (not inside it), all under one
- * <GlassScene>. On Android 12+ that is a real blur; on older versions (or a
- * screen with no GlassScene) Glass falls back to frosted white, which still
- * reads as a floating pane.
+ * iOS and web blur whatever sits behind a BlurView. Android does not get the
+ * blur: on real phones it came out grey and muddy, because an elevation
+ * shadow under a see-through view shows THROUGH it, and the Android blur adds
+ * its own grey tint. So on Android every glass piece is a solid white pane
+ * with a soft shadow and a faint edge: it still floats, and it stays light.
+ * GlassScene / GlassTarget stay in the screens so iOS and web keep working.
  */
-
-const TargetContext = createContext<RefObject<View | null> | null>(null);
 
 /** Root of a screen that has glass on it. Renders a plain flex:1 View. */
 export function GlassScene({ children, style }: { children: ReactNode; style?: StyleProp<ViewStyle> }) {
-  const targetRef = useRef<View | null>(null);
-  return (
-    <TargetContext.Provider value={targetRef}>
-      <View style={[styles.scene, style]}>{children}</View>
-    </TargetContext.Provider>
-  );
+  return <View style={[styles.scene, style]}>{children}</View>;
 }
 
 /** The scrolling content that glass sits above. Fills the scene. */
 export function GlassTarget({ children, style }: { children: ReactNode; style?: StyleProp<ViewStyle> }) {
-  const targetRef = useContext(TargetContext);
-  if (Platform.OS !== 'android' || !targetRef) {
-    return <View style={[styles.target, style]}>{children}</View>;
-  }
-  return (
-    <BlurTargetView ref={targetRef} style={[styles.target, style]}>
-      {children}
-    </BlurTargetView>
-  );
+  return <View style={[styles.target, style]}>{children}</View>;
 }
 
-// Frosted-white wash drawn on top of the blur. Without a real blur (older
-// Android) it is nearly opaque so text behind never shows through.
-const WASH_BLURRED = 'rgba(255,255,255,0.58)';
-const WASH_FALLBACK = 'rgba(255,255,255,0.88)';
+// Frosted-white wash drawn on top of the blur (iOS and web).
+const WASH_BLURRED = 0.58;
 const EDGE = 'rgba(255,255,255,0.85)';
 
 type GlassProps = {
@@ -55,28 +38,21 @@ type GlassProps = {
   intensity?: number;
   /** Heavier wash, for glass that sits over text (chat header). */
   wash?: number;
-  /** True inside a <Modal>: it is its own window, so Android has nothing to blur and gets frosted white. */
+  /** Inside a <Modal>. Kept for callers; glass looks the same there. */
   inModal?: boolean;
 };
 
-export function Glass({ children, style, radius, intensity = 60, wash, inModal = false }: GlassProps) {
-  const targetRef = useContext(TargetContext);
-  const isAndroid = Platform.OS === 'android';
-  const hasRealBlur = !isAndroid || (!inModal && targetRef !== null && Number(Platform.Version) >= 31);
-  const washColor = wash !== undefined ? `rgba(255,255,255,${wash})` : hasRealBlur ? WASH_BLURRED : WASH_FALLBACK;
+export function Glass({ children, style, radius, intensity = 60, wash }: GlassProps) {
+  if (Platform.OS === 'android') {
+    // Solid white: see the note at the top of this file.
+    return <View style={[styles.solid, { borderRadius: radius }, style]}>{children}</View>;
+  }
+  const washColor = `rgba(255,255,255,${wash ?? WASH_BLURRED})`;
 
   return (
     <View style={[styles.shadow, { borderRadius: radius }, style]}>
       <View style={[StyleSheet.absoluteFill, styles.clip, { borderRadius: radius }]}>
-      {hasRealBlur ? (
-        <BlurView
-          intensity={intensity}
-          tint="light"
-          blurTarget={isAndroid ? (targetRef ?? undefined) : undefined}
-          blurMethod={isAndroid ? 'dimezisBlurViewSdk31Plus' : undefined}
-          style={StyleSheet.absoluteFill}
-        />
-      ) : null}
+      <BlurView intensity={intensity} tint="light" style={StyleSheet.absoluteFill} />
       <View pointerEvents="none" style={[StyleSheet.absoluteFill, { backgroundColor: washColor }]} />
       <View
         pointerEvents="none"
@@ -132,6 +108,14 @@ const styles = StyleSheet.create({
     backgroundColor: 'transparent',
   },
   clip: { overflow: 'hidden' },
+  // Android: opaque, so the elevation shadow sits outside the pane only.
+  solid: {
+    backgroundColor: '#FFFFFF',
+    borderWidth: StyleSheet.hairlineWidth,
+    borderColor: 'rgba(17,17,17,0.06)',
+    elevation: 4,
+    shadowColor: '#1C1633',
+  },
   edge: {
     borderWidth: 0.5,
     borderColor: EDGE,
