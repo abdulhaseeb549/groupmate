@@ -1,5 +1,6 @@
 import { createContext, ReactNode, useContext, useEffect, useMemo, useState } from 'react';
 import { View } from 'react-native';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 import { ErrorScreen } from '../components/ErrorScreen';
 import { LoadingScreen } from '../components/LoadingScreen';
 import { MemberJoinedToast } from '../components/MemberJoinedToast';
@@ -97,20 +98,43 @@ type ProjectRepository = {
 // the check worth keeping.
 export const ProjectContext = createContext<ProjectRepository | null>(null);
 
-type FetchState =
-  | { status: 'loading' }
-  | { status: 'error'; message: string }
-  | { status: 'no_project' }
-  | {
-      status: 'ready';
-      project: Project;
-      tasks: Task[];
-      requirements: Requirement[];
-      taskRequirements: TaskRequirement[];
-      taskDependencies: TaskDependency[];
-      members: Member[];
-      projects: ProjectSummary[];
-    };
+type ReadyState = {
+  status: 'ready';
+  project: Project;
+  tasks: Task[];
+  requirements: Requirement[];
+  taskRequirements: TaskRequirement[];
+  taskDependencies: TaskDependency[];
+  members: Member[];
+  projects: ProjectSummary[];
+};
+
+type FetchState = { status: 'loading' } | { status: 'error'; message: string } | { status: 'no_project' } | ReadyState;
+
+// The last project this user loaded, kept on the phone so the app opens
+// straight into it instead of a spinner. Plain JSON: the data types hold
+// strings and numbers only, no Dates.
+const CACHE_VERSION = 1;
+const cacheKey = (userId: string) => `gm.projectCache.v${CACHE_VERSION}.${userId}`;
+
+async function loadCachedProject(userId: string): Promise<ReadyState | null> {
+  try {
+    const raw = await AsyncStorage.getItem(cacheKey(userId));
+    if (!raw) return null;
+    const parsed = JSON.parse(raw) as ReadyState;
+    return parsed && parsed.status === 'ready' && parsed.project?.id ? parsed : null;
+  } catch {
+    return null;
+  }
+}
+
+async function saveCachedProject(userId: string, state: ReadyState) {
+  try {
+    await AsyncStorage.setItem(cacheKey(userId), JSON.stringify(state));
+  } catch {
+    // A full or unavailable store only costs the instant start next time.
+  }
+}
 
 /**
  * Owns the signed-in user's project data. Fetches it from Supabase once a
@@ -127,14 +151,21 @@ export function ProjectProvider({ children }: { children: ReactNode }) {
   useEffect(() => {
     if (!userId) return;
     let cancelled = false;
-    setState({ status: 'loading' });
+    // A refetch while a project is on screen refreshes in place: the
+    // spinner is only for the very first load with nothing cached.
+    setState((s) => (s.status === 'ready' ? s : { status: 'loading' }));
 
     // Read from storage on every fetch, never cached in state:
     // commitExtractedProject writes it from outside this provider, so a
     // project created during onboarding has to be picked up by the
     // refetch that follows it.
     (async () => {
-      const storedId = await loadActiveProjectId(userId);
+      const [storedId, cached] = await Promise.all([loadActiveProjectId(userId), loadCachedProject(userId)]);
+      // Last session's copy first, so opening the app shows your project
+      // at once; the network copy below replaces it a moment later.
+      if (!cancelled && cached && (!storedId || cached.project.id === storedId)) {
+        setState((s) => (s.status === 'ready' ? s : cached));
+      }
       const [data, projects] = await Promise.all([
         fetchProjectData(userId, storedId),
         fetchProjectSummaries(userId),
@@ -157,7 +188,7 @@ export function ProjectProvider({ children }: { children: ReactNode }) {
           setState({ status: 'no_project' });
           return;
         }
-        setState({
+        const ready: ReadyState = {
           status: 'ready',
           project: data.project,
           tasks: data.tasks,
@@ -166,12 +197,16 @@ export function ProjectProvider({ children }: { children: ReactNode }) {
           taskDependencies: data.taskDependencies,
           members: data.members,
           projects,
-        });
+        };
+        setState(ready);
+        void saveCachedProject(userId, ready);
       })
       .catch((err: unknown) => {
         if (cancelled) return;
         const message = err instanceof Error ? err.message : 'Could not load your project.';
-        setState({ status: 'error', message });
+        // Offline with a project already showing (cached or earlier): keep
+        // it rather than swapping the whole app for an error screen.
+        setState((s) => (s.status === 'ready' ? s : { status: 'error', message }));
       });
 
     return () => {
@@ -251,6 +286,14 @@ function ProjectProviderReady({
   const [requirements, setRequirements] = useState<Requirement[]>(initialRequirements);
   const [taskRequirements, setTaskRequirements] = useState<TaskRequirement[]>(initialTaskRequirements);
   const [members, setMembers] = useState<Member[]>(initialMembers);
+  // Fresh data from a background refresh (after the cached copy, or a
+  // refetch) replaces what is held here in place, without a remount, so an
+  // open chat or sheet stays where it is.
+  useEffect(() => setTasks(initialTasks), [initialTasks]);
+  useEffect(() => setProject(initialProject), [initialProject]);
+  useEffect(() => setRequirements(initialRequirements), [initialRequirements]);
+  useEffect(() => setTaskRequirements(initialTaskRequirements), [initialTaskRequirements]);
+  useEffect(() => setMembers(initialMembers), [initialMembers]);
   // Who arrived while the app was open. This is the only signal a join
   // produces — without it, someone joining is completely silent.
   const [justJoined, setJustJoined] = useState<Member | null>(null);

@@ -46,7 +46,13 @@ import { useHardwareBackHandler } from '../utils/hardwareBack';
 import { pickPdf, PdfFileInput } from '../utils/pdfPicker';
 
 const MIN_LENGTH = 40;
-const COUNTS = [5, 10, 15] as const;
+// Quick picks, plus "Custom" for any number in range. The range matches the
+// generate-quiz Edge Function, which also caps how many quizzes a day one
+// student can make, so a big quiz can't quietly burn the AI budget.
+const COUNTS = [15, 35, 45] as const;
+const MIN_COUNT = 5;
+const MAX_COUNT = 50;
+const CUSTOM = -1;
 const KEYS = ['A', 'B', 'C', 'D', 'E', 'F'];
 const MASCOT = require('../assets/Mascot-png.png');
 
@@ -92,7 +98,7 @@ export function StudyScreen({ activeTab, onSelectTab }: Props) {
   const [studyText, setStudyText] = useState('');
   const [syllabusFile, setSyllabusFile] = useState<PdfFileInput | null>(null);
   const [difficulty, setDifficulty] = useState<Difficulty>('medium');
-  const [questionCount, setQuestionCount] = useState<number>(10);
+  const [questionCount, setQuestionCount] = useState<number>(15);
   const [generating, setGenerating] = useState(false);
   // The newest set of pointers, shown on the list. Held apart from
   // `quizzes`: the rows carry only a count, the pages are far more text.
@@ -538,6 +544,10 @@ function SetupView({
 }) {
   // PDF first, as on the board; "Paste notes instead" swaps the card for a text box.
   const [mode, setMode] = useState<'pdf' | 'notes'>(studyText ? 'notes' : 'pdf');
+  const [custom, setCustom] = useState(!(COUNTS as readonly number[]).includes(questionCount));
+  const [customText, setCustomText] = useState(String(questionCount));
+  const customNumber = Number(customText);
+  const customValid = !custom || (customNumber >= MIN_COUNT && customNumber <= MAX_COUNT);
   const sizeMb = syllabusFile ? (syllabusFile.base64.length * 0.75) / (1024 * 1024) : 0;
 
   return (
@@ -649,10 +659,41 @@ function SetupView({
             <Text style={styles.eyebrow}>Questions</Text>
             <Segmented<number>
               label="Number of questions"
-              value={questionCount}
-              onChange={onChangeQuestionCount}
-              options={COUNTS.map((c) => ({ value: c, label: String(c) }))}
+              value={custom ? CUSTOM : questionCount}
+              onChange={(v) => {
+                if (v === CUSTOM) {
+                  setCustom(true);
+                  setCustomText(String(questionCount));
+                } else {
+                  setCustom(false);
+                  onChangeQuestionCount(v);
+                }
+              }}
+              options={[...COUNTS.map((c) => ({ value: c as number, label: String(c) })), { value: CUSTOM, label: 'Custom' }]}
             />
+            {custom ? (
+              <FadeIn>
+                <View style={[styles.customField, !customValid && styles.customFieldBad]}>
+                  <TextInput
+                    value={customText}
+                    onChangeText={(v) => {
+                      const digits = v.replace(/[^0-9]/g, '').slice(0, 2);
+                      setCustomText(digits);
+                      const n = Number(digits);
+                      if (n >= MIN_COUNT && n <= MAX_COUNT) onChangeQuestionCount(n);
+                    }}
+                    keyboardType="number-pad"
+                    maxLength={2}
+                    autoFocus
+                    accessibilityLabel="Number of questions"
+                    style={styles.customInput}
+                  />
+                  <Text style={styles.m}>
+                    questions · {MIN_COUNT}–{MAX_COUNT}
+                  </Text>
+                </View>
+              </FadeIn>
+            ) : null}
           </View>
         </FadeIn>
 
@@ -661,7 +702,12 @@ function SetupView({
 
       {/* Action in the thumb zone. */}
       <View style={[styles.bottomAction, { paddingBottom: Math.max(insets.bottom, 0) + 28 }]}>
-        <GradientButton label={`Make ${questionCount} questions`} onPress={onGenerate} disabled={!canSubmit} style={styles.fullWidth} />
+        <GradientButton
+          label={`Make ${questionCount} questions`}
+          onPress={onGenerate}
+          disabled={!canSubmit || !customValid}
+          style={styles.fullWidth}
+        />
         <Text style={styles.caption}>Points to remember come with it</Text>
       </View>
     </KeyboardAvoider>
@@ -1325,6 +1371,28 @@ const styles = StyleSheet.create({
     fontFamily: type.body.fontFamily,
     fontSize: 16,
     lineHeight: 22,
+  },
+  customField: {
+    height: 54,
+    borderRadius: 16,
+    backgroundColor: colors.surface,
+    borderWidth: 1,
+    borderColor: colors.border,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+    paddingHorizontal: 16,
+  },
+  customFieldBad: {
+    borderColor: colors.red,
+  },
+  customInput: {
+    width: 44,
+    fontFamily: type.sectionHeading.fontFamily,
+    fontSize: 18,
+    lineHeight: 24,
+    color: colors.ink,
+    padding: 0,
   },
   link: {
     flexDirection: 'row',

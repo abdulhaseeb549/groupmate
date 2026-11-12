@@ -68,7 +68,16 @@ export async function generateQuiz(input: GenerateQuizInput): Promise<GenerateRe
   }>('generate-quiz', { body: input });
 
   if (error) {
-    return { quiz: null, error: error.message ?? 'Could not reach the AI right now.' };
+    // A non-2xx (the daily cap, a bad count) carries its own message in the
+    // body; invoke() only says "non-2xx", so read the body when there is one.
+    let message: string | undefined;
+    try {
+      const body = await (error as { context?: Response }).context?.json();
+      if (body && typeof body.error === 'string') message = body.error;
+    } catch {
+      // not JSON: fall through to the generic message
+    }
+    return { quiz: null, error: message ?? 'Could not reach the AI right now.' };
   }
   if (!data || data.error || !data.extracted) {
     return { quiz: null, error: data?.error ?? 'Something went wrong generating that quiz.' };
