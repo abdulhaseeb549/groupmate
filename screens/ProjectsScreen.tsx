@@ -165,7 +165,7 @@ export function ProjectsScreen({ activeTab, onSelectTab }: Props) {
                   {projectState.requirementProgress.met}
                   <Text style={styles.statTotal}>/{projectState.requirementProgress.total}</Text>
                 </Text>
-                <Text style={[type.caption, { color: colors.muted }]}>Requirements</Text>
+                <Text style={styles.statLabel}>Requirements</Text>
               </View>
               <View style={styles.statDivider} />
               <View style={styles.stat}>
@@ -173,7 +173,7 @@ export function ProjectsScreen({ activeTab, onSelectTab }: Props) {
                   {projectState.taskProgress.done}
                   <Text style={styles.statTotal}>/{projectState.taskProgress.total}</Text>
                 </Text>
-                <Text style={[type.caption, { color: colors.muted }]}>Tasks</Text>
+                <Text style={styles.statLabel}>Tasks</Text>
               </View>
               <View style={styles.statDivider} />
               <View style={styles.stat}>
@@ -190,7 +190,7 @@ export function ProjectsScreen({ activeTab, onSelectTab }: Props) {
                     />
                   ))}
                 </View>
-                <Text style={[type.caption, { color: colors.muted }]}>
+                <Text style={styles.statLabel}>
                   {members.length} {members.length === 1 ? 'member' : 'members'}
                 </Text>
               </View>
@@ -217,14 +217,9 @@ export function ProjectsScreen({ activeTab, onSelectTab }: Props) {
                 onPress={() => setSection(sec)}
                 accessibilityRole="tab"
                 aria-selected={active}
-                style={[styles.seg, sec === 'Requirements' && styles.segWide, active && styles.segActive]}
+                style={[styles.seg, active && styles.segActive]}
               >
-                <Text
-                  numberOfLines={1}
-                  adjustsFontSizeToFit
-                  minimumFontScale={0.8}
-                  style={[active ? type.button : type.subtitle, { color: active ? colors.ink : colors.muted }]}
-                >
+                <Text numberOfLines={1} style={[styles.segText, { color: active ? colors.ink : colors.muted }]}>
                   {sec}
                 </Text>
               </Pressable>
@@ -348,9 +343,7 @@ export function ProjectsScreen({ activeTab, onSelectTab }: Props) {
                     aria-selected={active}
                     style={[styles.seg, active && styles.segActive]}
                   >
-                    <Text style={[active ? type.button : type.subtitle, { color: active ? colors.ink : colors.muted }]}>
-                      {f}
-                    </Text>
+                    <Text style={[styles.segText, { color: active ? colors.ink : colors.muted }]}>{f}</Text>
                   </Pressable>
                 );
               })}
@@ -471,16 +464,21 @@ const styles = StyleSheet.create({
     borderRadius: 16,
     backgroundColor: 'rgba(21,21,26,0.05)',
   },
+  // Sized by their words, then shared out evenly, so no label is ever clipped.
   seg: {
-    flex: 1,
-    height: 44,
+    flexGrow: 1,
+    flexShrink: 0,
+    flexBasis: 'auto',
+    height: 36,
     borderRadius: 12,
-    paddingHorizontal: 4,
+    paddingHorizontal: 8,
     alignItems: 'center',
     justifyContent: 'center',
   },
-  segWide: {
-    flex: 1.45,
+  segText: {
+    fontFamily: type.button.fontFamily,
+    fontSize: 13,
+    lineHeight: 18,
   },
   segActive: {
     backgroundColor: colors.surface,
@@ -546,11 +544,17 @@ const styles = StyleSheet.create({
   statWide: {
     flex: 1.35,
   },
+  statLabel: {
+    fontFamily: type.metadata.fontFamily,
+    fontSize: 12,
+    lineHeight: 16,
+    color: colors.muted,
+  },
   statNumber: {
     fontFamily: type.statNumber.fontFamily,
-    fontSize: 20,
-    lineHeight: 26,
-    letterSpacing: -0.3,
+    fontSize: 18,
+    lineHeight: 24,
+    letterSpacing: -0.2,
     color: colors.ink,
   },
   statTotal: {

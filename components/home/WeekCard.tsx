@@ -54,7 +54,7 @@ export function WeekCard({ today, counts, openCount, doneThisWeek, urgentCount, 
               <Text style={[type.metadata, styles.eyebrow]}>THIS WEEK</Text>
               <Text style={[type.metadata, styles.muted]}>{weekRange(today)}</Text>
             </View>
-            <Text style={[type.hero, styles.ink]} accessibilityRole="header">
+            <Text style={[type.hero, styles.heroSize, styles.ink]} accessibilityRole="header">
               {headline}
             </Text>
             <Text style={[type.subtitle, styles.muted]}>{detail}</Text>
@@ -138,6 +138,11 @@ const styles = StyleSheet.create({
   },
   text: {
     gap: 6,
+  },
+  heroSize: {
+    fontSize: 36,
+    lineHeight: 38,
+    letterSpacing: -1.1,
   },
   eyebrowRow: {
     flexDirection: 'row',

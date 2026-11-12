@@ -33,7 +33,7 @@ export function Segmented<T extends string | number>({ options, value, onChange,
             style={[styles.option, selected && styles.selected]}
           >
             {option.leading ? option.leading(selected) : null}
-            <Text style={[selected ? type.button : type.subtitle, styles.text, { color: selected ? colors.ink : colors.muted }]}>
+            <Text style={[styles.text, { color: selected ? colors.ink : colors.muted }]}>
               {option.label}
             </Text>
           </Pressable>
@@ -69,6 +69,8 @@ const styles = StyleSheet.create({
     elevation: 2,
   },
   text: {
+    fontFamily: type.button.fontFamily,
     fontSize: 15,
+    lineHeight: 20,
   },
 });
