@@ -1,5 +1,6 @@
 import { useEffect } from 'react';
 import * as Notifications from 'expo-notifications';
+import { emitMessagePush, pushConversationKey } from '../state/chatSignals';
 import { useNavigation } from '../state/NavigationProvider';
 import { configureNotificationHandler, registerForPushNotificationsAsync, savePushToken } from '../state/pushNotifications';
 import { useProject } from '../state/ProjectRepository';
@@ -32,6 +33,19 @@ export function PushNotificationRegistrar({ userId }: { userId: string }) {
       cancelled = true;
     };
   }, [userId]);
+
+  // A message push received while the app is open is also a cue that the
+  // thread has something new: the push can beat the Realtime insert, or the
+  // socket can be down after a resume. The chat hub (state/chatRealtime.ts)
+  // turns this into a refetch of that conversation.
+  useEffect(() => {
+    const subscription = Notifications.addNotificationReceivedListener((notification) => {
+      const data = notification.request.content.data as NotificationData | undefined;
+      if (data?.kind !== 'message' || !data.projectId) return;
+      emitMessagePush({ projectId: data.projectId, conversationKey: pushConversationKey(data.conversationOtherUserId) });
+    });
+    return () => subscription.remove();
+  }, []);
 
   useEffect(() => {
     const subscription = Notifications.addNotificationResponseReceivedListener((response) => {

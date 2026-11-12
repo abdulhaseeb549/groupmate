@@ -7,8 +7,8 @@ import {
   conversationOf,
   fetchConversationSummaries,
   messagePreview,
-  subscribeToMessages,
 } from './messages';
+import { ChatHub, createChatHub } from './chatRealtime';
 
 type ChatUnreadState = {
   /** Newest message per conversation — powers the chat list's previews as well as its dots. */
@@ -27,6 +27,9 @@ const EMPTY: ChatUnreadState = {
 };
 
 const ChatUnreadContext = createContext<ChatUnreadState | null>(null);
+
+/** Kept apart from the unread state so the open thread doesn't re-render every time a summary changes. */
+const ChatHubContext = createContext<ChatHub | null>(null);
 
 function storageKey(projectId: string, userId: string) {
   return `groupmate:lastRead:${projectId}:${userId}`;
@@ -91,21 +94,25 @@ export function ChatUnreadProvider({
     };
   }, [projectId, userId]);
 
+  // The project's one set of chat channels (see state/chatRealtime.ts).
+  // Created during render — it's only a listener registry until start() —
+  // so a ChatScreen mounting in the same commit can attach to it in its own
+  // effect, which runs before this provider's.
+  const hub = useMemo(() => (userId ? createChatHub(projectId, userId) : null), [projectId, userId]);
+
+  useEffect(() => {
+    if (!hub) return;
+    return hub.start();
+  }, [hub]);
+
   // Live, so a message that lands while you are on another tab lights the
   // Chat dot immediately instead of at the next cold start.
   useEffect(() => {
-    if (!userId) return;
+    if (!hub || !userId) return;
     let cancelled = false;
-    // Same reconnect gap as ChatScreen's subscription: Realtime doesn't
-    // replay inserts missed while the socket was down (backgrounded app,
-    // dropped connection), so a reconnect needs its own refetch or a
-    // message sent during that gap leaves the unread dot/preview stale for
-    // the rest of the session — this provider isn't remounted just by
-    // switching tabs, unlike ChatScreen.
-    let hasConnectedBefore = false;
-    const unsubscribe = subscribeToMessages(
-      projectId,
-      (message) => {
+    const unsubscribe = hub.listen((event) => {
+      if (event.type === 'message') {
+        const message = event.message;
         const conversation = conversationOf(message, userId);
         const key = conversationKey(conversation);
         setSummaries((prev) => {
@@ -122,26 +129,23 @@ export function ChatUnreadProvider({
             },
           };
         });
-      },
-      (isLive) => {
-        if (cancelled || !isLive) return;
-        if (hasConnectedBefore) {
-          fetchConversationSummaries(projectId, userId)
-            .then((next) => {
-              if (!cancelled) setSummaries(next);
-            })
-            .catch(() => {});
-        }
-        hasConnectedBefore = true;
-      },
-      // Its own topic: ChatScreen watches the same project concurrently.
-      'unread'
-    );
+      } else if (event.type === 'resync') {
+        // Realtime doesn't replay inserts missed while the socket was down
+        // (backgrounded app, dropped connection), and this provider isn't
+        // remounted by switching tabs — so a reconnect, a return to the
+        // foreground, or a push refetches the previews.
+        fetchConversationSummaries(projectId, userId)
+          .then((next) => {
+            if (!cancelled) setSummaries(next);
+          })
+          .catch(() => {});
+      }
+    });
     return () => {
       cancelled = true;
       unsubscribe();
     };
-  }, [projectId, userId]);
+  }, [hub, projectId, userId]);
 
   const markRead = useCallback(
     (conversation: Conversation) => {
@@ -177,7 +181,16 @@ export function ChatUnreadProvider({
     };
   }, [summaries, lastRead, loaded, userId, markRead]);
 
-  return <ChatUnreadContext.Provider value={value}>{children}</ChatUnreadContext.Provider>;
+  return (
+    <ChatHubContext.Provider value={hub}>
+      <ChatUnreadContext.Provider value={value}>{children}</ChatUnreadContext.Provider>
+    </ChatHubContext.Provider>
+  );
+}
+
+/** The project's shared chat channels, or null outside a project / before sign-in. */
+export function useChatHub(): ChatHub | null {
+  return useContext(ChatHubContext);
 }
 
 /**
