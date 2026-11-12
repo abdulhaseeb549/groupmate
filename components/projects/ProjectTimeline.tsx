@@ -1,137 +1,236 @@
 import { useState } from 'react';
 import { Pressable, StyleSheet, Text, View } from 'react-native';
-import { Avatar } from '../Avatar';
-import { weekDates } from '../home/WeekStrip';
+import Svg, { Circle } from 'react-native-svg';
+import { GradientButton } from '../GradientButton';
 import { Icon } from '../Icon';
 import { TaskDetailModal } from '../TaskDetailModal';
 import { Task } from '../../data/tasks';
+import { useAuth } from '../../state/AuthProvider';
 import { useProject } from '../../state/ProjectRepository';
 import { ProjectSchedule } from '../../state/projectSchedule';
-import { colors, radius, type } from '../../theme';
-import { formatDueDate, formatShortDate } from '../../utils/dates';
+import { colors, type } from '../../theme';
 
 type Props = {
   tasks: Task[];
   schedule: ProjectSchedule;
   dueDate: string;
   today: Date;
+  /** Members already nudged this session (owned by ProjectsScreen, shared with the workload list). */
+  nudgedIds?: Set<string>;
+  onNudge?: (memberId: string) => void;
 };
 
-const DOT = 20;
-// Dot centre, measured from the card's left edge: card padding + half a dot.
-const SPINE_LEFT = 16 + DOT / 2 - 0.75;
+const WEEKDAYS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
+const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
 
-type Group = { label: string; tasks: Task[] };
+const ROW = 62;
+const END_ROW = 52;
+const DOT = 22;
+const RING = 68;
+const RING_R = 29;
+const RING_STROKE = 7;
+
+const CARD = '#1B1A22';
+const MINT = '#2FB67C';
+const CORAL = '#E95B57';
+const LAVENDER = '#B9A9F5';
+const AMBER_ON_DARK = '#F5C76A';
+const CORAL_ON_DARK = '#FF9B97';
+const LAVENDER_ON_DARK = '#CFC4FA';
+
+/** "Mon 16" */
+function shortDay(d: Date) {
+  return `${WEEKDAYS[d.getDay()]} ${d.getDate()}`;
+}
+
+function startOfDay(d: Date) {
+  return new Date(d.getFullYear(), d.getMonth(), d.getDate());
+}
+
+type Kind = 'done' | 'behind' | 'mine' | 'theirs' | 'nobody';
 
 /**
- * Checkpoints, not a fabricated Gantt chart: every dot here is a real task
- * that at least one other task actually depends on, placed at the real
- * date the backward-scheduling algorithm computed from effort hours +
- * capacity + the dependency graph — never an invented per-task deadline.
- * A task with no dependents isn't a checkpoint and doesn't appear.
- *
- * Grouped by the week each one has to finish in, so the page answers "what is
- * this week?" before it answers anything else. Every row opens the same
- * TaskDetailModal every other task list in the app uses — a screen telling
- * you a task is behind schedule with no way to act on it was the whole
- * complaint.
+ * Board "B · Dark path": checkpoints, not a fabricated Gantt chart. Every
+ * node is a real task that at least one other task depends on, at the real
+ * latest-safe finish the backward scheduler computed from effort, capacity
+ * and the dependency graph. A task nothing depends on isn't a checkpoint
+ * and doesn't appear. Every row opens the same TaskDetailModal as every
+ * other task list, and the first teammate who is behind can be nudged from
+ * here with the nudge the workload list already sends.
  */
-export function ProjectTimeline({ tasks, schedule, dueDate, today }: Props) {
+export function ProjectTimeline({ tasks, schedule, dueDate, today, nudgedIds, onNudge }: Props) {
   const [openTaskId, setOpenTaskId] = useState<string | null>(null);
   const { membersById } = useProject();
+  const { session } = useAuth();
+  const me = session?.user.id;
+
   const checkpoints = tasks
     .filter((t) => schedule.byTaskId[t.id]?.isCheckpoint)
     .sort((a, b) => schedule.byTaskId[a.id].latestFinish.getTime() - schedule.byTaskId[b.id].latestFinish.getTime());
 
   if (checkpoints.length === 0) {
     return (
-      <View style={styles.card}>
-        <View style={styles.emptyRow}>
-          <Icon name="documentAlert" size={18} color={colors.faint} strokeWidth={1.8} />
-          <Text style={[type.caption, styles.emptyText]}>
-            Checkpoints show up once tasks depend on each other — this project doesn't have any dependencies yet.
-          </Text>
-        </View>
+      <View style={[styles.card, styles.emptyCard]}>
+        <Icon name="documentAlert" size={18} color="rgba(255,255,255,0.55)" strokeWidth={1.8} />
+        <Text style={styles.emptyText}>
+          Checkpoints show up once tasks depend on each other. This project doesn't have any dependencies yet.
+        </Text>
       </View>
     );
   }
 
-  const week = weekDates(today);
-  const weekEnd = new Date(week[6].getFullYear(), week[6].getMonth(), week[6].getDate() + 1).getTime();
-  const nextWeekEnd = weekEnd + 7 * 24 * 60 * 60 * 1000;
-  const groups: Group[] = [];
-  for (const task of checkpoints) {
-    const finish = schedule.byTaskId[task.id].latestFinish.getTime();
-    // Anything already past its date belongs to this week: it is the thing to do now.
-    const label = finish < weekEnd ? 'This week' : finish < nextWeekEnd ? 'Next week' : 'Later';
-    const last = groups[groups.length - 1];
-    if (last && last.label === label) last.tasks.push(task);
-    else groups.push({ label, tasks: [task] });
-  }
+  const [y, m, d] = dueDate.split('-').map(Number);
+  const due = new Date(y, m - 1, d);
+  const daysLeft = Math.round((due.getTime() - startOfDay(today).getTime()) / 86_400_000);
+  const handIn = `${WEEKDAYS[due.getDay()]} ${due.getDate()} ${MONTHS[due.getMonth()]}`;
+
+  const rows = checkpoints.map((task) => {
+    const s = schedule.byTaskId[task.id];
+    const assignee = task.assigneeId ? membersById[task.assigneeId] : undefined;
+    const first = assignee ? assignee.name.split(' ')[0] : null;
+    const kind: Kind =
+      task.status === 'completed'
+        ? 'done'
+        : s.atRisk
+          ? 'behind'
+          : !assignee
+            ? 'nobody'
+            : task.assigneeId === me
+              ? 'mine'
+              : 'theirs';
+    const unblocks = s.blocks.length > 0 ? ` · unblocks ${s.blocks.length}` : '';
+    const meta =
+      kind === 'done'
+        ? `${first ?? 'Done'}${first ? ' · done' : ''}`
+        : kind === 'behind'
+          ? first
+            ? `Behind · ${task.assigneeId === me ? 'start this now' : `${first} should start now`}`
+            : 'Behind · nobody yet'
+          : kind === 'nobody'
+            ? 'Nobody yet'
+            : kind === 'mine'
+              ? `Yours${unblocks}`
+              : `${first}${unblocks}`;
+    return { task, kind, meta, date: shortDay(s.latestFinish) };
+  });
+
+  const doneCount = rows.filter((r) => r.kind === 'done').length;
+  const behindCount = rows.filter((r) => r.kind === 'behind').length;
+  const circumference = 2 * Math.PI * RING_R;
+  const progress = doneCount / rows.length;
+
+  const headline =
+    daysLeft > 1
+      ? `${daysLeft} days to hand in`
+      : daysLeft === 1
+        ? '1 day to hand in'
+        : daysLeft === 0
+          ? 'Hand in today'
+          : `${-daysLeft} ${daysLeft === -1 ? 'day' : 'days'} past hand in`;
+  const subline =
+    behindCount > 0 ? `${handIn} · ${behindCount} ${behindCount === 1 ? 'checkpoint' : 'checkpoints'} behind` : `${handIn} · on track`;
+
+  // The first teammate who is behind and isn't me: the one nudge worth offering.
+  const nudgeRow = rows.find((r) => r.kind === 'behind' && r.task.assigneeId && r.task.assigneeId !== me);
+  const nudgeMember = nudgeRow?.task.assigneeId ? membersById[nudgeRow.task.assigneeId] : undefined;
+  const nudged = nudgeMember ? (nudgedIds?.has(nudgeMember.id) ?? false) : false;
 
   return (
     <>
-      <View style={styles.shadow}>
-        <View style={styles.card}>
-          <View style={styles.spine} />
-          {groups.map((group) => (
-            <View key={group.label}>
-              <Text style={[type.metadata, styles.groupLabel]}>{group.label.toUpperCase()}</Text>
-              {group.tasks.map((task) => {
-                const s = schedule.byTaskId[task.id];
-                const met = task.status === 'completed';
-                const atRisk = s.atRisk;
-                const assignee = task.assigneeId ? membersById[task.assigneeId] : undefined;
-                return (
-                  <Pressable
-                    key={task.id}
-                    onPress={() => setOpenTaskId(task.id)}
-                    accessibilityRole="button"
-                    accessibilityLabel={`Open ${task.title}`}
-                    style={({ pressed }) => [styles.step, pressed && styles.stepPressed]}
+      <View style={styles.card}>
+        <View style={styles.head}>
+          <View style={styles.ring}>
+            <Svg width={RING} height={RING}>
+              <Circle cx={RING / 2} cy={RING / 2} r={RING_R} stroke="rgba(255,255,255,0.1)" strokeWidth={RING_STROKE} fill="none" />
+              {doneCount > 0 ? (
+                <Circle
+                  cx={RING / 2}
+                  cy={RING / 2}
+                  r={RING_R}
+                  stroke={LAVENDER}
+                  strokeWidth={RING_STROKE}
+                  strokeLinecap="round"
+                  fill="none"
+                  strokeDasharray={`${circumference * progress} ${circumference}`}
+                  transform={`rotate(-90 ${RING / 2} ${RING / 2})`}
+                />
+              ) : null}
+            </Svg>
+            <Text style={styles.ringText} accessibilityLabel={`${doneCount} of ${rows.length} checkpoints done`}>
+              {doneCount}/{rows.length}
+            </Text>
+          </View>
+          <View style={styles.headText}>
+            <Text style={styles.headline}>{headline}</Text>
+            <Text style={styles.subline}>{subline}</Text>
+          </View>
+        </View>
+
+        <View style={styles.hair} />
+
+        <View>
+          {rows.map((row, i) => {
+            const isLast = i === rows.length - 1;
+            return (
+              <Pressable
+                key={row.task.id}
+                onPress={() => setOpenTaskId(row.task.id)}
+                accessibilityRole="button"
+                accessibilityLabel={`${row.task.title}, ${row.meta}${row.kind === 'done' ? '' : `, by ${row.date}`}`}
+                style={({ pressed }) => [styles.row, pressed && styles.pressed]}
+              >
+                {/* The path down to the next node; mint while the work behind it is done. */}
+                <View
+                  style={[
+                    styles.connector,
+                    { height: isLast ? ROW - ROW / 2 + END_ROW / 2 : ROW },
+                    row.kind === 'done' && styles.connectorDone,
+                  ]}
+                />
+                <View style={styles.dotSlot}>
+                  {row.kind === 'behind' ? <View style={[styles.halo, styles.haloCoral]} /> : null}
+                  {row.kind === 'mine' ? <View style={[styles.halo, styles.haloLavender]} /> : null}
+                  <View style={[styles.dot, DOT_STYLE[row.kind]]}>
+                    {row.kind === 'done' ? <Icon name="tick" size={11} color="#FFFFFF" strokeWidth={4} /> : null}
+                  </View>
+                </View>
+                <View style={styles.rowText}>
+                  <Text
+                    numberOfLines={1}
+                    style={[styles.title, row.kind === 'done' && styles.titleDone, row.kind === 'mine' && styles.titleMine]}
                   >
-                    <View style={[styles.dot, met && styles.dotMet, atRisk && !met && styles.dotRisk]}>
-                      {met ? <Icon name="check" size={11} color={colors.onInk} strokeWidth={3.2} /> : null}
-                    </View>
-                    <View style={styles.stepBody}>
-                      <Text style={[type.taskTitle, met ? styles.stepDone : styles.stepLabel]} numberOfLines={2}>
-                        {task.title}
-                      </Text>
-                      <Text
-                        style={[type.caption, atRisk && !met ? styles.stepRisk : !assignee && !met ? styles.stepRisk : styles.stepMeta]}
-                      >
-                        {met
-                          ? 'Done'
-                          : atRisk
-                            ? 'Behind schedule'
-                            : !assignee
-                              ? 'Nobody yet'
-                              : `By ${formatShortDate(s.latestFinish, today)}${
-                                  s.blocks.length > 0 ? ` · unblocks ${s.blocks.length}` : ''
-                                }`}
-                      </Text>
-                    </View>
-                    {assignee ? (
-                      <Avatar initials={assignee.initials} bg={assignee.bg} fg={assignee.fg} size={30} />
-                    ) : (
-                      <View style={styles.nobody}>
-                        <Icon name="plus" size={12} color={colors.faint} strokeWidth={2} />
-                      </View>
-                    )}
-                  </Pressable>
-                );
-              })}
-            </View>
-          ))}
+                    {row.task.title}
+                  </Text>
+                  <Text numberOfLines={1} style={[styles.meta, META_STYLE[row.kind]]}>
+                    {row.meta}
+                  </Text>
+                </View>
+                {row.kind === 'done' ? null : (
+                  <Text style={[styles.date, row.kind === 'behind' && styles.dateBehind]}>{row.date}</Text>
+                )}
+              </Pressable>
+            );
+          })}
 
           <View style={styles.endRow}>
-            <View style={styles.flag}>
-              <Icon name="flag" size={11} color={colors.onInk} strokeWidth={2} fill={colors.onInk} />
+            <View style={styles.dotSlot}>
+              <View style={styles.flag}>
+                <Icon name="flagSolid" size={11} color={CARD} strokeWidth={2} />
+              </View>
             </View>
-            <Text style={[type.button, styles.endLabel]}>Due {formatDueDate(dueDate, today)}</Text>
+            <Text style={styles.endText}>Hand in · {handIn}</Text>
           </View>
         </View>
       </View>
+
+      {nudgeRow && nudgeMember && onNudge ? (
+        <GradientButton
+          label={nudged ? `Nudged ${nudgeMember.name.split(' ')[0]}` : `Nudge ${nudgeMember.name.split(' ')[0]} about ${nudgeRow.task.title.toLowerCase()}`}
+          onPress={() => onNudge(nudgeMember.id)}
+          disabled={nudged}
+          style={styles.nudge}
+        />
+      ) : null}
 
       <TaskDetailModal taskId={openTaskId} onClose={() => setOpenTaskId(null)} />
     </>
@@ -139,123 +238,182 @@ export function ProjectTimeline({ tasks, schedule, dueDate, today }: Props) {
 }
 
 const styles = StyleSheet.create({
-  shadow: {
-    borderRadius: radius.card,
-    backgroundColor: colors.surface,
-    shadowColor: '#1C1633',
-    shadowOpacity: 0.06,
-    shadowRadius: 18,
-    shadowOffset: { width: 0, height: 8 },
-    elevation: 3,
-  },
   card: {
-    backgroundColor: colors.surface,
-    borderRadius: radius.card,
-    paddingVertical: 8,
-    paddingHorizontal: 16,
-    borderWidth: StyleSheet.hairlineWidth,
-    borderColor: 'rgba(17,17,17,0.06)',
+    backgroundColor: CARD,
+    borderRadius: 26,
+    paddingTop: 22,
+    paddingHorizontal: 20,
+    paddingBottom: 20,
+    gap: 22,
+    shadowColor: '#1C1633',
+    shadowOpacity: 0.22,
+    shadowRadius: 20,
+    shadowOffset: { width: 0, height: 18 },
+    elevation: 8,
   },
-  spine: {
+  emptyCard: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    gap: 10,
+  },
+  emptyText: {
+    flex: 1,
+    fontFamily: type.caption.fontFamily,
+    fontSize: 13,
+    lineHeight: 18,
+    color: 'rgba(255,255,255,0.62)',
+  },
+  head: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 16,
+  },
+  ring: {
+    width: RING,
+    height: RING,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  ringText: {
     position: 'absolute',
-    left: SPINE_LEFT,
-    top: 44,
-    bottom: 40,
-    width: 1.5,
-    backgroundColor: colors.border,
+    fontFamily: type.pageTitle.fontFamily,
+    fontSize: 20,
+    color: '#FFFFFF',
   },
-  groupLabel: {
-    color: colors.muted,
-    letterSpacing: 0.6,
-    paddingTop: 12,
-    paddingBottom: 2,
-    paddingLeft: 34,
+  headText: {
+    flex: 1,
+    gap: 3,
   },
-  step: {
+  headline: {
+    fontFamily: type.pageTitle.fontFamily,
+    fontSize: 24,
+    lineHeight: 27,
+    letterSpacing: -0.5,
+    color: '#FFFFFF',
+  },
+  subline: {
+    fontFamily: type.caption.fontFamily,
+    fontSize: 13,
+    lineHeight: 18,
+    color: 'rgba(255,255,255,0.62)',
+  },
+  hair: {
+    height: StyleSheet.hairlineWidth,
+    backgroundColor: 'rgba(255,255,255,0.12)',
+  },
+  row: {
+    height: ROW,
     flexDirection: 'row',
     alignItems: 'center',
     gap: 14,
-    paddingVertical: 10,
-    minHeight: 44,
   },
-  stepPressed: {
+  pressed: {
     opacity: 0.6,
+  },
+  connector: {
+    position: 'absolute',
+    left: DOT / 2 - 1,
+    top: ROW / 2,
+    width: 2,
+    backgroundColor: 'rgba(255,255,255,0.12)',
+  },
+  connectorDone: {
+    backgroundColor: MINT,
+  },
+  dotSlot: {
+    width: DOT,
+    height: DOT,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  halo: {
+    position: 'absolute',
+    width: DOT + 10,
+    height: DOT + 10,
+    borderRadius: (DOT + 10) / 2,
+  },
+  haloCoral: {
+    backgroundColor: 'rgba(233,91,87,0.22)',
+  },
+  haloLavender: {
+    backgroundColor: 'rgba(185,169,245,0.22)',
   },
   dot: {
     width: DOT,
     height: DOT,
     borderRadius: DOT / 2,
-    backgroundColor: colors.surface,
-    borderWidth: 1.5,
-    borderColor: colors.control,
     alignItems: 'center',
     justifyContent: 'center',
   },
-  dotMet: {
-    backgroundColor: colors.green,
-    borderColor: colors.green,
-  },
-  // Amber, not red: this is one checkpoint past its own safe-start window,
-  // not the project itself missing its deadline — that stronger, rarer
-  // signal already has its own banner above this card.
-  dotRisk: {
-    borderColor: colors.amber,
-  },
-  stepBody: {
+  rowText: {
     flex: 1,
     minWidth: 0,
     gap: 2,
   },
-  stepLabel: {
-    color: colors.ink,
+  title: {
+    fontFamily: type.taskTitle.fontFamily,
+    fontSize: 15,
+    lineHeight: 21,
+    color: '#FFFFFF',
   },
-  stepDone: {
-    color: colors.muted,
+  titleDone: {
+    color: 'rgba(255,255,255,0.55)',
     textDecorationLine: 'line-through',
   },
-  stepMeta: {
-    color: colors.muted,
+  titleMine: {
+    fontFamily: type.sectionHeading.fontFamily,
   },
-  stepRisk: {
-    color: colors.yellowText,
-    fontFamily: type.body.fontFamily,
+  meta: {
+    fontFamily: type.caption.fontFamily,
+    fontSize: 13,
+    lineHeight: 18,
   },
-  nobody: {
-    width: 28,
-    height: 28,
-    borderRadius: 14,
-    borderWidth: 1.5,
-    borderStyle: 'dashed',
-    borderColor: '#C9C5D3',
-    alignItems: 'center',
-    justifyContent: 'center',
+  date: {
+    fontFamily: type.sectionHeading.fontFamily,
+    fontSize: 13,
+    lineHeight: 18,
+    color: 'rgba(255,255,255,0.8)',
+  },
+  dateBehind: {
+    color: CORAL_ON_DARK,
   },
   endRow: {
+    height: END_ROW,
     flexDirection: 'row',
     alignItems: 'center',
     gap: 14,
-    paddingTop: 12,
-    paddingBottom: 10,
   },
   flag: {
     width: DOT,
     height: DOT,
-    borderRadius: DOT / 2,
-    backgroundColor: colors.ink,
+    borderRadius: 7,
+    backgroundColor: '#FFFFFF',
     alignItems: 'center',
     justifyContent: 'center',
   },
-  endLabel: {
-    color: colors.ink,
+  endText: {
+    fontFamily: type.sectionHeading.fontFamily,
+    fontSize: 15,
+    lineHeight: 21,
+    color: '#FFFFFF',
   },
-  emptyRow: {
-    flexDirection: 'row',
-    alignItems: 'flex-start',
-    gap: 10,
-    padding: 8,
-  },
-  emptyText: {
-    flex: 1,
-    color: colors.muted,
+  nudge: {
+    marginTop: 16,
   },
 });
+
+const DOT_STYLE: Record<Kind, object> = {
+  done: { backgroundColor: MINT },
+  behind: { backgroundColor: CORAL },
+  mine: { backgroundColor: LAVENDER },
+  theirs: { backgroundColor: CARD, borderWidth: 2.5, borderColor: '#FFFFFF' },
+  nobody: { backgroundColor: CARD, borderWidth: 2, borderColor: 'rgba(255,255,255,0.4)', borderStyle: 'dashed' },
+};
+
+const META_STYLE: Record<Kind, object> = {
+  done: { color: 'rgba(255,255,255,0.45)' },
+  behind: { color: CORAL_ON_DARK },
+  mine: { color: LAVENDER_ON_DARK },
+  theirs: { color: 'rgba(255,255,255,0.62)' },
+  nobody: { color: AMBER_ON_DARK },
+};

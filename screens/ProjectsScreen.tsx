@@ -230,7 +230,14 @@ export function ProjectsScreen({ activeTab, onSelectTab }: Props) {
         <FadeIn key={section}>
         {section === 'Timeline' ? (
           <View style={styles.section}>
-            <ProjectTimeline tasks={tasks} schedule={schedule} dueDate={project.dueDate} today={today} />
+            <ProjectTimeline
+              tasks={tasks}
+              schedule={schedule}
+              dueDate={project.dueDate}
+              today={today}
+              nudgedIds={nudgedIds}
+              onNudge={handleNudge}
+            />
           </View>
         ) : null}
 
