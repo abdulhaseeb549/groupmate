@@ -3,6 +3,7 @@ import Constants from 'expo-constants';
 import * as Notifications from 'expo-notifications';
 import { Platform } from 'react-native';
 import { supabase } from '../lib/supabase';
+import { isConversationOpen, pushConversationKey } from './chatSignals';
 
 const LAST_TOKEN_KEY = 'groupmate:pushToken';
 
@@ -17,12 +18,24 @@ export function configureNotificationHandler(): void {
   handlerConfigured = true;
 
   Notifications.setNotificationHandler({
-    handleNotification: async () => ({
-      shouldShowBanner: true,
-      shouldShowList: true,
-      shouldPlaySound: true,
-      shouldSetBadge: false,
-    }),
+    handleNotification: async (notification) => {
+      // A message for the thread already on screen: no banner or sound —
+      // PushNotificationRegistrar still turns it into a refetch, so the
+      // message itself shows up in the open chat instead.
+      const data = notification.request.content.data as
+        | { kind?: string; projectId?: string; conversationOtherUserId?: string | null }
+        | undefined;
+      const forOpenThread =
+        data?.kind === 'message' &&
+        typeof data.projectId === 'string' &&
+        isConversationOpen(data.projectId, pushConversationKey(data.conversationOtherUserId));
+      return {
+        shouldShowBanner: !forOpenThread,
+        shouldShowList: !forOpenThread,
+        shouldPlaySound: !forOpenThread,
+        shouldSetBadge: false,
+      };
+    },
   });
 
   if (Platform.OS === 'android') {

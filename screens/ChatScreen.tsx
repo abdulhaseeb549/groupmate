@@ -1,4 +1,4 @@
-import { ReactNode, useEffect, useRef, useState } from 'react';
+import { memo, ReactNode, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   ActivityIndicator,
   Animated,
@@ -6,7 +6,10 @@ import {
   FlatList,
   Image,
   Linking,
+  ListRenderItem,
   Modal,
+  NativeScrollEvent,
+  NativeSyntheticEvent,
   Pressable,
   StyleSheet,
   Text,
@@ -36,16 +39,19 @@ import {
   fetchMessages,
   fetchReactions,
   getAttachmentUrl,
+  insertMessage,
+  mergeLatestPage,
   Message,
+  MESSAGE_PAGE_SIZE,
   Reaction,
   removeReaction,
   sendAttachment,
   sendMessage,
-  subscribeToMessages,
-  subscribeToReactions,
 } from '../state/messages';
+import { ChatHub } from '../state/chatRealtime';
+import { setOpenConversation } from '../state/chatSignals';
+import { useChatHub } from '../state/chatUnread';
 import { notifyMessage } from '../state/pushNotifications';
-import { subscribeToTyping } from '../state/presence';
 import { pickDocument, pickMedia } from '../utils/filePicker';
 import { useProject } from '../state/ProjectRepository';
 import { colors, gradients, layout, radius, type } from '../theme';
@@ -78,24 +84,71 @@ const ATTACH_KINDS: AttachKind[] = [
   { label: 'Video', icon: 'video', source: { via: 'media', kind: 'video' } },
 ];
 
+/** What a thread last showed, kept in memory so reopening it paints at once while the fresh page loads. */
+type CachedThread = { messages: Message[]; reactions: Reaction[]; hasMore: boolean };
+
+const threadCache = new Map<string, CachedThread>();
+
+function threadCacheKey(projectId: string, userId: string, key: string) {
+  return `${projectId}:${userId}:${key}`;
+}
+
+const NO_REACTIONS: Reaction[] = [];
+
+/** Most messages kept per thread in the in-memory cache. */
+const CACHE_LIMIT = MESSAGE_PAGE_SIZE * 2;
+
+const MAINTAIN_POSITION = { minIndexForVisible: 0 };
+
+function keyExtractor(message: Message) {
+  return message.id;
+}
+
+function sameReaction(a: Reaction, b: Reaction) {
+  return a.messageId === b.messageId && a.userId === b.userId && a.emoji === b.emoji;
+}
+
+/** How close to the bottom (in px) still counts as "reading the latest", so a new message scrolls into view. */
+const NEAR_BOTTOM = 160;
+
+/** A callback whose identity never changes but always runs the latest render's code — lets memoized rows skip re-rendering. */
+function useStableCallback<A extends unknown[], R>(fn: (...args: A) => R): (...args: A) => R {
+  const ref = useRef(fn);
+  ref.current = fn;
+  return useCallback((...args: A) => ref.current(...args), []);
+}
+
 /**
  * One conversation's message list + composer — either the project's group
  * chat or a 1:1 with one other member (see ChatListScreen for where a
  * conversation gets picked). A message is either plain text, a shared
- * task-claim card, or a file (see state/messages.ts). Sending is
- * await-then-let-Realtime-echo-it-back rather than optimistic: there's no
- * client-side id to show ahead of the insert (same reasoning as
- * ProjectRepository's addTask), and Realtime typically confirms fast
- * enough not to feel laggy.
+ * task-claim card, or a file (see state/messages.ts).
+ *
+ * Opens on the newest page only (older pages load as you scroll up), and
+ * shows the last-seen copy of the thread instantly from memory while that
+ * page loads. A sent message is shown from the insert's returned row, not
+ * after the Realtime echo; the echo is deduped by id. Live events come
+ * from the project's shared chat hub (state/chatRealtime.ts), which also
+ * says when to refetch: on reconnect, on returning to the foreground, and
+ * when a message push for this thread arrives.
  */
 export function ChatScreen({ conversation, onBack }: Props) {
   const insets = useSafeAreaInsets();
   const { project, tasks, members, membersById, claimTask, onlineUserIds } = useProject();
   const { session, profile } = useAuth();
+  const hub = useChatHub();
   const currentUserId = session?.user.id;
-  const [messages, setMessages] = useState<Message[] | null>(null);
+  const convKey = conversationKey(conversation);
+  const conversationRef = useRef(conversation);
+  conversationRef.current = conversation;
+
+  const [messages, setMessagesState] = useState<Message[] | null>(() =>
+    currentUserId ? (threadCache.get(threadCacheKey(project.id, currentUserId, convKey))?.messages ?? null) : null
+  );
+  const [reactions, setReactionsState] = useState<Reaction[]>(() =>
+    currentUserId ? (threadCache.get(threadCacheKey(project.id, currentUserId, convKey))?.reactions ?? []) : []
+  );
   const [loadError, setLoadError] = useState<string | null>(null);
-  const [live, setLive] = useState(false);
   const [input, setInput] = useState('');
   const [sending, setSending] = useState(false);
   const [attaching, setAttaching] = useState(false);
@@ -105,32 +158,249 @@ export function ChatScreen({ conversation, onBack }: Props) {
   const [attachError, setAttachError] = useState<string | null>(null);
   const [openTaskId, setOpenTaskId] = useState<string | null>(null);
   const [claimedTask, setClaimedTask] = useState<Task | null>(null);
-  const [reactions, setReactions] = useState<Reaction[]>([]);
   const [anchor, setAnchor] = useState<PickerAnchor | null>(null);
   const [deletingId, setDeletingId] = useState<string | null>(null);
   const [deleteError, setDeleteError] = useState<string | null>(null);
-  const [typingUserId, setTypingUserId] = useState<string | null>(null);
   const listRef = useRef<FlatList<Message>>(null);
-  const sendTypingRef = useRef<((key: string) => void) | null>(null);
-  const typingTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const lastTypingSentRef = useRef(0);
   // Messages already on screen when the thread opened. Anything not in here
   // is genuinely new and animates in; history doesn't re-animate on scroll.
   const settledIdsRef = useRef<Set<string>>(new Set());
 
-  function handleClaimed(task: Task) {
-    setClaimedTask(task);
-  }
+  // Mirrors of the list state, so async loads and Realtime events always
+  // build on the latest list rather than a stale render's copy.
+  const messagesRef = useRef<Message[] | null>(messages);
+  const reactionsRef = useRef<Reaction[]>(reactions);
+  const hasMoreRef = useRef(false);
+  /** Identity of the thread currently loaded — async work started for an older one checks this and drops its result. */
+  const threadRef = useRef<{ cacheKey: string } | null>(null);
+  const refreshInFlightRef = useRef(false);
+  const refreshAgainRef = useRef(false);
+  /** Messages added / removed while a refresh was in flight, re-applied on top of its (older) result. */
+  const arrivedRef = useRef<Message[]>([]);
+  const removedRef = useRef<Set<string>>(new Set());
+  const loadingOlderRef = useRef(false);
+  // Scroll bookkeeping: until the user drags, every size change jumps
+  // straight to the bottom (no animated slide through history on open).
+  const userScrolledRef = useRef(false);
+  const nearBottomRef = useRef(true);
+  const lastBottomIdRef = useRef<string | null>(null);
 
-  async function toggleReaction(messageId: string, emoji: string) {
+  const commit = useCallback((patch: { messages?: Message[] | null; reactions?: Reaction[]; hasMore?: boolean }) => {
+    if (patch.messages !== undefined) {
+      messagesRef.current = patch.messages;
+      setMessagesState(patch.messages);
+    }
+    if (patch.reactions !== undefined) {
+      reactionsRef.current = patch.reactions;
+      setReactionsState(patch.reactions);
+    }
+    if (patch.hasMore !== undefined) hasMoreRef.current = patch.hasMore;
+    const thread = threadRef.current;
+    const all = messagesRef.current;
+    if (thread && all) {
+      // Only the newest stretch is kept, so a thread scrolled far back
+      // doesn't reopen by rendering its whole history.
+      const kept = all.length > CACHE_LIMIT ? all.slice(-CACHE_LIMIT) : all;
+      const keptIds = kept === all ? null : new Set(kept.map((m) => m.id));
+      threadCache.set(thread.cacheKey, {
+        messages: kept,
+        reactions: keptIds ? reactionsRef.current.filter((r) => keptIds.has(r.messageId)) : reactionsRef.current,
+        hasMore: kept !== all || hasMoreRef.current,
+      });
+    }
+  }, []);
+
+  const addMessage = useCallback(
+    (message: Message) => {
+      if (refreshInFlightRef.current) arrivedRef.current.push(message);
+      // Still on the first load: it folds this in when it lands.
+      if (messagesRef.current === null) return;
+      commit({ messages: insertMessage(messagesRef.current, message) });
+    },
+    [commit]
+  );
+
+  const removeMessage = useCallback(
+    (messageId: string) => {
+      arrivedRef.current = arrivedRef.current.filter((m) => m.id !== messageId);
+      if (refreshInFlightRef.current) removedRef.current.add(messageId);
+      const current = messagesRef.current;
+      if (!current || !current.some((m) => m.id === messageId)) return;
+      commit({
+        messages: current.filter((m) => m.id !== messageId),
+        reactions: reactionsRef.current.filter((r) => r.messageId !== messageId),
+      });
+    },
+    [commit]
+  );
+
+  /** Reactions for just these messages, replacing what's held for them. A failure only means no pills until the next refresh — never an error screen. */
+  const loadReactions = useCallback(
+    async (messageIds: string[], thread: { cacheKey: string }) => {
+      if (messageIds.length === 0) return;
+      try {
+        const fetched = await fetchReactions(messageIds);
+        if (threadRef.current !== thread) return;
+        const ids = new Set(messageIds);
+        const loaded = new Set((messagesRef.current ?? []).map((m) => m.id));
+        commit({
+          reactions: [...reactionsRef.current.filter((r) => !ids.has(r.messageId) && loaded.has(r.messageId)), ...fetched],
+        });
+      } catch {
+        // Non-fatal on purpose.
+      }
+    },
+    [commit]
+  );
+
+  /** Fetches the newest page and folds it into what's shown. Coalesces: a call while one is running just schedules one more pass. */
+  const refreshLatest = useCallback(async () => {
+    const thread = threadRef.current;
+    if (!thread || !currentUserId) return;
+    if (refreshInFlightRef.current) {
+      refreshAgainRef.current = true;
+      return;
+    }
+    refreshInFlightRef.current = true;
+    try {
+      do {
+        refreshAgainRef.current = false;
+        arrivedRef.current = [];
+        removedRef.current = new Set();
+        const page = await fetchMessages(project.id, currentUserId, conversationRef.current);
+        if (threadRef.current !== thread) return;
+        const firstLoad = messagesRef.current === null;
+        const merged = mergeLatestPage(messagesRef.current ?? [], page);
+        let next = merged.messages;
+        for (const m of arrivedRef.current) next = insertMessage(next, m);
+        if (removedRef.current.size > 0) next = next.filter((m) => !removedRef.current.has(m.id));
+        if (firstLoad) for (const m of next) settledIdsRef.current.add(m.id);
+        const loaded = new Set(next.map((m) => m.id));
+        commit({
+          messages: next,
+          hasMore: merged.hasMore,
+          reactions: reactionsRef.current.filter((r) => loaded.has(r.messageId)),
+        });
+        setLoadError(null);
+        void loadReactions(
+          page.messages.map((m) => m.id),
+          thread
+        );
+      } while (refreshAgainRef.current && threadRef.current === thread);
+    } catch (err) {
+      // With a cached copy on screen, a failed refresh just leaves it there.
+      if (threadRef.current === thread && messagesRef.current === null) {
+        setLoadError(err instanceof Error ? err.message : 'Could not load messages.');
+      }
+    } finally {
+      if (threadRef.current === thread) refreshInFlightRef.current = false;
+    }
+  }, [project.id, currentUserId, commit, loadReactions]);
+
+  /** The page just older than the oldest message shown — called as the user scrolls near the top. */
+  const loadOlder = useCallback(async () => {
+    const thread = threadRef.current;
+    const current = messagesRef.current;
+    if (!thread || !currentUserId || !current || current.length === 0) return;
+    if (!hasMoreRef.current || loadingOlderRef.current) return;
+    loadingOlderRef.current = true;
+    try {
+      const page = await fetchMessages(project.id, currentUserId, conversationRef.current, { before: current[0].createdAt });
+      if (threadRef.current !== thread) return;
+      const latest = messagesRef.current ?? [];
+      const have = new Set(latest.map((m) => m.id));
+      const older = page.messages.filter((m) => !have.has(m.id));
+      for (const m of older) settledIdsRef.current.add(m.id);
+      commit({ messages: [...older, ...latest], hasMore: page.hasMore });
+      void loadReactions(
+        older.map((m) => m.id),
+        thread
+      );
+    } catch {
+      // Scrolling up again retries.
+    } finally {
+      if (threadRef.current === thread) loadingOlderRef.current = false;
+    }
+  }, [project.id, currentUserId, commit, loadReactions]);
+
+  // (Re)load whenever the thread changes: cached copy first, then the newest page.
+  useEffect(() => {
     if (!currentUserId) return;
-    const mine = reactions.some((r) => r.messageId === messageId && r.userId === currentUserId && r.emoji === emoji);
+    const thread = { cacheKey: threadCacheKey(project.id, currentUserId, convKey) };
+    threadRef.current = thread;
+    refreshInFlightRef.current = false;
+    refreshAgainRef.current = false;
+    arrivedRef.current = [];
+    removedRef.current = new Set();
+    loadingOlderRef.current = false;
+    userScrolledRef.current = false;
+    nearBottomRef.current = true;
+    lastBottomIdRef.current = null;
+    const cached = threadCache.get(thread.cacheKey);
+    settledIdsRef.current = new Set(cached ? cached.messages.map((m) => m.id) : []);
+    commit({ messages: cached?.messages ?? null, reactions: cached?.reactions ?? [], hasMore: cached?.hasMore ?? false });
+    setLoadError(null);
+    void refreshLatest();
+    return () => {
+      if (threadRef.current === thread) threadRef.current = null;
+    };
+  }, [project.id, currentUserId, convKey, commit, refreshLatest]);
+
+  // Live events for this thread, from the project's shared channels.
+  useEffect(() => {
+    if (!hub || !currentUserId) return;
+    return hub.listen((event) => {
+      switch (event.type) {
+        case 'message':
+          if (belongsToConversation(event.message, currentUserId, conversationRef.current)) addMessage(event.message);
+          break;
+        case 'messageDeleted':
+          // Fires for the deleter's own client too, so the optimistic
+          // removal in confirmDelete and this are both no-ops on whichever
+          // runs second.
+          removeMessage(event.messageId);
+          break;
+        case 'reactionAdded': {
+          const { reaction } = event;
+          if (!messagesRef.current?.some((m) => m.id === reaction.messageId)) return;
+          if (reactionsRef.current.some((r) => sameReaction(r, reaction))) return;
+          commit({ reactions: [...reactionsRef.current, reaction] });
+          break;
+        }
+        case 'reactionRemoved': {
+          const { reaction } = event;
+          if (!reactionsRef.current.some((r) => sameReaction(r, reaction))) return;
+          commit({ reactions: reactionsRef.current.filter((r) => !sameReaction(r, reaction)) });
+          break;
+        }
+        case 'resync':
+          if (event.conversationKey === null || event.conversationKey === convKey) void refreshLatest();
+          break;
+      }
+    });
+  }, [hub, currentUserId, convKey, addMessage, removeMessage, commit, refreshLatest]);
+
+  // Tells the notification handler which thread is on screen, so a push
+  // for it doesn't also pop a banner over the conversation itself.
+  useEffect(() => setOpenConversation({ projectId: project.id, conversationKey: convKey }), [project.id, convKey]);
+
+  const handleClaimed = useStableCallback((task: Task) => {
+    setClaimedTask(task);
+  });
+
+  const stableClaim = useStableCallback((taskId: string) => claimTask(taskId));
+
+  const toggleReaction = useStableCallback(async (messageId: string, emoji: string) => {
+    if (!currentUserId) return;
+    const mineReaction: Reaction = { messageId, userId: currentUserId, emoji };
+    const mine = reactionsRef.current.some((r) => sameReaction(r, mineReaction));
     // Optimistic, same as the rest of this app's simple toggles — reverted on failure below.
-    setReactions((prev) =>
-      mine
-        ? prev.filter((r) => !(r.messageId === messageId && r.userId === currentUserId && r.emoji === emoji))
-        : [...prev, { messageId, userId: currentUserId, emoji }]
-    );
+    commit({
+      reactions: mine
+        ? reactionsRef.current.filter((r) => !sameReaction(r, mineReaction))
+        : [...reactionsRef.current, mineReaction],
+    });
     try {
       if (mine) {
         await removeReaction(messageId, currentUserId, emoji);
@@ -138,159 +408,45 @@ export function ChatScreen({ conversation, onBack }: Props) {
         await addReaction(messageId, project.id, currentUserId, emoji);
       }
     } catch {
-      setReactions((prev) =>
-        mine
-          ? [...prev, { messageId, userId: currentUserId, emoji }]
-          : prev.filter((r) => !(r.messageId === messageId && r.userId === currentUserId && r.emoji === emoji))
-      );
+      commit({
+        reactions: mine
+          ? [...reactionsRef.current.filter((r) => !sameReaction(r, mineReaction)), mineReaction]
+          : reactionsRef.current.filter((r) => !sameReaction(r, mineReaction)),
+      });
     }
-  }
+  });
+
+  const markSettled = useStableCallback((messageId: string) => {
+    settledIdsRef.current.add(messageId);
+  });
 
   async function confirmDelete() {
     const messageId = deletingId;
     if (!messageId) return;
     setDeletingId(null);
     setDeleteError(null);
-    const removed = messages?.find((m) => m.id === messageId) ?? null;
+    const removed = messagesRef.current?.find((m) => m.id === messageId) ?? null;
     // Optimistic, same as removeTask — the RLS delete is scoped to your
     // own messages, so this only fails on something like a dropped
     // connection, not a permissions surprise.
-    setMessages((prev) => prev?.filter((m) => m.id !== messageId) ?? prev);
+    removeMessage(messageId);
     try {
       await deleteMessage(messageId);
     } catch (err) {
-      if (removed) setMessages((prev) => (prev ? [...prev, removed].sort((a, b) => a.createdAt.localeCompare(b.createdAt)) : prev));
+      if (removed) addMessage(removed);
       setDeleteError(err instanceof Error ? err.message : 'Could not unsend this message.');
     }
   }
 
   const title = conversation.type === 'group' ? project.name : (membersById[conversation.otherUserId]?.name ?? 'Direct message');
-  // Real presence (state/presence.ts), not the `live` connection dot below —
-  // that only ever reflects whether THIS device's own socket is connected,
-  // which is why it read as permanently "online" regardless of whether the
-  // other person actually had the app open.
-  const otherOnline = conversation.type === 'dm' ? onlineUserIds.has(conversation.otherUserId) : null;
-  const typingName = typingUserId ? (membersById[typingUserId]?.name ?? 'Someone') : null;
-  const subtitle =
-    typingName
-      ? conversation.type === 'group'
-        ? `${typingName} is typing`
-        : 'Typing'
-      : conversation.type === 'group'
-        ? `${members.length} ${members.length === 1 ? 'person' : 'people'} in chat`
-        : otherOnline
-          ? 'Active now'
-          : 'Offline';
-  const headerDotOn = conversation.type === 'dm' ? otherOnline : live;
-
-  useEffect(() => {
-    if (!currentUserId) return;
-    let cancelled = false;
-    // True once this channel has reported SUBSCRIBED at least once — a
-    // later SUBSCRIBED after that is a *reconnect* (socket dropped while
-    // backgrounded, e.g. during a notification tap that reopens an
-    // already-mounted conversation, where this effect's deps don't change
-    // so the mount-time fetch below never re-runs). Realtime doesn't
-    // replay missed inserts after reconnecting, so a reconnect needs its
-    // own refetch or a message sent while the socket was down is silently
-    // missing until something else remounts this screen.
-    let hasConnectedBefore = false;
-    setMessages(null);
-    setLoadError(null);
-    settledIdsRef.current = new Set();
-
-    function loadMessages() {
-      return fetchMessages(project.id, currentUserId as string, conversation)
-        .then((data) => {
-          if (cancelled) return;
-          for (const m of data) settledIdsRef.current.add(m.id);
-          setMessages(data);
-          return fetchReactions(data.map((m) => m.id));
-        })
-        .then((data) => {
-          if (!cancelled && data) setReactions(data);
-        })
-        .catch((err: unknown) => {
-          if (!cancelled) setLoadError(err instanceof Error ? err.message : 'Could not load messages.');
-        });
-    }
-
-    void loadMessages();
-
-    const unsubscribe = subscribeToMessages(
-      project.id,
-      (message) => {
-        if (!belongsToConversation(message, currentUserId, conversation)) return;
-        setMessages((prev) => {
-          const base = prev ?? [];
-          if (base.some((m) => m.id === message.id)) return base;
-          return [...base, message];
-        });
-      },
-      (isLive) => {
-        if (cancelled) return;
-        setLive(isLive);
-        if (isLive && hasConnectedBefore) void loadMessages();
-        hasConnectedBefore = true;
-      },
-      // Distinct from the unread tracker's subscription, which watches the
-      // same project at the same time.
-      'thread',
-      (messageId) => {
-        // Fires for the deleter's own client too (Realtime echoes back),
-        // so the optimistic removal in confirmDelete below and this are
-        // both no-ops on whichever one runs second.
-        setMessages((prev) => prev?.filter((m) => m.id !== messageId) ?? prev);
-      }
-    );
-
-    return () => {
-      cancelled = true;
-      unsubscribe();
-    };
-    // conversation is a fresh object per render from ChatTab's state, so
-    // key off its actual identity rather than the object reference.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [project.id, currentUserId, conversation.type, conversation.type === 'dm' ? conversation.otherUserId : null]);
-
-  // Project-wide, not scoped to this conversation's messages — harmless to
-  // hold a few extra reactions for other threads in memory, and this
-  // avoids re-subscribing every time the loaded message set changes.
-  useEffect(() => {
-    const unsubscribe = subscribeToReactions(project.id, (event) => {
-      setReactions((prev) => {
-        const matches = (r: Reaction) =>
-          r.messageId === event.reaction.messageId && r.userId === event.reaction.userId && r.emoji === event.reaction.emoji;
-        if (event.type === 'insert') {
-          return prev.some(matches) ? prev : [...prev, event.reaction];
-        }
-        return prev.filter((r) => !matches(r));
-      });
-    });
-    return unsubscribe;
-  }, [project.id]);
-
-  // Broadcast, not DB-backed (see state/presence.ts) — "stopped typing" isn't
-  // its own event, so a fresh event just restarts a 3s timer, and silence
-  // for 3s reads as done. One channel per project like the reactions effect
-  // above; filtered to this conversation here rather than subscribed per-thread.
-  useEffect(() => {
-    if (!currentUserId) return;
-    setTypingUserId(null);
-    const { sendTyping, unsubscribe } = subscribeToTyping(project.id, currentUserId, (event) => {
-      if (event.conversationKey !== conversationKey(conversation)) return;
-      setTypingUserId(event.userId);
-      if (typingTimeoutRef.current) clearTimeout(typingTimeoutRef.current);
-      typingTimeoutRef.current = setTimeout(() => setTypingUserId(null), 3000);
-    });
-    sendTypingRef.current = sendTyping;
-    return () => {
-      unsubscribe();
-      sendTypingRef.current = null;
-      if (typingTimeoutRef.current) clearTimeout(typingTimeoutRef.current);
-    };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [project.id, currentUserId, conversation.type, conversation.type === 'dm' ? conversation.otherUserId : null]);
+  // Real presence (state/presence.ts) in both kinds of thread — never this
+  // device's own socket state, which read as "online" no matter who else
+  // had the app open. A DM: is the other person here. The group: is
+  // anyone other than you here.
+  const otherOnline =
+    conversation.type === 'dm'
+      ? onlineUserIds.has(conversation.otherUserId)
+      : members.some((m) => m.id !== currentUserId && onlineUserIds.has(m.id));
 
   // Throttled, not per-keystroke — a broadcast every 2.5s is plenty to keep
   // the other side's 3s timeout alive without spamming the channel.
@@ -300,7 +456,7 @@ export function ChatScreen({ conversation, onBack }: Props) {
     const now = Date.now();
     if (now - lastTypingSentRef.current > 2500) {
       lastTypingSentRef.current = now;
-      sendTypingRef.current?.(conversationKey(conversation));
+      hub?.sendTyping(conversation.type === 'dm' ? conversation.otherUserId : null);
     }
   }
 
@@ -330,7 +486,9 @@ export function ChatScreen({ conversation, onBack }: Props) {
     setSending(true);
     setInput('');
     try {
-      await sendMessage(project.id, currentUserId, body, conversation.type === 'dm' ? conversation.otherUserId : null);
+      const sent = await sendMessage(project.id, currentUserId, body, conversation.type === 'dm' ? conversation.otherUserId : null);
+      // Shown now from the inserted row; the Realtime echo is deduped by id.
+      addMessage(sent);
       notifyOthers(body);
     } catch {
       setInput(body);
@@ -350,13 +508,88 @@ export function ChatScreen({ conversation, onBack }: Props) {
     if (!file) return;
     setAttaching(true);
     try {
-      await sendAttachment(project.id, currentUserId, file, conversation.type === 'dm' ? conversation.otherUserId : null);
+      const sent = await sendAttachment(project.id, currentUserId, file, conversation.type === 'dm' ? conversation.otherUserId : null);
+      addMessage(sent);
       notifyOthers(`Sent ${file.filename}`);
     } catch (err) {
       setAttachError(err instanceof Error ? err.message : 'Could not send that file.');
     }
     setAttaching(false);
   }
+
+  const reactionsByMessage = useMemo(() => {
+    const map = new Map<string, Reaction[]>();
+    for (const r of reactions) {
+      const list = map.get(r.messageId);
+      if (list) list.push(r);
+      else map.set(r.messageId, [r]);
+    }
+    return map;
+  }, [reactions]);
+
+  const tasksById = useMemo(() => new Map(tasks.map((t) => [t.id, t])), [tasks]);
+
+  const renderItem = useCallback<ListRenderItem<Message>>(
+    ({ item, index }) => {
+      const prevItem = index > 0 && messages ? messages[index - 1] : undefined;
+      const showHeader = !prevItem || prevItem.authorId !== item.authorId;
+      const sharedTask = item.sharedTaskId ? (tasksById.get(item.sharedTaskId) ?? null) : null;
+      return (
+        <MessageRow
+          message={item}
+          isOwn={item.authorId === currentUserId}
+          author={membersById[item.authorId]}
+          showHeader={showHeader}
+          sharedTask={sharedTask}
+          membersById={membersById}
+          onClaim={stableClaim}
+          onOpen={setOpenTaskId}
+          onClaimed={handleClaimed}
+          reactions={reactionsByMessage.get(item.id) ?? NO_REACTIONS}
+          currentUserId={currentUserId}
+          onToggleReaction={toggleReaction}
+          onAnchor={setAnchor}
+          isNew={!settledIdsRef.current.has(item.id)}
+          onSettled={markSettled}
+        />
+      );
+    },
+    [messages, tasksById, currentUserId, membersById, stableClaim, handleClaimed, reactionsByMessage, toggleReaction, markSettled]
+  );
+
+  const handleContentSizeChange = useStableCallback(() => {
+    const list = listRef.current;
+    const current = messagesRef.current;
+    if (!list || !current || current.length === 0) return;
+    const last = current[current.length - 1];
+    if (!userScrolledRef.current) {
+      // Opening: land on the newest message without sliding through history.
+      list.scrollToEnd({ animated: false });
+      lastBottomIdRef.current = last.id;
+      return;
+    }
+    if (last.id === lastBottomIdRef.current) return;
+    lastBottomIdRef.current = last.id;
+    // A new message: follow it if you were reading the bottom, or sent it.
+    if (nearBottomRef.current || last.authorId === currentUserId) list.scrollToEnd({ animated: true });
+  });
+
+  const handleScroll = useStableCallback((e: NativeSyntheticEvent<NativeScrollEvent>) => {
+    const { contentOffset, contentSize, layoutMeasurement } = e.nativeEvent;
+    nearBottomRef.current = contentOffset.y + layoutMeasurement.height >= contentSize.height - NEAR_BOTTOM;
+    // Only once the user has scrolled themselves: the list starts at the
+    // top for a frame before it jumps to the bottom, which must not count.
+    if (userScrolledRef.current && contentOffset.y < layoutMeasurement.height) void loadOlder();
+  });
+
+  const handleScrollBeginDrag = useStableCallback(() => {
+    userScrolledRef.current = true;
+  });
+
+  const listContentStyle = useMemo(
+    () => [styles.list, { paddingTop: headerHeight + 8, paddingBottom: composerHeight + 12 }],
+    [headerHeight, composerHeight]
+  );
 
   const canSend = input.trim().length > 0 && !sending;
 
@@ -367,14 +600,14 @@ export function ChatScreen({ conversation, onBack }: Props) {
           {/* The messages fill the whole screen and slide under the glass header
               and composer, so the blur has something real to blur. */}
           <GlassTarget>
-            {messages === null ? (
-              <View style={[styles.centerBox, { paddingTop: headerHeight, paddingBottom: composerHeight }]}>
-                <ActivityIndicator color={colors.purple} />
-              </View>
-            ) : loadError ? (
+            {messages === null && loadError ? (
               <View style={[styles.centerBox, { paddingTop: headerHeight, paddingBottom: composerHeight }]}>
                 <Icon name="exclamation" size={20} color={colors.redText} strokeWidth={2.2} />
                 <Text style={[type.body, styles.muted, styles.centerText]}>{loadError}</Text>
+              </View>
+            ) : messages === null ? (
+              <View style={[styles.centerBox, { paddingTop: headerHeight, paddingBottom: composerHeight }]}>
+                <ActivityIndicator color={colors.purple} />
               </View>
             ) : messages.length === 0 ? (
               <View style={[styles.centerBox, { paddingTop: headerHeight, paddingBottom: composerHeight }]}>
@@ -392,36 +625,16 @@ export function ChatScreen({ conversation, onBack }: Props) {
               <FlatList
                 ref={listRef}
                 data={messages}
-                keyExtractor={(m) => m.id}
-                contentContainerStyle={[
-                  styles.list,
-                  { paddingTop: headerHeight + 8, paddingBottom: composerHeight + 12 },
-                ]}
-                onContentSizeChange={() => listRef.current?.scrollToEnd({ animated: true })}
-                renderItem={({ item, index }) => {
-                  const prevItem = index > 0 ? messages[index - 1] : undefined;
-                  const showHeader = !prevItem || prevItem.authorId !== item.authorId;
-                  const sharedTask = item.sharedTaskId ? (tasks.find((t) => t.id === item.sharedTaskId) ?? null) : null;
-                  return (
-                    <MessageRow
-                      message={item}
-                      isOwn={item.authorId === currentUserId}
-                      author={membersById[item.authorId]}
-                      showHeader={showHeader}
-                      sharedTask={sharedTask}
-                      membersById={membersById}
-                      onClaim={claimTask}
-                      onOpen={setOpenTaskId}
-                      onClaimed={handleClaimed}
-                      reactions={reactions.filter((r) => r.messageId === item.id)}
-                      currentUserId={currentUserId}
-                      onToggleReaction={toggleReaction}
-                      onAnchor={setAnchor}
-                      isNew={!settledIdsRef.current.has(item.id)}
-                      onSettled={() => settledIdsRef.current.add(item.id)}
-                    />
-                  );
-                }}
+                keyExtractor={keyExtractor}
+                contentContainerStyle={listContentStyle}
+                onContentSizeChange={handleContentSizeChange}
+                onScroll={handleScroll}
+                onScrollBeginDrag={handleScrollBeginDrag}
+                scrollEventThrottle={64}
+                // Older pages are prepended above what you're reading; this
+                // keeps your place instead of jumping.
+                maintainVisibleContentPosition={MAINTAIN_POSITION}
+                renderItem={renderItem}
               />
             )}
           </GlassTarget>
@@ -440,16 +653,14 @@ export function ChatScreen({ conversation, onBack }: Props) {
                 <Text style={[type.projectTitle, styles.ink]} numberOfLines={1}>
                   {title}
                 </Text>
-                <View style={styles.headerSubRow}>
-                  <View style={[styles.liveDot, headerDotOn ? styles.liveDotOn : styles.liveDotOff]} />
-                  <Text
-                    style={[type.caption, typingName ? styles.typingText : styles.muted]}
-                    numberOfLines={1}
-                  >
-                    {subtitle}
-                  </Text>
-                  {typingName ? <TypingDots /> : null}
-                </View>
+                <HeaderStatus
+                  hub={hub}
+                  conversation={conversation}
+                  currentUserId={currentUserId}
+                  membersById={membersById}
+                  memberCount={members.length}
+                  otherOnline={otherOnline}
+                />
               </View>
             </Glass>
           </View>
@@ -578,6 +789,89 @@ export function ChatScreen({ conversation, onBack }: Props) {
   );
 }
 
+/**
+ * The header's dot + subtitle line. Owns the "is typing" state itself, so
+ * a typing event re-renders only this line — not the whole screen and its
+ * message list.
+ *
+ * Who counts: in the group, anyone typing to the group; in a DM, only the
+ * other person typing to you. Typing clears after 3s of silence ("stopped
+ * typing" isn't its own event) or as soon as that person's message lands.
+ */
+function HeaderStatus({
+  hub,
+  conversation,
+  currentUserId,
+  membersById,
+  memberCount,
+  otherOnline,
+}: {
+  hub: ChatHub | null;
+  conversation: Conversation;
+  currentUserId: string | undefined;
+  membersById: Record<string, Member>;
+  memberCount: number;
+  otherOnline: boolean;
+}) {
+  const [typingUserId, setTypingUserId] = useState<string | null>(null);
+  const conversationRef = useRef(conversation);
+  conversationRef.current = conversation;
+  const convKey = conversationKey(conversation);
+
+  useEffect(() => {
+    setTypingUserId(null);
+    if (!hub || !currentUserId) return;
+    let timeout: ReturnType<typeof setTimeout> | null = null;
+    const unsubscribe = hub.listen((event) => {
+      const current = conversationRef.current;
+      if (event.type === 'typing') {
+        const { userId, recipientId } = event.typing;
+        const relevant =
+          current.type === 'group'
+            ? recipientId === null
+            : recipientId === currentUserId && userId === current.otherUserId;
+        if (!relevant) return;
+        setTypingUserId(userId);
+        if (timeout) clearTimeout(timeout);
+        timeout = setTimeout(() => setTypingUserId(null), 3000);
+      } else if (event.type === 'message') {
+        const { message } = event;
+        if (!belongsToConversation(message, currentUserId, current)) return;
+        setTypingUserId((prev) => (prev === message.authorId ? null : prev));
+      }
+    });
+    return () => {
+      unsubscribe();
+      if (timeout) clearTimeout(timeout);
+    };
+  }, [hub, currentUserId, convKey]);
+
+  const typingName = typingUserId ? (membersById[typingUserId]?.name ?? 'Someone') : null;
+  const subtitle =
+    typingName
+      ? conversation.type === 'group'
+        ? `${typingName} is typing`
+        : 'Typing'
+      : conversation.type === 'group'
+        ? `${memberCount} ${memberCount === 1 ? 'person' : 'people'} in chat`
+        : otherOnline
+          ? 'Active now'
+          : 'Offline';
+
+  return (
+    <View style={styles.headerSubRow}>
+      <View style={[styles.liveDot, otherOnline ? styles.liveDotOn : styles.liveDotOff]} />
+      <Text
+        style={[type.caption, typingName ? styles.typingText : styles.muted]}
+        numberOfLines={1}
+      >
+        {subtitle}
+      </Text>
+      {typingName ? <TypingDots /> : null}
+    </View>
+  );
+}
+
 /** Three dots pulsing in a stagger, next to the "Typing…" subtitle. */
 function TypingDots() {
   const values = useRef([0, 1, 2].map(() => new Animated.Value(0.3))).current;
@@ -634,7 +928,8 @@ function MessageEntry({ animate, onSettled, children }: { animate: boolean; onSe
   );
 }
 
-function MessageRow({
+/** Memoized: with stable callbacks from ChatScreen, a new message or reaction re-renders only the rows it touches. */
+const MessageRow = memo(function MessageRow({
   message,
   isOwn,
   author,
@@ -666,7 +961,7 @@ function MessageRow({
   onToggleReaction: (messageId: string, emoji: string) => void;
   onAnchor: (anchor: PickerAnchor) => void;
   isNew: boolean;
-  onSettled: () => void;
+  onSettled: (messageId: string) => void;
 }) {
   const time = formatTime(new Date(message.createdAt));
   const name = isOwn ? 'You' : (author?.name ?? 'Someone');
@@ -681,7 +976,7 @@ function MessageRow({
   }
 
   return (
-    <MessageEntry animate={isNew} onSettled={onSettled}>
+    <MessageEntry animate={isNew} onSettled={() => onSettled(message.id)}>
       <View style={[styles.row, isOwn && styles.rowOwn]}>
         <View style={[styles.bubbleColumn, isOwn && styles.bubbleColumnOwn]}>
           {showHeader ? (
@@ -730,7 +1025,7 @@ function MessageRow({
       </View>
     </MessageEntry>
   );
-}
+});
 
 function ReactionPills({
   reactions,

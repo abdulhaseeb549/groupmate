@@ -18,7 +18,7 @@ export type Message = {
   createdAt: string;
 };
 
-type MessageRow = {
+export type MessageRow = {
   id: string;
   project_id: string;
   author_id: string;
@@ -38,7 +38,7 @@ export type Conversation = { type: 'group' } | { type: 'dm'; otherUserId: string
 const SELECT_COLUMNS =
   'id, project_id, author_id, body, shared_task_id, recipient_id, attachment_path, attachment_name, attachment_type, attachment_size, created_at';
 
-function toMessage(row: MessageRow): Message {
+export function toMessage(row: MessageRow): Message {
   return {
     id: row.id,
     projectId: row.project_id,
@@ -64,11 +64,29 @@ export function belongsToConversation(message: Message, currentUserId: string, c
   );
 }
 
+/** How many messages one page holds — the newest page on open, then older pages as you scroll up. */
+export const MESSAGE_PAGE_SIZE = 50;
+
+export type MessagePage = {
+  /** Oldest first, ready to render. */
+  messages: Message[];
+  /** True when there are older messages than the oldest one in this page. */
+  hasMore: boolean;
+};
+
+/**
+ * One page of a conversation, newest first from the server and reversed
+ * here for display. Without `before` it's the newest page; with it, the
+ * page just older than that timestamp. Opening a long thread used to pull
+ * its whole history in one request, which is what made chats slow to open.
+ */
 export async function fetchMessages(
   projectId: string,
   currentUserId: string,
-  conversation: Conversation
-): Promise<Message[]> {
+  conversation: Conversation,
+  options: { before?: string; limit?: number } = {}
+): Promise<MessagePage> {
+  const limit = options.limit ?? MESSAGE_PAGE_SIZE;
   let query = supabase.from('messages').select(SELECT_COLUMNS).eq('project_id', projectId);
   query =
     conversation.type === 'group'
@@ -77,21 +95,55 @@ export async function fetchMessages(
           `and(author_id.eq.${currentUserId},recipient_id.eq.${conversation.otherUserId}),` +
             `and(author_id.eq.${conversation.otherUserId},recipient_id.eq.${currentUserId})`
         );
-  const { data, error } = await query.order('created_at');
+  if (options.before) query = query.lt('created_at', options.before);
+  // One extra row tells us whether an older page exists without a count query.
+  const { data, error } = await query.order('created_at', { ascending: false }).limit(limit + 1);
   if (error) throw error;
-  return (data ?? []).map(toMessage);
+  const rows = (data ?? []) as MessageRow[];
+  const hasMore = rows.length > limit;
+  return { messages: rows.slice(0, limit).map(toMessage).reverse(), hasMore };
 }
 
+/**
+ * Folds a fresh newest page into what's already shown: everything older
+ * than the fresh page is kept (older pages the user scrolled to), and the
+ * fresh page replaces the rest — so a message unsent while we weren't
+ * listening drops out, and anything missed arrives. If the fresh page is
+ * full and doesn't reach back to what we had, there may be a gap between
+ * them, so the fresh page wins outright.
+ */
+export function mergeLatestPage(existing: Message[], fresh: MessagePage): { messages: Message[]; hasMore: boolean } {
+  if (fresh.messages.length === 0) return { messages: [], hasMore: false };
+  const freshOldest = fresh.messages[0].createdAt;
+  const reachedExisting = !fresh.hasMore || existing.some((m) => m.createdAt <= freshOldest);
+  if (!reachedExisting) return { messages: fresh.messages, hasMore: true };
+  const older = existing.filter((m) => m.createdAt < freshOldest);
+  // Older rows we already hold only matter if the fresh page didn't reach the start of the thread.
+  return { messages: fresh.hasMore ? [...older, ...fresh.messages] : fresh.messages, hasMore: fresh.hasMore };
+}
+
+/** Adds one message (ignored if already present), keeping oldest-first order. */
+export function insertMessage(list: Message[], message: Message): Message[] {
+  if (list.some((m) => m.id === message.id)) return list;
+  const last = list[list.length - 1];
+  if (!last || last.createdAt <= message.createdAt) return [...list, message];
+  return [...list, message].sort((a, b) => a.createdAt.localeCompare(b.createdAt));
+}
+
+/** Inserts and returns the stored row, so the sender can show it at once instead of waiting for the Realtime echo. */
 export async function sendMessage(
   projectId: string,
   authorId: string,
   body: string,
   recipientId: string | null = null
-): Promise<void> {
-  const { error } = await supabase
+): Promise<Message> {
+  const { data, error } = await supabase
     .from('messages')
-    .insert({ project_id: projectId, author_id: authorId, body, recipient_id: recipientId });
+    .insert({ project_id: projectId, author_id: authorId, body, recipient_id: recipientId })
+    .select(SELECT_COLUMNS)
+    .single();
   if (error) throw error;
+  return toMessage(data as MessageRow);
 }
 
 /** Shares a task into the group conversation — task-claim cards are always broadcast to the whole team, not sent as a DM. */
@@ -115,23 +167,28 @@ export async function sendAttachment(
   authorId: string,
   file: { filename: string; mimeType: string; size: number; bytes: ArrayBuffer },
   recipientId: string | null = null
-): Promise<void> {
+): Promise<Message> {
   const path = `${projectId}/${authorId}-${Date.now()}-${file.filename}`;
   const { error: uploadError } = await supabase.storage
     .from('chat-attachments')
     .upload(path, file.bytes, { contentType: file.mimeType });
   if (uploadError) throw uploadError;
 
-  const { error } = await supabase.from('messages').insert({
-    project_id: projectId,
-    author_id: authorId,
-    recipient_id: recipientId,
-    attachment_path: path,
-    attachment_name: file.filename,
-    attachment_type: file.mimeType,
-    attachment_size: file.size,
-  });
+  const { data, error } = await supabase
+    .from('messages')
+    .insert({
+      project_id: projectId,
+      author_id: authorId,
+      recipient_id: recipientId,
+      attachment_path: path,
+      attachment_name: file.filename,
+      attachment_type: file.mimeType,
+      attachment_size: file.size,
+    })
+    .select(SELECT_COLUMNS)
+    .single();
   if (error) throw error;
+  return toMessage(data as MessageRow);
 }
 
 /** A short-lived signed URL for a private attachment — resolved fresh each time it's opened, never stored. */
@@ -155,55 +212,11 @@ export async function deleteMessage(messageId: string): Promise<void> {
   if (error) throw error;
 }
 
-/**
- * Live new-message (and unsend) push for one project — every
- * conversation's messages flow through the same channel, filtered by RLS
- * to only what this user is allowed to see (group messages, or a DM
- * they're a participant in). The caller filters further, down to the one
- * conversation it's showing, via belongsToConversation. Returns an
- * unsubscribe function.
- */
-export function subscribeToMessages(
-  projectId: string,
-  onInsert: (message: Message) => void,
-  /** True once the channel is actually live, false if it drops or errors. The chat header's dot reflects this instead of assuming a connection. */
-  onLive?: (live: boolean) => void,
-  /** Realtime topics are unique per socket, so two components watching the same project at once (the open thread and the unread tracker) must not ask for the same one. */
-  subscriberId: string = "default",
-  /**
-   * Fired when a message is unsent. Optional — the unread tracker only
-   * cares about the newest message per thread and accepts a stale preview
-   * until its next cold-start refetch if that exact message gets unsent,
-   * same class of tradeoff this file already makes elsewhere.
-   */
-  onDelete?: (messageId: string) => void
-): () => void {
-  const channel = supabase
-    .channel(`project:${projectId}:messages:${subscriberId}`)
-    .on(
-      'postgres_changes',
-      { event: 'INSERT', schema: 'public', table: 'messages', filter: `project_id=eq.${projectId}` },
-      (payload) => onInsert(toMessage(payload.new as MessageRow))
-    )
-    .on(
-      // Requires messages' replica identity to be FULL (migration 0020) —
-      // otherwise a DELETE's payload.old carries only the primary key, and
-      // this project_id filter would never match anything.
-      'postgres_changes',
-      { event: 'DELETE', schema: 'public', table: 'messages', filter: `project_id=eq.${projectId}` },
-      (payload) => onDelete?.((payload.old as MessageRow).id)
-    )
-    .subscribe((status) => onLive?.(status === 'SUBSCRIBED'));
-  return () => {
-    void supabase.removeChannel(channel);
-  };
-}
-
 export type Reaction = { messageId: string; userId: string; emoji: string };
 
-type ReactionRow = { message_id: string; user_id: string; emoji: string };
+export type ReactionRow = { message_id: string; user_id: string; emoji: string };
 
-function toReaction(row: ReactionRow): Reaction {
+export function toReaction(row: ReactionRow): Reaction {
   return { messageId: row.message_id, userId: row.user_id, emoji: row.emoji };
 }
 
@@ -237,28 +250,6 @@ export async function removeReaction(messageId: string, userId: string, emoji: s
     .eq('user_id', userId)
     .eq('emoji', emoji);
   if (error) throw error;
-}
-
-export type ReactionEvent = { type: 'insert' | 'delete'; reaction: Reaction };
-
-/** Live reaction add/remove push for one project, filtered client-side (via the messageId on each event) to whichever conversation's messages are loaded. */
-export function subscribeToReactions(projectId: string, onChange: (event: ReactionEvent) => void): () => void {
-  const channel = supabase
-    .channel(`project:${projectId}:reactions`)
-    .on(
-      'postgres_changes',
-      { event: 'INSERT', schema: 'public', table: 'message_reactions', filter: `project_id=eq.${projectId}` },
-      (payload) => onChange({ type: 'insert', reaction: toReaction(payload.new as ReactionRow) })
-    )
-    .on(
-      'postgres_changes',
-      { event: 'DELETE', schema: 'public', table: 'message_reactions', filter: `project_id=eq.${projectId}` },
-      (payload) => onChange({ type: 'delete', reaction: toReaction(payload.old as ReactionRow) })
-    )
-    .subscribe();
-  return () => {
-    void supabase.removeChannel(channel);
-  };
 }
 
 /** Stable identity for a conversation — the storage key for its read state and the lookup key for its summary. */

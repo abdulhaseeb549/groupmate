@@ -1,5 +1,6 @@
 import 'react-native-url-polyfill/auto';
 import AsyncStorage from '@react-native-async-storage/async-storage';
+import { AppState, Platform } from 'react-native';
 import { createClient, SupabaseClient } from '@supabase/supabase-js';
 
 const supabaseUrl = process.env.EXPO_PUBLIC_SUPABASE_URL;
@@ -30,6 +31,24 @@ export const supabase: SupabaseClient = isSupabaseConfigured
       },
     })
   : (null as unknown as SupabaseClient);
+
+// On a phone, supabase-js can't see the app going to the background, so it
+// keeps (or loses) its token-refresh timer and socket blindly. Supabase's
+// recommended React Native setup: refresh tokens only while in the
+// foreground, and on returning, restart the refresh and reconnect Realtime
+// straight away rather than waiting for a heartbeat to notice the socket
+// died. The web build handles this itself through page visibility.
+if (isSupabaseConfigured && Platform.OS !== 'web') {
+  AppState.addEventListener('change', (state) => {
+    if (state === 'active') {
+      void supabase.auth.startAutoRefresh();
+      // Only if something is listening — an idle socket isn't worth opening.
+      if (supabase.getChannels().length > 0) supabase.realtime.connect();
+    } else {
+      void supabase.auth.stopAutoRefresh();
+    }
+  });
+}
 
 /**
  * Whether the Google provider is switched on for this Supabase project,
