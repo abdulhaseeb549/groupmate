@@ -1,5 +1,6 @@
-import { ActivityIndicator, Pressable, StyleSheet, Text, View } from 'react-native';
-import { Card, CardDivider } from './Card';
+import { StyleSheet, Text, View } from 'react-native';
+import { Glass } from './Glass';
+import { GradientButton, SecondaryButton } from './GradientButton';
 import { Icon } from './Icon';
 import { ExtractedProjectData } from '../state/briefParsing';
 import { colors, type } from '../theme';
@@ -13,18 +14,23 @@ type Props = {
   committing: boolean;
   onStartOver: () => void;
   onBuildPlan: () => void;
-  /** Label for the confirm action — the wording differs between creating a first project and replacing an existing one. */
+  /** Label for the confirm action — the wording differs between creating a first project and adding another. */
   buildLabel?: string;
+  /**
+   * The parent docks <BriefReviewActions> over the bottom of the screen itself
+   * (board GBriefReview: a glass bar the list scrolls under). Off by default,
+   * so a parent that only renders <BriefReview> still gets its buttons inline.
+   */
+  hideActions?: boolean;
 };
 
 /**
- * What the AI found in a brief, shown for review before anything is
- * written. Lives here rather than inside either screen that uses it: both
- * NewProjectScreen (replacing a brief) and OnboardingScreen (creating the
- * first project) render it, and OnboardingScreen importing it from
- * NewProjectScreen would close an import cycle back through
- * ProjectRepository — harmless in the dev bundler, the kind of thing that
- * silently breaks a release build.
+ * Board GBriefReview: what the AI found in a brief, shown for review before
+ * anything is written. Lives here rather than inside either screen that uses
+ * it: both NewProjectScreen and OnboardingScreen render it, and
+ * OnboardingScreen importing it from NewProjectScreen would close an import
+ * cycle back through ProjectRepository — harmless in the dev bundler, the
+ * kind of thing that silently breaks a release build.
  */
 export function BriefReview({
   extracted,
@@ -33,94 +39,141 @@ export function BriefReview({
   committing,
   onStartOver,
   onBuildPlan,
-  buildLabel = 'Build my plan →',
+  buildLabel,
+  hideActions = false,
 }: Props) {
+  const reqCount = extracted.requirements.length;
+  const taskCount = extracted.tasks.length;
   return (
     <View style={styles.review}>
       <View style={styles.intro}>
-        <Text style={[type.caption, styles.muted]}>Here's what I found — nothing's changed yet</Text>
-        <Text style={[type.pageTitle, styles.ink]} numberOfLines={2}>
+        <Text style={styles.eyebrow}>Found in your brief</Text>
+        <Text style={styles.h1} numberOfLines={3} accessibilityRole="header">
           {extracted.projectName}
         </Text>
-        <Text style={[type.body, styles.muted]}>
+        <Text style={styles.sub}>
           {extracted.course} · Due {formatDueDate(extracted.dueDate, today)}
         </Text>
       </View>
 
-      <View style={styles.section}>
-        <Text style={[type.button, styles.ink]}>
-          {extracted.requirements.length} {extracted.requirements.length === 1 ? 'requirement' : 'requirements'}
-        </Text>
-        <Card>
-          {extracted.requirements.map((r, i) => (
-            <View key={r.label}>
-              {i > 0 ? <CardDivider inset={16 + 16 + 10} /> : null}
-              <View style={styles.row}>
-                <View style={styles.rowIcon}>
-                  <Icon name={contentIcon(r.label)} size={16} color={colors.muted} strokeWidth={1.8} />
-                </View>
-                <Text style={[type.body, styles.ink, styles.rowLabel]}>{r.label}</Text>
-              </View>
-            </View>
-          ))}
-        </Card>
+      {/* Numbers lead: how big the job is, before the detail. */}
+      <View
+        style={[styles.card, styles.numbers]}
+        accessible
+        accessibilityLabel={`${reqCount} requirements, ${taskCount} tasks`}
+      >
+        <View style={styles.numberCol}>
+          <Text style={styles.big}>{reqCount}</Text>
+          <Text style={styles.m}>{reqCount === 1 ? 'Requirement' : 'Requirements'}</Text>
+        </View>
+        <View style={styles.vrule} />
+        <View style={styles.numberCol}>
+          <Text style={styles.big}>{taskCount}</Text>
+          <Text style={styles.m}>{taskCount === 1 ? 'Task' : 'Tasks'}</Text>
+        </View>
       </View>
 
       <View style={styles.section}>
-        <Text style={[type.button, styles.ink]}>
-          {extracted.tasks.length} {extracted.tasks.length === 1 ? 'task' : 'tasks'}
-        </Text>
-        <Text style={[type.caption, styles.muted]}>Unclaimed until someone on your team picks it up</Text>
-        <Card>
-          {extracted.tasks.map((t, i) => (
-            <View key={i}>
-              {i > 0 ? <CardDivider inset={16 + 16 + 10} /> : null}
-              <View style={styles.row}>
-                <View style={styles.rowIcon}>
-                  <Icon name={contentIcon(t.title)} size={16} color={colors.muted} strokeWidth={1.8} />
-                </View>
-                <Text style={[type.body, styles.ink, styles.rowLabel]} numberOfLines={2}>
-                  {t.title}
-                </Text>
-              </View>
+        <Text style={styles.lead}>Requirements</Text>
+        <View style={[styles.card, styles.listCard]}>
+          {extracted.requirements.map((r, i) => (
+            <View key={r.label + i}>
+              {i > 0 ? <View style={styles.sep} /> : null}
+              <Row label={r.label} />
             </View>
           ))}
-        </Card>
+        </View>
+      </View>
+
+      <View style={styles.section}>
+        <View style={styles.sectionHead}>
+          <Text style={styles.lead}>Tasks</Text>
+          <Text style={styles.m}>Nobody yet</Text>
+        </View>
+        <View style={[styles.card, styles.listCard]}>
+          {extracted.tasks.map((t, i) => (
+            <View key={i}>
+              {i > 0 ? <View style={styles.sep} /> : null}
+              <Row label={t.title} />
+            </View>
+          ))}
+        </View>
       </View>
 
       {error ? (
         <View style={styles.errorBox}>
           <Icon name="exclamation" size={16} color={colors.redText} strokeWidth={2.2} />
-          <Text style={[type.caption, styles.errorText]}>{error}</Text>
+          <Text style={[styles.m, styles.errorText]}>{error}</Text>
         </View>
       ) : null}
 
-      <View style={styles.actions}>
-        <Pressable
-          onPress={onStartOver}
-          disabled={committing}
-          accessibilityRole="button"
-          style={({ pressed }) => [styles.secondaryButton, pressed && styles.pressed]}
-        >
-          <Text style={[type.button, styles.ink]}>Start over</Text>
-        </Pressable>
-        <Pressable
-          onPress={onBuildPlan}
-          disabled={committing}
-          accessibilityRole="button"
-          style={({ pressed }) => [styles.submit, styles.buildButton, pressed && !committing && styles.submitPressed]}
-        >
-          {committing ? (
-            <>
-              <ActivityIndicator color={colors.onInk} />
-              <Text style={[type.button, styles.submitLabel]}>Building your plan…</Text>
-            </>
-          ) : (
-            <Text style={[type.button, styles.submitLabel]}>{buildLabel}</Text>
-          )}
-        </Pressable>
-      </View>
+      {hideActions ? null : (
+        <BriefReviewActions
+          committing={committing}
+          onStartOver={onStartOver}
+          onBuildPlan={onBuildPlan}
+          buildLabel={buildLabel}
+        />
+      )}
     </View>
+  );
+}
+
+function Row({ label }: { label: string }) {
+  return (
+    <View style={styles.li}>
+      <View style={styles.ic}>
+        <Icon name={contentIcon(label)} size={16} color={colors.muted} strokeWidth={1.8} />
+      </View>
+      <Text style={[styles.t, styles.flex]} numberOfLines={2}>
+        {label}
+      </Text>
+    </View>
+  );
+}
+
+/** "Start over" + "Build my plan". Inline by default; docked prop puts it in the board's glass bar. */
+export function BriefReviewActions({
+  committing,
+  onStartOver,
+  onBuildPlan,
+  buildLabel = 'Build my plan',
+  docked = false,
+  bottom = 16,
+}: {
+  committing: boolean;
+  onStartOver: () => void;
+  onBuildPlan: () => void;
+  buildLabel?: string;
+  docked?: boolean;
+  /** Docked only: distance from the screen bottom (16 + the home-indicator inset). */
+  bottom?: number;
+}) {
+  // Older callers pass labels ending in an arrow; the boards have none.
+  const label = buildLabel.replace(/\s*→\s*$/, '');
+  const buttons = (
+    <>
+      <SecondaryButton
+        label="Start over"
+        onPress={() => {
+          if (!committing) onStartOver();
+        }}
+        style={styles.startOver}
+      />
+      <GradientButton
+        label={committing ? 'Building your plan…' : label}
+        onPress={onBuildPlan}
+        loading={committing}
+        disabled={committing}
+        style={styles.flex}
+      />
+    </>
+  );
+  if (!docked) return <View style={styles.actions}>{buttons}</View>;
+  return (
+    <Glass radius={26} style={[styles.bar, { bottom }]}>
+      {buttons}
+    </Glass>
   );
 }
 
@@ -129,29 +182,114 @@ const styles = StyleSheet.create({
     gap: 22,
   },
   intro: {
-    gap: 8,
+    gap: 6,
   },
-  ink: {
-    color: colors.ink,
-  },
-  muted: {
+  eyebrow: {
+    fontFamily: type.taskTitle.fontFamily,
+    fontSize: 12,
+    lineHeight: 16,
+    letterSpacing: 0.6,
+    textTransform: 'uppercase',
     color: colors.muted,
   },
-  section: {
-    gap: 8,
+  h1: {
+    fontFamily: type.pageTitle.fontFamily,
+    fontSize: 32,
+    lineHeight: 35,
+    letterSpacing: -0.9,
+    color: colors.ink,
   },
-  row: {
+  sub: {
+    fontFamily: type.caption.fontFamily,
+    fontSize: 15,
+    lineHeight: 21,
+    color: colors.muted,
+  },
+  card: {
+    backgroundColor: colors.surface,
+    borderRadius: 22,
+    borderWidth: StyleSheet.hairlineWidth,
+    borderColor: 'rgba(17,17,17,0.06)',
+    shadowColor: '#1C1633',
+    shadowOpacity: 0.06,
+    shadowRadius: 22,
+    shadowOffset: { width: 0, height: 8 },
+    elevation: 2,
+  },
+  numbers: {
     flexDirection: 'row',
-    alignItems: 'flex-start',
+    alignItems: 'center',
+    paddingVertical: 18,
+    paddingHorizontal: 20,
+  },
+  numberCol: {
+    flex: 1,
+    gap: 4,
+  },
+  big: {
+    fontFamily: 'CabinetGrotesk-Extrabold',
+    fontSize: 40,
+    lineHeight: 40,
+    letterSpacing: -1.2,
+    color: colors.ink,
+  },
+  vrule: {
+    width: StyleSheet.hairlineWidth,
+    alignSelf: 'stretch',
+    backgroundColor: '#ECEAF0',
+    marginHorizontal: 20,
+  },
+  section: {
     gap: 10,
-    minHeight: 44,
-    paddingVertical: 14,
+  },
+  sectionHead: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+  },
+  lead: {
+    fontFamily: type.sectionHeading.fontFamily,
+    fontSize: 18,
+    lineHeight: 24,
+    color: colors.ink,
+  },
+  listCard: {
+    paddingVertical: 4,
+  },
+  li: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 12,
+    minHeight: 52,
+    paddingVertical: 12,
     paddingHorizontal: 16,
   },
-  rowIcon: {
-    marginTop: 3,
+  ic: {
+    width: 32,
+    height: 32,
+    borderRadius: 10,
+    backgroundColor: 'rgba(21,21,26,0.05)',
+    alignItems: 'center',
+    justifyContent: 'center',
   },
-  rowLabel: {
+  sep: {
+    height: StyleSheet.hairlineWidth,
+    backgroundColor: '#ECEAF0',
+    marginLeft: 60,
+  },
+  t: {
+    fontFamily: type.taskTitle.fontFamily,
+    fontSize: 15,
+    lineHeight: 21,
+    color: colors.ink,
+  },
+  m: {
+    fontFamily: type.caption.fontFamily,
+    fontSize: 13,
+    lineHeight: 18,
+    color: colors.muted,
+  },
+  flex: {
     flex: 1,
   },
   errorBox: {
@@ -159,8 +297,8 @@ const styles = StyleSheet.create({
     alignItems: 'flex-start',
     gap: 8,
     backgroundColor: colors.redSoft,
-    borderRadius: 12,
-    padding: 12,
+    borderRadius: 16,
+    padding: 14,
   },
   errorText: {
     flex: 1,
@@ -170,33 +308,15 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     gap: 10,
   },
-  secondaryButton: {
-    flex: 1,
-    height: 52,
-    borderRadius: 16,
-    backgroundColor: colors.surfaceMuted,
-    alignItems: 'center',
-    justifyContent: 'center',
+  startOver: {
+    width: 120,
   },
-  pressed: {
-    opacity: 0.6,
-  },
-  submit: {
+  bar: {
+    position: 'absolute',
+    left: 12,
+    right: 12,
     flexDirection: 'row',
-    height: 52,
-    borderRadius: 16,
-    backgroundColor: colors.purple,
-    alignItems: 'center',
-    justifyContent: 'center',
     gap: 10,
-  },
-  buildButton: {
-    flex: 2,
-  },
-  submitPressed: {
-    opacity: 0.85,
-  },
-  submitLabel: {
-    color: colors.onInk,
+    padding: 10,
   },
 });
