@@ -237,12 +237,12 @@ const styles = StyleSheet.create({
     gap: 12,
   },
   card: {
-    backgroundColor: colors.surface,
+    backgroundColor: '#1B1A22',
     borderRadius: radius.card,
     borderWidth: StyleSheet.hairlineWidth,
-    borderColor: 'rgba(17,17,17,0.06)',
+    borderColor: 'rgba(255,255,255,0.06)',
     shadowColor: '#1C1633',
-    shadowOpacity: 0.06,
+    shadowOpacity: 0.18,
     shadowRadius: 22,
     shadowOffset: { width: 0, height: 8 },
     elevation: 2,
@@ -253,7 +253,7 @@ const styles = StyleSheet.create({
     right: 14,
     top: 10,
     bottom: -8,
-    opacity: 0.55,
+    opacity: 0.35,
   },
   front: {
     paddingTop: 20,
@@ -267,14 +267,14 @@ const styles = StyleSheet.create({
     lineHeight: 16,
     letterSpacing: 0.6,
     textTransform: 'uppercase',
-    color: colors.purple,
+    color: '#B9A9F5',
   },
   heading: {
     fontFamily: type.pageTitle.fontFamily,
     fontSize: 24,
     lineHeight: 28,
     letterSpacing: -0.5,
-    color: colors.ink,
+    color: '#FFFFFF',
   },
   points: {
     gap: 8,
@@ -288,7 +288,7 @@ const styles = StyleSheet.create({
     width: 6,
     height: 6,
     borderRadius: 3,
-    backgroundColor: colors.purple,
+    backgroundColor: '#B9A9F5',
     marginTop: 7,
   },
   pointText: {
@@ -296,7 +296,7 @@ const styles = StyleSheet.create({
     fontFamily: type.caption.fontFamily,
     fontSize: 14,
     lineHeight: 20,
-    color: '#3C3A47',
+    color: 'rgba(255,255,255,0.78)',
   },
   footer: {
     flexDirection: 'row',
@@ -348,7 +348,7 @@ const styles = StyleSheet.create({
     top: 0,
     bottom: 0,
     width: '100%',
-    opacity: 0.5,
+    opacity: 0.3,
     transform: [{ scale: 0.94 }],
   },
   sideLeft: {
@@ -368,11 +368,11 @@ const styles = StyleSheet.create({
     fontSize: 32,
     lineHeight: 35,
     letterSpacing: -0.9,
-    color: colors.ink,
+    color: '#FFFFFF',
   },
   hair: {
     height: StyleSheet.hairlineWidth,
-    backgroundColor: colors.border,
+    backgroundColor: 'rgba(255,255,255,0.12)',
   },
   pointsFull: {
     gap: 16,
@@ -386,7 +386,7 @@ const styles = StyleSheet.create({
     width: 7,
     height: 7,
     borderRadius: 4,
-    backgroundColor: colors.purple,
+    backgroundColor: '#B9A9F5',
     marginTop: 8,
   },
   pointTextFull: {
@@ -394,7 +394,7 @@ const styles = StyleSheet.create({
     fontFamily: type.caption.fontFamily,
     fontSize: 16,
     lineHeight: 23,
-    color: '#3C3A47',
+    color: 'rgba(255,255,255,0.78)',
   },
   segletPast: {
     backgroundColor: '#B9A9F5',

@@ -1,14 +1,15 @@
 import { useEffect, useState } from 'react';
-import { ActivityIndicator, Modal, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
+import { Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Avatar } from './Avatar';
 import { Icon, IconName } from './Icon';
+import { Sheet } from './Sheet';
 import { ActivityItem, ActivityKind, fetchActivity } from '../state/activity';
 import { Conversation } from '../state/messages';
 import { useAuth } from '../state/AuthProvider';
 import { useChatUnread } from '../state/chatUnread';
 import { useProject } from '../state/ProjectRepository';
-import { colors, layout, radius, type } from '../theme';
+import { colors, type } from '../theme';
 import { formatRelative } from '../utils/dates';
 
 type Props = {
@@ -21,17 +22,14 @@ type Props = {
 const ICON: Record<ActivityKind, IconName> = {
   join: 'users',
   message: 'chat',
-  task: 'check',
+  task: 'tick',
 };
 
 /**
- * What the bell opens. Before this, the bell had no onPress at all and a
- * permanently lit dot — it promised a place where things that happened were
- * collected, and there wasn't one.
- *
- * Unread conversations come from the chat state that already tracks them,
- * rather than being refetched here, so the sheet and the Chat tab can never
- * disagree about what you have read.
+ * Board GActivity: what the bell opens. Unread conversations come from the
+ * chat state that already tracks them, rather than being refetched here, so
+ * the sheet and the Chat tab can never disagree about what you have read.
+ * Unread ones carry a coral dot on the face and are counted in the "N new" pill.
  */
 export function ActivitySheet({ visible, onClose, onOpenConversation }: Props) {
   const insets = useSafeAreaInsets();
@@ -66,14 +64,12 @@ export function ActivitySheet({ visible, onClose, onOpenConversation }: Props) {
     .filter((summary) => isUnread(summary.conversation))
     .map((summary) => {
       const author = membersById[summary.lastAuthorId];
+      const first = author ? author.name.split(' ')[0] : 'Someone';
       return {
         id: 'msg:' + summary.key,
         kind: 'message' as const,
         at: summary.lastAt,
-        title:
-          summary.conversation.type === 'group'
-            ? `${author ? author.name.split(' ')[0] : 'Someone'} in Team chat`
-            : `${author ? author.name.split(' ')[0] : 'Someone'} messaged you`,
+        title: summary.conversation.type === 'group' ? `${first} in Team chat` : `${first} messaged you`,
         detail: summary.preview,
         member: author,
       };
@@ -90,121 +86,198 @@ export function ActivitySheet({ visible, onClose, onOpenConversation }: Props) {
   }
 
   return (
-    <Modal visible={visible} transparent animationType="slide" onRequestClose={onClose}>
-      <Pressable style={styles.backdrop} onPress={onClose} accessibilityLabel="Close" />
-      <View style={[styles.sheet, { paddingBottom: Math.max(insets.bottom, 16) + 8 }]}>
-        <View style={styles.grabber} />
-        <Text style={[type.projectTitle, styles.ink, styles.heading]}>Activity</Text>
+    <Sheet visible={visible} onClose={onClose}>
+      <ScrollView
+        contentContainerStyle={[styles.body, { paddingBottom: Math.max(insets.bottom, 0) + 34 }]}
+        showsVerticalScrollIndicator={false}
+      >
+        <View style={styles.header}>
+          <Text style={styles.title} accessibilityRole="header">
+            Activity
+          </Text>
+          {unread.length > 0 ? (
+            <View style={styles.pill}>
+              <Text style={styles.pillText}>{unread.length} new</Text>
+            </View>
+          ) : null}
+        </View>
 
         {items === null && !error ? (
-          <ActivityIndicator color={colors.purple} style={styles.loading} />
+          <View style={styles.list} accessibilityLabel="Loading activity">
+            {[0, 1, 2].map((i) => (
+              <View key={i}>
+                {i > 0 ? <View style={styles.sep} /> : null}
+                <View style={styles.row}>
+                  <View style={[styles.face, styles.ghost]} />
+                  <View style={styles.text}>
+                    <View style={[styles.ghostBar, { width: '55%' }]} />
+                    <View style={[styles.ghostBar, { width: '80%' }]} />
+                  </View>
+                </View>
+              </View>
+            ))}
+          </View>
         ) : error ? (
           <View style={styles.errorBox}>
             <Icon name="exclamation" size={16} color={colors.redText} strokeWidth={2.2} />
-            <Text style={[type.caption, styles.errorText]}>{error}</Text>
+            <Text style={[styles.m, styles.errorText]}>{error}</Text>
           </View>
         ) : merged.length === 0 ? (
           <View style={styles.empty}>
-            <Text style={[type.taskTitle, styles.ink]}>Nothing new</Text>
-            <Text style={[type.caption, styles.muted]}>
-              Teammates joining, new tasks, and messages you haven't read show up here.
-            </Text>
+            <Text style={styles.t}>Nothing new</Text>
+            <Text style={styles.m}>Teammates joining, new tasks, and messages you haven't read show up here.</Text>
           </View>
         ) : (
-          <ScrollView style={styles.list} showsVerticalScrollIndicator={false}>
-            {merged.map((item) => {
+          <View style={styles.list}>
+            {merged.map((item, i) => {
               const pressable = item.kind === 'message';
+              const fresh = item.id.startsWith('msg:');
+              const when = formatRelative(item.at);
               return (
-                <Pressable
-                  key={item.id}
-                  onPress={() => handlePress(item)}
-                  disabled={!pressable}
-                  accessibilityRole={pressable ? 'button' : undefined}
-                  style={({ pressed }) => [styles.row, pressed && pressable && styles.rowPressed]}
-                >
-                  {item.member ? (
-                    <Avatar {...item.member} size={38} />
-                  ) : (
-                    <View style={styles.tile}>
-                      <Icon name={ICON[item.kind]} size={18} color={colors.muted} strokeWidth={1.9} />
+                <View key={item.id}>
+                  {i > 0 ? <View style={styles.sep} /> : null}
+                  <Pressable
+                    onPress={() => handlePress(item)}
+                    disabled={!pressable}
+                    accessibilityRole={pressable ? 'button' : undefined}
+                    accessibilityLabel={`${item.title}: ${item.detail}, ${when}${pressable ? '. Open chat' : ''}`}
+                    style={({ pressed }) => [styles.row, pressed && pressable && styles.pressed]}
+                  >
+                    {item.member ? (
+                      <View style={styles.face}>
+                        <Avatar {...item.member} size={40} />
+                        {fresh ? <View style={styles.newDot} /> : null}
+                      </View>
+                    ) : (
+                      <View style={styles.tile}>
+                        <Icon name={ICON[item.kind]} size={19} color={colors.muted} strokeWidth={2} />
+                      </View>
+                    )}
+                    <View style={styles.text}>
+                      <Text style={styles.t} numberOfLines={1}>
+                        {item.title}
+                      </Text>
+                      <Text style={styles.m} numberOfLines={1}>
+                        {item.detail}
+                      </Text>
                     </View>
-                  )}
-                  <View style={styles.rowText}>
-                    <Text style={[type.taskTitle, styles.ink]} numberOfLines={2}>
-                      {item.title}
-                    </Text>
-                    <Text style={[type.caption, styles.muted]} numberOfLines={1}>
-                      {item.detail}
-                    </Text>
-                  </View>
-                  <Text style={[type.tinyLabel, styles.when]}>{formatRelative(item.at)}</Text>
-                </Pressable>
+                    <Text style={styles.when}>{when}</Text>
+                  </Pressable>
+                </View>
               );
             })}
-          </ScrollView>
+          </View>
         )}
-      </View>
-    </Modal>
+      </ScrollView>
+    </Sheet>
   );
 }
 
 const styles = StyleSheet.create({
-  backdrop: {
-    flex: 1,
-    backgroundColor: 'rgba(17,17,17,0.35)',
+  body: {
+    paddingHorizontal: 20,
   },
-  sheet: {
-    backgroundColor: colors.surface,
-    borderTopLeftRadius: 28,
-    borderTopRightRadius: 28,
-    paddingHorizontal: layout.screenPadding,
-    paddingTop: 10,
-    maxHeight: '75%',
+  header: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingTop: 14,
   },
-  grabber: {
-    alignSelf: 'center',
-    width: 38,
-    height: 4,
-    borderRadius: 2,
-    backgroundColor: colors.border,
-    marginBottom: 14,
+  title: {
+    fontFamily: type.pageTitle.fontFamily,
+    fontSize: 28,
+    lineHeight: 32,
+    letterSpacing: -0.9,
+    color: colors.ink,
   },
-  heading: {
-    marginBottom: 6,
+  pill: {
+    height: 24,
+    paddingHorizontal: 10,
+    borderRadius: 12,
+    backgroundColor: colors.redSoft,
+    justifyContent: 'center',
   },
-  loading: {
-    paddingVertical: 32,
+  pillText: {
+    fontFamily: type.badge.fontFamily,
+    fontSize: 12,
+    lineHeight: 16,
+    color: colors.redText,
   },
   list: {
-    flexGrow: 0,
+    marginTop: 10,
   },
   row: {
     flexDirection: 'row',
     alignItems: 'center',
     gap: 12,
-    minHeight: 56,
-    paddingVertical: 10,
-    paddingHorizontal: 4,
-    borderRadius: radius.control,
+    minHeight: 64,
+    paddingVertical: 12,
   },
-  rowPressed: {
-    backgroundColor: colors.surfaceMuted,
+  pressed: {
+    opacity: 0.6,
+  },
+  sep: {
+    height: StyleSheet.hairlineWidth,
+    backgroundColor: '#ECEAF0',
+    marginLeft: 52,
+  },
+  face: {
+    width: 40,
+    height: 40,
+  },
+  newDot: {
+    position: 'absolute',
+    top: -1,
+    right: -1,
+    width: 10,
+    height: 10,
+    borderRadius: 5,
+    backgroundColor: '#E95B57',
+    borderWidth: 2,
+    borderColor: '#FFFFFF',
   },
   tile: {
-    width: 38,
-    height: 38,
-    borderRadius: 19,
-    backgroundColor: colors.surfaceMuted,
+    width: 40,
+    height: 40,
+    borderRadius: 13,
+    backgroundColor: 'rgba(21,21,26,0.05)',
     alignItems: 'center',
     justifyContent: 'center',
   },
-  rowText: {
+  text: {
     flex: 1,
     minWidth: 0,
     gap: 2,
   },
+  t: {
+    fontFamily: type.taskTitle.fontFamily,
+    fontSize: 15,
+    lineHeight: 21,
+    color: colors.ink,
+  },
+  m: {
+    fontFamily: type.caption.fontFamily,
+    fontSize: 13,
+    lineHeight: 18,
+    color: colors.muted,
+  },
   when: {
-    color: colors.faint,
+    alignSelf: 'flex-start',
+    marginTop: 3,
+    fontFamily: type.caption.fontFamily,
+    fontSize: 12,
+    lineHeight: 16,
+    color: '#9D99A6',
+  },
+  ghost: {
+    borderRadius: 20,
+    backgroundColor: 'rgba(21,21,26,0.05)',
+  },
+  ghostBar: {
+    height: 12,
+    borderRadius: 6,
+    marginVertical: 3,
+    backgroundColor: 'rgba(21,21,26,0.05)',
   },
   empty: {
     gap: 4,
@@ -215,18 +288,12 @@ const styles = StyleSheet.create({
     alignItems: 'flex-start',
     gap: 8,
     backgroundColor: colors.redSoft,
-    borderRadius: radius.control,
-    padding: layout.cardPadding,
-    marginBottom: 12,
+    borderRadius: 16,
+    padding: 16,
+    marginTop: 16,
   },
   errorText: {
     flex: 1,
     color: colors.redText,
-  },
-  ink: {
-    color: colors.ink,
-  },
-  muted: {
-    color: colors.muted,
   },
 });
