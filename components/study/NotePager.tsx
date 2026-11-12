@@ -1,188 +1,124 @@
 import { useRef, useState } from 'react';
-import {
-  Animated,
-  LayoutAnimation,
-  LayoutChangeEvent,
-  NativeScrollEvent,
-  NativeSyntheticEvent,
-  Pressable,
-  ScrollView,
-  StyleSheet,
-  Text,
-  View,
-} from 'react-native';
+import { Animated, Easing, PanResponder, Pressable, StyleSheet, Text, View } from 'react-native';
 import { Icon } from '../Icon';
 import { NotePage } from '../../state/studyQuiz';
-import { colors, layout, radius, type } from '../../theme';
+import { colors, radius, type } from '../../theme';
 
 type Props = {
   pages: NotePage[];
-  /** Renders one card at a reduced height for the Study screen's preview slot; full height when opened on its own. */
+  /** The Study screen's preview: two points per card. Full when opened on its own. */
   compact?: boolean;
 };
 
+// How far a card slides when it leaves or arrives, and how far a finger has
+// to drag before a swipe counts.
+const SLIDE = 36;
+const SWIPE = 40;
+
 /**
- * The revision pointers, one topic per card, swiped through like a stack of
- * flashcards.
+ * Points to remember (board GStudy): one flashcard at a time, the next card
+ * peeking out behind it, a segment per card and two round arrows.
  *
- * Paged ScrollView rather than a FlatList: the set is capped at eight cards
- * by the Edge Function, so there is nothing to virtualise, and paging a
- * plain ScrollView keeps the arrows and the swipe driving the same
- * scrollTo. The arrows exist because a card stack with no affordance reads
- * as a single static card — the progress bar alone doesn't say "swipe".
+ * A stack rather than a horizontal pager: the board shows a single
+ * full-width card with the next one tucked BEHIND it, which a pager can't
+ * draw. Swipe or tap an arrow; the card slides and fades out, the next one
+ * slides in from the other side. Native driver throughout.
  */
-// A card is inset from the scroller on both sides rather than filling it.
-// At the full viewport width a card's own rounded corner sits exactly on
-// the clip boundary, so the moment it moves the corner is outside the
-// viewport and the edge renders as a straight cut — the card appears to
-// square off while scrolling. Insetting it keeps all four corners inside
-// the clip at every scroll position, and the exposed sliver of the next
-// card is the usual carousel hint that there is one.
-const SIDE_INSET = 18;
-const CARD_GAP = 12;
-
-// Short and eased rather than a spring: this runs beside a scroll the
-// finger is already driving, and a bouncing progress bar next to it
-// reads as two different animations disagreeing.
-const SEGMENT_ANIMATION = LayoutAnimation.create(
-  180,
-  LayoutAnimation.Types.easeInEaseOut,
-  LayoutAnimation.Properties.scaleXY
-);
-
 export function NotePager({ pages, compact = false }: Props) {
-  const scroller = useRef<ScrollView>(null);
-  const [width, setWidth] = useState(0);
   const [index, setIndex] = useState(0);
-  // Drives the card motion straight off the scroll position, so a card
-  // tracks the finger rather than snapping when the gesture ends.
-  const scrollX = useRef(new Animated.Value(0)).current;
+  const indexRef = useRef(0);
+  indexRef.current = index;
+  const shift = useRef(new Animated.Value(0)).current;
+  const fade = useRef(new Animated.Value(1)).current;
+  const busy = useRef(false);
 
-  // What one card occupies, and what one page of scrolling advances by.
-  // Every offset below is in units of `interval`, not of the viewport.
-  const cardWidth = width > 0 ? width - SIDE_INSET * 2 : 0;
-  const interval = cardWidth + CARD_GAP;
-
-  function handleLayout(event: LayoutChangeEvent) {
-    setWidth(event.nativeEvent.layout.width);
-  }
-
-  function handleScrollEnd(event: NativeSyntheticEvent<NativeScrollEvent>) {
-    if (interval === 0) return;
-    const next = Math.round(event.nativeEvent.contentOffset.x / interval);
-    if (next === index) return;
-    // The segments change size as well as colour, so the swap needs to
-    // animate or it reads as a jump next to the card that just glided.
-    LayoutAnimation.configureNext(SEGMENT_ANIMATION);
-    setIndex(next);
+  function settle() {
+    Animated.spring(shift, { toValue: 0, useNativeDriver: true, speed: 20, bounciness: 6 }).start();
   }
 
   function go(delta: number) {
-    const next = Math.min(Math.max(index + delta, 0), pages.length - 1);
-    if (next === index) return;
-    LayoutAnimation.configureNext(SEGMENT_ANIMATION);
-    setIndex(next);
-    scroller.current?.scrollTo({ x: next * interval, animated: true });
+    const next = indexRef.current + delta;
+    if (busy.current || next < 0 || next >= pages.length) {
+      settle();
+      return;
+    }
+    busy.current = true;
+    Animated.parallel([
+      Animated.timing(shift, { toValue: -delta * SLIDE, duration: 130, easing: Easing.in(Easing.quad), useNativeDriver: true }),
+      Animated.timing(fade, { toValue: 0, duration: 130, useNativeDriver: true }),
+    ]).start(() => {
+      setIndex(next);
+      shift.setValue(delta * SLIDE);
+      Animated.parallel([
+        Animated.timing(shift, { toValue: 0, duration: 240, easing: Easing.out(Easing.cubic), useNativeDriver: true }),
+        Animated.timing(fade, { toValue: 1, duration: 200, useNativeDriver: true }),
+      ]).start(() => {
+        busy.current = false;
+      });
+    });
   }
+  const goRef = useRef(go);
+  goRef.current = go;
+
+  const pan = useRef(
+    PanResponder.create({
+      onMoveShouldSetPanResponder: (_, g) => Math.abs(g.dx) > 8 && Math.abs(g.dx) > Math.abs(g.dy) * 1.5,
+      onPanResponderMove: (_, g) => {
+        if (!busy.current) shift.setValue(g.dx * 0.6);
+      },
+      onPanResponderRelease: (_, g) => {
+        if (g.dx <= -SWIPE) goRef.current(1);
+        else if (g.dx >= SWIPE) goRef.current(-1);
+        else settle();
+      },
+      onPanResponderTerminate: () => settle(),
+    })
+  ).current;
 
   if (pages.length === 0) return null;
+  const page = pages[Math.min(index, pages.length - 1)];
+  const points = compact ? page.points.slice(0, 2) : page.points;
+  const hasMore = index < pages.length - 1;
 
   return (
     <View style={styles.outer}>
-      <Animated.ScrollView
-        ref={scroller}
-        horizontal
-        snapToInterval={interval > 0 ? interval : undefined}
-        snapToAlignment="start"
-        decelerationRate="fast"
-        contentContainerStyle={styles.track}
-        showsHorizontalScrollIndicator={false}
-        onMomentumScrollEnd={handleScrollEnd}
-        scrollEventThrottle={16}
-        onScroll={Animated.event([{ nativeEvent: { contentOffset: { x: scrollX } } }], {
-          useNativeDriver: true,
-        })}
-        // Measured on the scroller, not the padded wrapper around it: a
-        // wrapper measures its own padding too, which made every page 20px
-        // wider than the viewport and drifted paging by that much per card.
-        onLayout={handleLayout}
-        // Without a measured width every page would collapse to its content.
-        scrollEnabled={width > 0}
-      >
-        {/* Neighbours sit back slightly and dim, so the one you are on reads
-            as the front of a stack. Transform and opacity only, so it all
-            stays on the native driver. Skipped until a width is measured:
-            the interpolation's input range has to be strictly increasing,
-            and at width 0 it collapses to zeros. */}
-        {pages.map((page, i) => (
-            <Animated.View
-              key={i}
-              style={[
-                styles.card,
-                compact && styles.cardCompact,
-                { width: cardWidth },
-                interval > 0 && {
-                  transform: [
-                    {
-                      scale: scrollX.interpolate({
-                        inputRange: [(i - 1) * interval, i * interval, (i + 1) * interval],
-                        outputRange: [0.94, 1, 0.94],
-                        extrapolate: 'clamp',
-                      }),
-                    },
-                  ],
-                  opacity: scrollX.interpolate({
-                    inputRange: [(i - 1) * interval, i * interval, (i + 1) * interval],
-                    outputRange: [0.5, 1, 0.5],
-                    extrapolate: 'clamp',
-                  }),
-                },
-              ]}
-            >
-              <Text style={[type.metadata, styles.eyebrow, styles.eyebrowSize]} numberOfLines={1}>
-                {page.eyebrow}
-              </Text>
-              <Text style={[type.pageTitle, styles.heading]} numberOfLines={compact ? 3 : 4}>
-                {page.heading}
-              </Text>
-              <View style={styles.points}>
-                {page.points.slice(0, compact ? 2 : page.points.length).map((point, p) => (
-                  <View key={p} style={styles.pointRow}>
-                    <View style={styles.bullet} />
-                    <Text style={[type.subtitle, styles.pointText]}>{point}</Text>
-                  </View>
-                ))}
+      <View>
+        {/* The next card, tucked behind: says "there is more". */}
+        {hasMore ? <View pointerEvents="none" style={[styles.card, styles.peek]} /> : null}
+        <Animated.View
+          {...pan.panHandlers}
+          style={[styles.card, styles.front, { opacity: fade, transform: [{ translateX: shift }] }]}
+        >
+          <Text style={styles.eyebrow} numberOfLines={1}>
+            {page.eyebrow}
+          </Text>
+          <Text style={styles.heading} numberOfLines={compact ? 3 : 5}>
+            {page.heading}
+          </Text>
+          <View style={styles.points}>
+            {points.map((point, p) => (
+              <View key={p} style={styles.pointRow}>
+                <View style={styles.bullet} />
+                <Text style={styles.pointText}>{point}</Text>
               </View>
-            </Animated.View>
-        ))}
-      </Animated.ScrollView>
+            ))}
+          </View>
+        </Animated.View>
+      </View>
 
       <View style={styles.footer}>
-        {/* Segments rather than dots: at eight cards dots stop reading as
-            progress and start reading as decoration. */}
-        <View style={styles.progress}>
+        <View
+          style={styles.progress}
+          accessible
+          accessibilityRole="progressbar"
+          accessibilityLabel={`Card ${index + 1} of ${pages.length}`}
+        >
           {pages.map((_, i) => (
-            <View
-              key={i}
-              style={[
-                styles.segment,
-                i === index && styles.segmentActive,
-                i < index && styles.segmentPassed,
-              ]}
-            />
+            <View key={i} style={[styles.seglet, i === index && styles.segletNow]} />
           ))}
         </View>
-
-        <View style={styles.arrows}>
-          <Arrow name="chevronLeft" disabled={index === 0} onPress={() => go(-1)} label="Previous pointer" />
-          <Arrow
-            name="chevronRight"
-            disabled={index === pages.length - 1}
-            onPress={() => go(1)}
-            label="Next pointer"
-            emphasis
-          />
-        </View>
+        <Arrow name="chevronLeft" disabled={index === 0} onPress={() => go(-1)} label="Previous pointer" />
+        <Arrow name="chevronRight" disabled={!hasMore} onPress={() => go(1)} label="Next pointer" emphasis />
       </View>
     </View>
   );
@@ -201,6 +137,7 @@ function Arrow({
   label: string;
   emphasis?: boolean;
 }) {
+  const lit = emphasis && !disabled;
   return (
     <Pressable
       onPress={onPress}
@@ -208,37 +145,20 @@ function Arrow({
       accessibilityRole="button"
       accessibilityLabel={label}
       accessibilityState={{ disabled }}
-      hitSlop={6}
       style={({ pressed }) => [
         styles.arrow,
-        emphasis && styles.arrowEmphasis,
-        disabled && styles.arrowDisabled,
+        lit ? styles.arrowLit : styles.arrowQuiet,
         pressed && !disabled && styles.arrowPressed,
       ]}
     >
-      <Icon
-        name={name}
-        size={16}
-        color={disabled ? colors.faint : emphasis ? colors.purple : colors.muted}
-        strokeWidth={2.2}
-      />
+      <Icon name={name} size={18} color={disabled ? '#C9C6D1' : lit ? colors.purple : colors.muted} strokeWidth={2.2} />
     </Pressable>
   );
 }
 
 const styles = StyleSheet.create({
-  // No frame of its own: each card is the surface, and the next one
-  // peeking in from the right says there is more.
   outer: {
-    gap: 8,
-  },
-  // The same inset on all four sides of a card. It was SIDE_INSET left and
-  // right but only the outer container's 10px on top, so a card sat visibly
-  // closer to the top edge of its frame than to either side.
-  track: {
-    paddingHorizontal: 0,
-    paddingVertical: 10,
-    gap: CARD_GAP,
+    gap: 12,
   },
   card: {
     backgroundColor: colors.surface,
@@ -246,50 +166,46 @@ const styles = StyleSheet.create({
     borderWidth: StyleSheet.hairlineWidth,
     borderColor: 'rgba(17,17,17,0.06)',
     shadowColor: '#1C1633',
-    shadowOpacity: 0.07,
-    shadowRadius: 14,
-    shadowOffset: { width: 0, height: 6 },
-    elevation: 3,
-    padding: 20,
-    // A floor, not the height: cross-axis stretch raises every card to
-    // the tallest, so this only matters when every card is short.
-    minHeight: 250,
-    // Top, not bottom. Every card is stretched to the tallest one's height,
-    // so bottom-aligning pushed a shorter card's text down by however much
-    // shorter it was — swiping between two cards moved the eyebrow and
-    // heading up and down instead of keeping them in one place.
-    justifyContent: 'flex-start',
-    gap: 10,
+    shadowOpacity: 0.06,
+    shadowRadius: 22,
+    shadowOffset: { width: 0, height: 8 },
+    elevation: 2,
   },
-  cardCompact: {
-    minHeight: 190,
-    padding: layout.cardPadding,
+  peek: {
+    position: 'absolute',
+    left: 14,
+    right: 14,
+    top: 10,
+    bottom: -8,
+    opacity: 0.55,
+  },
+  front: {
+    paddingTop: 20,
+    paddingHorizontal: 20,
+    paddingBottom: 18,
+    gap: 12,
   },
   eyebrow: {
-    color: colors.purple,
+    fontFamily: type.metadata.fontFamily,
+    fontSize: 12,
+    lineHeight: 16,
     letterSpacing: 0.6,
     textTransform: 'uppercase',
-  },
-  // A size step up from type.metadata's 12px — the tag was reading as fine
-  // print against the 28px heading right under it. Overridden locally
-  // rather than on the shared token, which 13 other files also use.
-  eyebrowSize: {
-    fontSize: 13,
-    lineHeight: 17,
+    color: colors.purple,
   },
   heading: {
-    color: colors.ink,
+    fontFamily: type.pageTitle.fontFamily,
     fontSize: 24,
     lineHeight: 28,
     letterSpacing: -0.5,
+    color: colors.ink,
   },
   points: {
-    gap: 7,
-    marginTop: 2,
+    gap: 8,
   },
   pointRow: {
     flexDirection: 'row',
-    gap: 9,
+    gap: 10,
     alignItems: 'flex-start',
   },
   bullet: {
@@ -301,53 +217,46 @@ const styles = StyleSheet.create({
   },
   pointText: {
     flex: 1,
+    fontFamily: type.caption.fontFamily,
+    fontSize: 14,
+    lineHeight: 20,
     color: '#3C3A47',
   },
   footer: {
     flexDirection: 'row',
     alignItems: 'center',
-    justifyContent: 'space-between',
     gap: 14,
+    paddingTop: 4,
   },
   progress: {
+    flex: 1,
     flexDirection: 'row',
     gap: 4,
-    flex: 1,
   },
-  segment: {
-    height: 4,
+  seglet: {
     flex: 1,
-    maxWidth: 26,
+    height: 4,
     borderRadius: 2,
     backgroundColor: colors.track,
   },
-  segmentActive: {
+  segletNow: {
+    flex: 2.4,
     backgroundColor: colors.purple,
-    maxWidth: 40,
-  },
-  segmentPassed: {
-    backgroundColor: colors.purple,
-    opacity: 0.35,
-  },
-  arrows: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 6,
   },
   arrow: {
-    width: 40,
-    height: 40,
-    borderRadius: 20,
+    width: 44,
+    height: 44,
+    borderRadius: 22,
     alignItems: 'center',
     justifyContent: 'center',
   },
-  arrowEmphasis: {
+  arrowQuiet: {
+    backgroundColor: 'rgba(21,21,26,0.04)',
+  },
+  arrowLit: {
     backgroundColor: colors.purpleSoft,
   },
-  arrowDisabled: {
-    opacity: 0.45,
-  },
   arrowPressed: {
-    opacity: 0.6,
+    transform: [{ scale: 0.94 }],
   },
 });

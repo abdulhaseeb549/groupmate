@@ -1,7 +1,9 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import {
   ActivityIndicator,
-  LayoutAnimation,
+  Animated,
+  Easing,
+  Image,
   Pressable,
   ScrollView,
   StyleSheet,
@@ -9,16 +11,17 @@ import {
   TextInput,
   View,
 } from 'react-native';
+import Svg, { Circle, Defs, RadialGradient, Rect, Stop } from 'react-native-svg';
+import { LinearGradient } from 'expo-linear-gradient';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { AttachRow } from '../components/AttachRow';
 import { BottomNav, NavTab } from '../components/BottomNav';
-import { GlassScene, GlassTarget } from '../components/Glass';
-import { Card, CardDivider } from '../components/Card';
+import { GlassButton, GlassScene, GlassTarget } from '../components/Glass';
+import { GradientButton, SecondaryButton } from '../components/GradientButton';
 import { ConfirmDialog } from '../components/ConfirmDialog';
 import { FadeIn } from '../components/FadeIn';
 import { Icon } from '../components/Icon';
 import { KeyboardAvoider } from '../components/KeyboardAvoider';
-import { SectionHeader } from '../components/SectionHeader';
+import { Segmented } from '../components/Segmented';
 import { useAuth } from '../state/AuthProvider';
 import { useChatUnread } from '../state/chatUnread';
 import { NotePager } from '../components/study/NotePager';
@@ -38,16 +41,17 @@ import {
   QuizSummary,
   recordBestScore,
 } from '../state/studyQuiz';
-import { colors, layout, radius, type } from '../theme';
+import { colors, gradients, radius, type } from '../theme';
 import { useHardwareBackHandler } from '../utils/hardwareBack';
 import { pickPdf, PdfFileInput } from '../utils/pdfPicker';
 
 const MIN_LENGTH = 40;
-const DIFFICULTIES: Difficulty[] = ['easy', 'medium', 'hard'];
 const COUNTS = [5, 10, 15] as const;
-const QUIZ_DIVIDER_INSET = 16 + layout.iconTile + 12;
+const KEYS = ['A', 'B', 'C', 'D', 'E', 'F'];
+const MASCOT = require('../assets/Mascot-png.png');
 
 type Phase = 'list' | 'setup' | 'quiz' | 'results';
+type Insets = { top: number; bottom: number };
 
 type Props = {
   activeTab: NavTab;
@@ -57,6 +61,20 @@ type Props = {
 function capitalize(s: string) {
   return s.charAt(0).toUpperCase() + s.slice(1);
 }
+
+/** Mint at 80% and up, amber from half, coral below: the same rule everywhere a score shows. */
+function scoreTone(score: number, total: number) {
+  const share = total > 0 ? score / total : 0;
+  if (share >= 0.8) return 'mint' as const;
+  if (share >= 0.5) return 'amber' as const;
+  return 'coral' as const;
+}
+
+const TONE = {
+  mint: { bg: colors.mint, fg: colors.mintText, ring: colors.green, glow: '#E3F6EC' },
+  amber: { bg: colors.yellowSoft, fg: colors.yellowText, ring: colors.amber, glow: '#FFF3D9' },
+  coral: { bg: colors.redSoft, fg: colors.redText, ring: colors.red, glow: '#FFE9E7' },
+};
 
 export function StudyScreen({ activeTab, onSelectTab }: Props) {
   const insets = useSafeAreaInsets();
@@ -74,12 +92,10 @@ export function StudyScreen({ activeTab, onSelectTab }: Props) {
   const [studyText, setStudyText] = useState('');
   const [syllabusFile, setSyllabusFile] = useState<PdfFileInput | null>(null);
   const [difficulty, setDifficulty] = useState<Difficulty>('medium');
-  const [questionCount, setQuestionCount] = useState<number>(5);
+  const [questionCount, setQuestionCount] = useState<number>(10);
   const [generating, setGenerating] = useState(false);
-  // The newest set of pointers, shown as the second card on the list.
-  // Held separately from `quizzes` because the list rows carry only a
-  // count — the pages themselves are far more text than every row
-  // combined, and most sessions never open them.
+  // The newest set of pointers, shown on the list. Held apart from
+  // `quizzes`: the rows carry only a count, the pages are far more text.
   const [pointers, setPointers] = useState<{ quizId: string; title: string; pages: NotePage[] } | null>(null);
   const [setupError, setSetupError] = useState<string | null>(null);
 
@@ -91,19 +107,12 @@ export function StudyScreen({ activeTab, onSelectTab }: Props) {
   const [streak, setStreak] = useState(0);
   const [bestStreak, setBestStreak] = useState(0);
 
-  // Imperative rather than a phase-dependent effect: refreshList() is called
-  // explicitly wherever the list needs to reflect a change (mount, and
-  // returning from a finished quiz) rather than relying on a re-render to
-  // happen to fire it.
   async function refreshList() {
     if (!userId) return;
     try {
       const rows = await fetchQuizzes(userId);
       setQuizzes(rows);
-
-      // fetchQuizzes is newest-first, so the first row with pointers is
-      // the most recent set. Quizzes made before notes existed, and ones
-      // whose note generation failed, report 0 and are skipped.
+      // Newest-first, so the first row with pointers is the most recent set.
       const newest = rows.find((row) => row.noteCount > 0);
       if (!newest) {
         setPointers(null);
@@ -113,6 +122,7 @@ export function StudyScreen({ activeTab, onSelectTab }: Props) {
       setPointers(pages.length > 0 ? { quizId: newest.id, title: newest.title, pages } : null);
     } catch (err) {
       setListError(err instanceof Error ? err.message : 'Could not load your quizzes.');
+      setQuizzes((rows) => rows ?? []);
     }
   }
 
@@ -120,8 +130,7 @@ export function StudyScreen({ activeTab, onSelectTab }: Props) {
     void refreshList();
   }, [userId]);
 
-  // The "+" menu's Study shortcut sets this from anywhere in the app —
-  // jump straight into the new-quiz setup instead of landing on the list.
+  // The "+" menu's "Make a quiz" sets this from anywhere in the app.
   useEffect(() => {
     if (studySetupRequested) {
       openSetup();
@@ -151,9 +160,8 @@ export function StudyScreen({ activeTab, onSelectTab }: Props) {
     setGenerating(true);
     setSetupError(null);
 
-    // Both read the same upload, so they run together rather than one
-    // after the other — and they are settled separately on purpose: the
-    // pointers failing must not cost the student the quiz they waited on.
+    // Both read the same upload, so they run together, and are settled
+    // separately: the pointers failing must not cost the student the quiz.
     const source = {
       studyText: studyText.trim() || undefined,
       syllabusFile: syllabusFile ?? undefined,
@@ -217,7 +225,6 @@ export function StudyScreen({ activeTab, onSelectTab }: Props) {
 
   function answer(choiceIndex: number) {
     if (selected !== null || !activeQuiz) return;
-    LayoutAnimation.configureNext(LayoutAnimation.Presets.spring);
     setSelected(choiceIndex);
     if (choiceIndex === activeQuiz.questions[index].correctIndex) {
       setScore((s) => s + 1);
@@ -239,84 +246,78 @@ export function StudyScreen({ activeTab, onSelectTab }: Props) {
       setPhase('results');
       return;
     }
-    LayoutAnimation.configureNext(LayoutAnimation.Presets.easeInEaseOut);
     setIndex((i) => i + 1);
     setSelected(null);
   }
 
+  function backToList() {
+    setPhase('list');
+    void refreshList();
+  }
+
   const canSubmit = studyText.trim().length >= MIN_LENGTH || syllabusFile !== null;
-  const busy = phase === 'setup' && generating;
 
   useHardwareBackHandler(() => {
-    if (phase === 'setup') {
-      setPhase('list');
-    } else if (phase === 'quiz' || phase === 'results') {
-      setPhase('list');
-      void refreshList();
-    }
-  }, phase !== 'list' && !busy);
+    if (phase === 'setup') setPhase('list');
+    else if (phase === 'quiz' || phase === 'results') backToList();
+  }, phase !== 'list' && !generating);
 
   return (
     <GlassScene style={styles.screen}>
       <GlassTarget>
-      {phase === 'list' ? (
-        <ListView
-          insets={insets}
-          quizzes={quizzes}
-          pointers={pointers}
-          error={listError}
-          onNewQuiz={openSetup}
-          onOpenQuiz={openExistingQuiz}
-          onDeleteQuiz={setDeleteTarget}
-        />
-      ) : phase === 'setup' ? (
-        <SetupView
-          insets={insets}
-          studyText={studyText}
-          onChangeText={setStudyText}
-          syllabusFile={syllabusFile}
-          onPickFile={pickFile}
-          onRemoveFile={() => setSyllabusFile(null)}
-          difficulty={difficulty}
-          onChangeDifficulty={setDifficulty}
-          questionCount={questionCount}
-          onChangeQuestionCount={setQuestionCount}
-          canSubmit={canSubmit}
-          generating={busy}
-          error={setupError}
-          onBack={() => setPhase('list')}
-          onGenerate={handleGenerate}
-        />
-      ) : phase === 'quiz' && activeQuiz ? (
-        <QuizPlayerView
-          insets={insets}
-          quiz={activeQuiz}
-          index={index}
-          selected={selected}
-          streak={streak}
-          onAnswer={answer}
-          onNext={next}
-          onExit={() => {
-            setPhase('list');
-            void refreshList();
-          }}
-        />
-      ) : phase === 'results' && activeQuiz ? (
-        <ResultsView
-          insets={insets}
-          total={activeQuiz.questions.length}
-          score={score}
-          bestStreak={bestStreak}
-          onStudyAgain={openSetup}
-          onDone={() => {
-            setPhase('list');
-            void refreshList();
-          }}
-        />
-      ) : null}
+        {phase === 'list' ? (
+          <ListView
+            insets={insets}
+            quizzes={quizzes}
+            pointers={pointers}
+            error={listError}
+            onNewQuiz={openSetup}
+            onOpenQuiz={openExistingQuiz}
+            onDeleteQuiz={setDeleteTarget}
+          />
+        ) : phase === 'setup' && generating ? (
+          <WritingView count={questionCount} source={syllabusFile ? stripPdf(syllabusFile.filename) : 'Your notes'} />
+        ) : phase === 'setup' ? (
+          <SetupView
+            insets={insets}
+            studyText={studyText}
+            onChangeText={setStudyText}
+            syllabusFile={syllabusFile}
+            onPickFile={pickFile}
+            onRemoveFile={() => setSyllabusFile(null)}
+            difficulty={difficulty}
+            onChangeDifficulty={setDifficulty}
+            questionCount={questionCount}
+            onChangeQuestionCount={setQuestionCount}
+            canSubmit={canSubmit}
+            error={setupError}
+            onBack={() => setPhase('list')}
+            onGenerate={handleGenerate}
+          />
+        ) : phase === 'quiz' && activeQuiz ? (
+          <QuizPlayerView
+            insets={insets}
+            quiz={activeQuiz}
+            index={index}
+            selected={selected}
+            streak={streak}
+            onAnswer={answer}
+            onNext={next}
+            onExit={backToList}
+          />
+        ) : phase === 'results' && activeQuiz ? (
+          <ResultsView
+            insets={insets}
+            total={activeQuiz.questions.length}
+            score={score}
+            bestStreak={bestStreak}
+            onStudyAgain={openSetup}
+            onDone={backToList}
+          />
+        ) : null}
       </GlassTarget>
 
-      {phase === 'list' || phase === 'setup' ? <BottomNav active={activeTab} onSelect={onSelectTab} chatUnread={hasUnread} /> : null}
+      {phase === 'list' ? <BottomNav active={activeTab} onSelect={onSelectTab} chatUnread={hasUnread} /> : null}
 
       <ConfirmDialog
         visible={deleteTarget !== null}
@@ -331,6 +332,14 @@ export function StudyScreen({ activeTab, onSelectTab }: Props) {
   );
 }
 
+function stripPdf(name: string) {
+  return name.replace(/\.pdf$/i, '');
+}
+
+/* ------------------------------------------------------------------ */
+/* GStudy                                                              */
+/* ------------------------------------------------------------------ */
+
 function ListView({
   insets,
   quizzes,
@@ -340,7 +349,7 @@ function ListView({
   onOpenQuiz,
   onDeleteQuiz,
 }: {
-  insets: { top: number; bottom: number };
+  insets: Insets;
   quizzes: QuizSummary[] | null;
   pointers: { quizId: string; title: string; pages: NotePage[] } | null;
   error: string | null;
@@ -350,126 +359,149 @@ function ListView({
 }) {
   return (
     <ScrollView
-      contentContainerStyle={[
-        styles.content,
-        { paddingTop: Math.max(insets.top, 40) + 14, paddingBottom: 130 + insets.bottom },
-      ]}
+      contentContainerStyle={[styles.listContent, { paddingTop: Math.max(insets.top, 40) + 14, paddingBottom: 140 + insets.bottom }]}
       showsVerticalScrollIndicator={false}
     >
       <FadeIn>
-        <View style={styles.intro}>
-          <Text style={[type.hero, styles.ink]}>Study</Text>
-          <Text style={[type.body, styles.muted]}>
-            One upload, two ways to revise — questions to test yourself, pointers to remember.
-          </Text>
+        <Text style={styles.h1} accessibilityRole="header">
+          Study
+        </Text>
+      </FadeIn>
+
+      {/* One tap to start: the whole card is the button. */}
+      <FadeIn delay={40}>
+        <Pressable
+          onPress={onNewQuiz}
+          accessibilityRole="button"
+          accessibilityLabel="Practice questions, make a quiz"
+          style={({ pressed }) => [styles.card, styles.practice, pressed && styles.pressedCard]}
+        >
+          <View style={styles.practiceTile}>
+            <Icon name="book" size={22} color={colors.purple} strokeWidth={1.8} />
+          </View>
+          <View style={styles.flexText}>
+            <Text style={styles.t}>Practice questions</Text>
+            <Text style={styles.m}>From a PDF or your notes</Text>
+          </View>
+          <View style={styles.plusShadow}>
+            <LinearGradient colors={gradients.purpleDeep} start={{ x: 0.5, y: 0 }} end={{ x: 0.5, y: 1 }} style={styles.plus}>
+              <Icon name="plus" size={20} color="#FFFFFF" strokeWidth={2.3} />
+            </LinearGradient>
+          </View>
+        </Pressable>
+      </FadeIn>
+
+      {/* Points to remember: one flashcard at a time. */}
+      <FadeIn delay={80}>
+        <View style={styles.section}>
+          <View style={styles.leadBlock}>
+            <Text style={styles.lead}>Points to remember</Text>
+            {pointers ? <Text style={styles.m}>{pointers.title}</Text> : null}
+          </View>
+          {pointers ? (
+            <NotePager key={pointers.quizId} pages={pointers.pages} compact />
+          ) : (
+            <View style={[styles.card, styles.emptyCard]}>
+              <Text style={styles.t}>Nothing to revise yet</Text>
+              <Text style={styles.m}>Make a quiz and these come with it</Text>
+            </View>
+          )}
         </View>
       </FadeIn>
 
-      {/* Card one: the MCQs. */}
-      <FadeIn delay={60}>
-      <Pressable
-        onPress={onNewQuiz}
-        accessibilityRole="button"
-        style={({ pressed }) => [styles.mcqCard, pressed && styles.pressed]}
-      >
-        <View style={styles.mcqTile}>
-          <Icon name="book" size={20} color={colors.purple} strokeWidth={1.8} />
-        </View>
-        <View style={styles.mcqText}>
-          <Text style={[type.taskTitle, styles.ink]}>Practice questions</Text>
-          <Text style={[type.caption, styles.muted]}>
-            Turn a syllabus, chapter, or your notes into MCQs
-          </Text>
-        </View>
-        <View style={styles.mcqAction}>
-          <Icon name="plus" size={18} color={colors.onInk} strokeWidth={2.4} />
-        </View>
-      </Pressable>
-      </FadeIn>
+      {error ? <ErrorBox text={error} /> : null}
 
-      {/* Card two: the pointers from that same upload. */}
+      {/* Quizzes: one card, best score leads each row. */}
       <FadeIn delay={120}>
-      <View style={styles.section}>
-        <SectionHeader
-          title="Points to remember"
-          subtitle={pointers ? pointers.title : undefined}
-        />
-        {pointers ? (
-          <NotePager pages={pointers.pages} compact />
-        ) : (
-          <View style={styles.pointersEmpty}>
-            <Text style={[type.taskTitle, styles.ink]}>Nothing to revise yet</Text>
-            <Text style={[type.caption, styles.muted]}>
-              Your next upload makes these too — short cards of what's worth remembering, from the same
-              document as the questions.
-            </Text>
-          </View>
-        )}
-      </View>
-      </FadeIn>
-
-      {error ? (
-        <View style={styles.errorBox}>
-          <Icon name="exclamation" size={16} color={colors.redText} strokeWidth={2.2} />
-          <Text style={[type.caption, styles.errorText]}>{error}</Text>
-        </View>
-      ) : null}
-
-      <View style={styles.section}>
-        <Text style={type.sectionHeading}>Your quizzes</Text>
-        {quizzes === null ? (
-          <ActivityIndicator color={colors.purple} style={styles.listLoading} />
-        ) : quizzes.length === 0 ? (
-          <View style={styles.emptyRow}>
-            <View style={styles.emptyTile}>
-              <Icon name="book" size={18} color={colors.mintText} strokeWidth={2} />
+        <View style={styles.section}>
+          <Text style={styles.lead}>Your quizzes</Text>
+          {quizzes === null ? (
+            <ActivityIndicator color={colors.purple} style={styles.listLoading} />
+          ) : quizzes.length === 0 ? (
+            <View style={[styles.card, styles.emptyCard]}>
+              <Text style={styles.t}>No quizzes yet</Text>
+              <Text style={styles.m}>Your quizzes show up here</Text>
             </View>
-            <View style={styles.emptyText}>
-              <Text style={[type.taskTitle, styles.ink]}>No quizzes yet</Text>
-              <Text style={[type.caption, styles.muted]}>Generate one from your notes above</Text>
-            </View>
-          </View>
-        ) : (
-          <Card>
-            {quizzes.map((q, i) => (
-              <View key={q.id}>
-                {i > 0 ? <CardDivider inset={QUIZ_DIVIDER_INSET} /> : null}
-                <View style={styles.quizRow}>
-                  <Pressable
-                    onPress={() => onOpenQuiz(q)}
-                    accessibilityRole="button"
-                    style={({ pressed }) => [styles.quizRowMain, pressed && styles.rowPressed]}
-                  >
-                    <View style={styles.quizIconTile}>
-                      <Icon name="book" size={18} color={colors.purple} strokeWidth={1.8} />
-                    </View>
-                    <View style={styles.quizText}>
-                      <Text style={[type.taskTitle, styles.ink]} numberOfLines={1}>
-                        {q.title}
-                      </Text>
-                      <Text style={[type.caption, styles.muted]} numberOfLines={1}>
-                        {capitalize(q.difficulty)} · {q.questionCount} questions
-                        {q.bestScore != null ? ` · Best ${q.bestScore}/${q.questionCount}` : ''}
-                      </Text>
-                    </View>
-                    <Icon name="chevronRight" size={18} color={colors.faint} strokeWidth={2} />
-                  </Pressable>
-                  <Pressable
-                    onPress={() => onDeleteQuiz(q)}
-                    hitSlop={10}
-                    accessibilityRole="button"
-                    accessibilityLabel={`Delete ${q.title}`}
-                    style={({ pressed }) => [styles.deleteButton, pressed && styles.deleteButtonPressed]}
-                  >
-                    <Icon name="trash" size={16} color={colors.faint} strokeWidth={1.8} />
-                  </Pressable>
+          ) : (
+            <View style={styles.card}>
+              {quizzes.map((q, i) => (
+                <View key={q.id}>
+                  {i > 0 ? <View style={styles.hair} /> : null}
+                  <View style={styles.qrow}>
+                    <Pressable
+                      onPress={() => onOpenQuiz(q)}
+                      accessibilityRole="button"
+                      accessibilityLabel={`Open ${q.title}`}
+                      style={({ pressed }) => [styles.qrowMain, pressed && styles.pressedRow]}
+                    >
+                      <View style={styles.flexText}>
+                        <Text style={styles.t} numberOfLines={1}>
+                          {q.title}
+                        </Text>
+                        <Text style={styles.m} numberOfLines={1}>
+                          {capitalize(q.difficulty)} · {q.questionCount} questions
+                        </Text>
+                      </View>
+                      <ScorePill best={q.bestScore} total={q.questionCount} />
+                    </Pressable>
+                    <Pressable
+                      onPress={() => onDeleteQuiz(q)}
+                      accessibilityRole="button"
+                      accessibilityLabel={`Delete ${q.title}`}
+                      style={({ pressed }) => [styles.del, pressed && styles.delPressed]}
+                    >
+                      <Icon name="trash" size={17} color={colors.faint} strokeWidth={1.8} />
+                    </Pressable>
+                  </View>
                 </View>
-              </View>
-            ))}
-          </Card>
-        )}
-      </View>
+              ))}
+            </View>
+          )}
+        </View>
+      </FadeIn>
     </ScrollView>
+  );
+}
+
+function ScorePill({ best, total }: { best: number | null | undefined; total: number }) {
+  if (best == null) {
+    return (
+      <View style={[styles.pill, styles.pillGrey]}>
+        <Text style={[styles.pillText, { color: colors.muted }]}>New</Text>
+      </View>
+    );
+  }
+  const tone = TONE[scoreTone(best, total)];
+  return (
+    <View style={[styles.pill, { backgroundColor: tone.bg }]} accessibilityLabel={`Best ${best} of ${total}`}>
+      <Text style={[styles.pillText, { color: tone.fg }]}>
+        {best}/{total}
+      </Text>
+    </View>
+  );
+}
+
+function ErrorBox({ text }: { text: string }) {
+  return (
+    <View style={styles.errorBox} accessibilityRole="alert">
+      <Icon name="exclamation" size={18} color={colors.redText} strokeWidth={2.2} />
+      <Text style={styles.errorText}>{text}</Text>
+    </View>
+  );
+}
+
+/* ------------------------------------------------------------------ */
+/* GQuiz                                                               */
+/* ------------------------------------------------------------------ */
+
+function Bars({ level, selected }: { level: number; selected: boolean }) {
+  const color = selected ? colors.purple : colors.muted;
+  return (
+    <View style={styles.bars}>
+      {[5, 8, 12].map((h, i) => (
+        <View key={h} style={[styles.bar, { height: h, backgroundColor: color, opacity: i < level ? 1 : 0.25 }]} />
+      ))}
+    </View>
   );
 }
 
@@ -485,12 +517,11 @@ function SetupView({
   questionCount,
   onChangeQuestionCount,
   canSubmit,
-  generating,
   error,
   onBack,
   onGenerate,
 }: {
-  insets: { top: number; bottom: number };
+  insets: Insets;
   studyText: string;
   onChangeText: (v: string) => void;
   syllabusFile: PdfFileInput | null;
@@ -501,133 +532,220 @@ function SetupView({
   questionCount: number;
   onChangeQuestionCount: (n: number) => void;
   canSubmit: boolean;
-  generating: boolean;
   error: string | null;
   onBack: () => void;
   onGenerate: () => void;
 }) {
+  // PDF first, as on the board; "Paste notes instead" swaps the card for a text box.
+  const [mode, setMode] = useState<'pdf' | 'notes'>(studyText ? 'notes' : 'pdf');
+  const sizeMb = syllabusFile ? (syllabusFile.base64.length * 0.75) / (1024 * 1024) : 0;
+
   return (
     <KeyboardAvoider style={styles.flex}>
       <ScrollView
-        contentContainerStyle={[
-          styles.content,
-          // 130, not the +32 every other keyboard-avoiding form screen
-          // uses: this one still shows BottomNav (phase 'setup' keeps it
-          // mounted, see the render below), which the smaller figure never
-          // reserved room for — "Generate quiz" sat directly under the
-          // floating nav and was unreachable.
-          { paddingTop: Math.max(insets.top, 32) + 14, paddingBottom: 130 + insets.bottom },
-        ]}
+        contentContainerStyle={[styles.setupContent, { paddingTop: Math.max(insets.top, 40) + 6, paddingBottom: 150 + insets.bottom }]}
         keyboardShouldPersistTaps="handled"
         showsVerticalScrollIndicator={false}
       >
-        <View style={styles.header}>
-          <Pressable
-            onPress={onBack}
-            accessibilityRole="button"
-            accessibilityLabel="Back"
-            disabled={generating}
-            style={({ pressed }) => [styles.closeButton, pressed && styles.pressed]}
-          >
-            <Icon name="chevronDown" size={20} color={colors.ink} strokeWidth={2} />
-          </Pressable>
-        </View>
+        <FadeIn>
+          <GlassButton onPress={onBack} label="Close">
+            <Icon name="close" size={20} color={colors.ink} strokeWidth={2} />
+          </GlassButton>
+        </FadeIn>
 
-        <View style={styles.intro}>
-          <Text style={[type.pageTitle, styles.ink]}>What are you{'\n'}studying?</Text>
-          <Text style={[type.body, styles.muted, styles.subtitle]}>
-            Paste your notes or attach a syllabus/reading PDF — I'll turn it into a quiz.
+        <FadeIn delay={30}>
+          <Text style={styles.h1} accessibilityRole="header">
+            Make a quiz
           </Text>
-        </View>
+        </FadeIn>
 
-        <TextInput
-          value={studyText}
-          onChangeText={onChangeText}
-          placeholder="Paste what you're studying…"
-          placeholderTextColor={colors.faint}
-          multiline
-          textAlignVertical="top"
-          editable={!generating}
-          style={styles.textArea}
-        />
-
-        <AttachRow
-          label="Attach a PDF instead"
-          file={syllabusFile}
-          onAttach={onPickFile}
-          onRemove={onRemoveFile}
-          disabled={generating}
-        />
-
-        <View style={styles.section}>
-          <Text style={[type.button, styles.ink]}>Difficulty</Text>
-          <View style={styles.pillRow}>
-            {DIFFICULTIES.map((d) => {
-              const active = d === difficulty;
-              return (
+        <FadeIn delay={60}>
+          <View style={styles.group}>
+            <Text style={styles.eyebrow}>From</Text>
+            {mode === 'pdf' ? (
+              syllabusFile ? (
+                <View style={[styles.card, styles.fileCard]}>
+                  <PdfTile />
+                  <View style={styles.flexText}>
+                    <Text style={styles.t} numberOfLines={1}>
+                      {stripPdf(syllabusFile.filename)}
+                    </Text>
+                    <Text style={styles.m}>{sizeMb >= 0.1 ? `${sizeMb.toFixed(1)} MB` : 'PDF'}</Text>
+                  </View>
+                  <Pressable
+                    onPress={onRemoveFile}
+                    accessibilityRole="button"
+                    accessibilityLabel="Remove file"
+                    hitSlop={6}
+                    style={({ pressed }) => [styles.removeFile, pressed && styles.pressedSmall]}
+                  >
+                    <Icon name="close" size={14} color={colors.muted} strokeWidth={2.4} />
+                  </Pressable>
+                </View>
+              ) : (
                 <Pressable
-                  key={d}
-                  onPress={() => onChangeDifficulty(d)}
-                  disabled={generating}
-                  style={[styles.pill, active && styles.pillActive]}
+                  onPress={onPickFile}
+                  accessibilityRole="button"
+                  accessibilityLabel="Choose a PDF"
+                  style={({ pressed }) => [styles.card, styles.fileCard, pressed && styles.pressedCard]}
                 >
-                  <Text style={[type.button, { color: active ? colors.onInk : colors.muted }]}>{capitalize(d)}</Text>
+                  <PdfTile />
+                  <View style={styles.flexText}>
+                    <Text style={styles.t}>Choose a PDF</Text>
+                    <Text style={styles.m}>Up to 15 MB</Text>
+                  </View>
+                  <Icon name="chevronRight" size={18} color={colors.faint} strokeWidth={2} />
                 </Pressable>
-              );
-            })}
+              )
+            ) : (
+              <TextInput
+                value={studyText}
+                onChangeText={onChangeText}
+                placeholder="Paste your notes"
+                placeholderTextColor={colors.faint}
+                multiline
+                textAlignVertical="top"
+                style={styles.notes}
+                autoFocus
+              />
+            )}
+            <Pressable
+              onPress={() => {
+                if (mode === 'pdf') {
+                  onRemoveFile();
+                  setMode('notes');
+                } else {
+                  onChangeText('');
+                  setMode('pdf');
+                }
+              }}
+              accessibilityRole="button"
+              style={({ pressed }) => [styles.link, pressed && styles.pressedSmall]}
+            >
+              <Icon name={mode === 'pdf' ? 'clipboard' : 'document'} size={17} color={colors.purple} strokeWidth={1.9} />
+              <Text style={styles.linkText}>{mode === 'pdf' ? 'Paste notes instead' : 'Attach a PDF instead'}</Text>
+            </Pressable>
           </View>
-        </View>
+        </FadeIn>
 
-        <View style={styles.section}>
-          <Text style={[type.button, styles.ink]}>Questions</Text>
-          <View style={styles.pillRow}>
-            {COUNTS.map((c) => {
-              const active = c === questionCount;
-              return (
-                <Pressable
-                  key={c}
-                  onPress={() => onChangeQuestionCount(c)}
-                  disabled={generating}
-                  style={[styles.pill, active && styles.pillActive]}
-                >
-                  <Text style={[type.button, { color: active ? colors.onInk : colors.muted }]}>{c}</Text>
-                </Pressable>
-              );
-            })}
+        <FadeIn delay={90}>
+          <View style={styles.group}>
+            <Text style={styles.eyebrow}>Level</Text>
+            <Segmented<Difficulty>
+              label="Level"
+              value={difficulty}
+              onChange={onChangeDifficulty}
+              options={[
+                { value: 'easy', label: 'Easy', leading: (s) => <Bars level={1} selected={s} /> },
+                { value: 'medium', label: 'Medium', leading: (s) => <Bars level={2} selected={s} /> },
+                { value: 'hard', label: 'Hard', leading: (s) => <Bars level={3} selected={s} /> },
+              ]}
+            />
           </View>
-        </View>
+        </FadeIn>
 
-        {error ? (
-          <View style={styles.errorBox}>
-            <Icon name="exclamation" size={16} color={colors.redText} strokeWidth={2.2} />
-            <Text style={[type.caption, styles.errorText]}>{error}</Text>
+        <FadeIn delay={120}>
+          <View style={styles.group}>
+            <Text style={styles.eyebrow}>Questions</Text>
+            <Segmented<number>
+              label="Number of questions"
+              value={questionCount}
+              onChange={onChangeQuestionCount}
+              options={COUNTS.map((c) => ({ value: c, label: String(c) }))}
+            />
           </View>
-        ) : null}
+        </FadeIn>
 
-        <Pressable
-          onPress={onGenerate}
-          disabled={!canSubmit || generating}
-          accessibilityRole="button"
-          accessibilityState={{ disabled: !canSubmit || generating }}
-          style={({ pressed }) => [
-            styles.submit,
-            (!canSubmit || generating) && styles.submitDisabled,
-            pressed && canSubmit && !generating && styles.submitPressed,
-          ]}
-        >
-          {generating ? (
-            <>
-              <ActivityIndicator color={colors.onInk} />
-              <Text style={[type.button, styles.submitLabel]}>Writing your quiz…</Text>
-            </>
-          ) : (
-            <Text style={[type.button, styles.submitLabel]}>Generate quiz →</Text>
-          )}
-        </Pressable>
+        {error ? <ErrorBox text={error} /> : null}
       </ScrollView>
+
+      {/* Action in the thumb zone. */}
+      <View style={[styles.bottomAction, { paddingBottom: Math.max(insets.bottom, 0) + 28 }]}>
+        <GradientButton label={`Make ${questionCount} questions`} onPress={onGenerate} disabled={!canSubmit} style={styles.fullWidth} />
+        <Text style={styles.caption}>Points to remember come with it</Text>
+      </View>
     </KeyboardAvoider>
   );
 }
+
+function PdfTile() {
+  return (
+    <LinearGradient colors={['#FFF0EF', '#FFE3E1']} style={styles.pdfTile}>
+      <Icon name="document" size={20} color={colors.redText} strokeWidth={1.8} />
+      <Text style={styles.pdfLabel}>PDF</Text>
+    </LinearGradient>
+  );
+}
+
+/* ------------------------------------------------------------------ */
+/* GQuizWriting                                                        */
+/* ------------------------------------------------------------------ */
+
+function WritingView({ count, source }: { count: number; source: string }) {
+  const bob = useRef(new Animated.Value(0)).current;
+  const slide = useRef(new Animated.Value(0)).current;
+
+  useEffect(() => {
+    const bobLoop = Animated.loop(
+      Animated.sequence([
+        Animated.timing(bob, { toValue: 1, duration: 1200, easing: Easing.inOut(Easing.sin), useNativeDriver: true }),
+        Animated.timing(bob, { toValue: 0, duration: 1200, easing: Easing.inOut(Easing.sin), useNativeDriver: true }),
+      ])
+    );
+    const slideLoop = Animated.loop(
+      Animated.timing(slide, { toValue: 1, duration: 1400, easing: Easing.inOut(Easing.ease), useNativeDriver: true })
+    );
+    bobLoop.start();
+    slideLoop.start();
+    return () => {
+      bobLoop.stop();
+      slideLoop.stop();
+    };
+  }, [bob, slide]);
+
+  return (
+    <View style={styles.writing}>
+      <FadeIn>
+        <View style={styles.mascotWrap}>
+          <Svg width={240} height={220} style={StyleSheet.absoluteFill} pointerEvents="none">
+            <Defs>
+              <RadialGradient id="mascotGlow" cx="50%" cy="50%" r="50%">
+                <Stop offset="0" stopColor="#ECE6FF" stopOpacity={1} />
+                <Stop offset="1" stopColor="#FAF9F7" stopOpacity={0} />
+              </RadialGradient>
+            </Defs>
+            <Rect x={0} y={0} width={240} height={220} fill="url(#mascotGlow)" />
+          </Svg>
+          <Animated.View style={{ transform: [{ translateY: bob.interpolate({ inputRange: [0, 1], outputRange: [0, -6] }) }] }}>
+            <Image source={MASCOT} style={styles.mascot} resizeMode="contain" accessibilityIgnoresInvertColors />
+          </Animated.View>
+        </View>
+      </FadeIn>
+      <FadeIn delay={60}>
+        <View style={styles.writingText}>
+          <Text style={styles.writingTitle} accessibilityRole="header">
+            Writing {count} questions
+          </Text>
+          <Text style={styles.writingSource} numberOfLines={1}>
+            {source}
+          </Text>
+        </View>
+      </FadeIn>
+      <View style={styles.indeterminate} accessible accessibilityRole="progressbar" accessibilityLabel="Writing your quiz">
+        <Animated.View
+          style={[
+            styles.indeterminateFill,
+            { transform: [{ translateX: slide.interpolate({ inputRange: [0, 1], outputRange: [-64, 160] }) }] },
+          ]}
+        />
+      </View>
+    </View>
+  );
+}
+
+/* ------------------------------------------------------------------ */
+/* GQuizQuestion + GQuizChecked                                        */
+/* ------------------------------------------------------------------ */
 
 function QuizPlayerView({
   insets,
@@ -639,7 +757,7 @@ function QuizPlayerView({
   onNext,
   onExit,
 }: {
-  insets: { top: number; bottom: number };
+  insets: Insets;
   quiz: ExtractedQuiz;
   index: number;
   selected: number | null;
@@ -654,100 +772,222 @@ function QuizPlayerView({
   const isCorrect = answered && selected === question.correctIndex;
   const isLast = index + 1 >= total;
 
+  // Progress counts finished questions: 2 done while on 3 of 10 is 20%.
+  const progress = useRef(new Animated.Value(index / total)).current;
+  useEffect(() => {
+    Animated.timing(progress, {
+      toValue: (index + (answered ? 1 : 0)) / total,
+      duration: 360,
+      easing: Easing.out(Easing.cubic),
+      useNativeDriver: false,
+    }).start();
+  }, [index, answered, total, progress]);
+
+  // The question block slides in fresh for every question.
+  const enter = useRef(new Animated.Value(0)).current;
+  useEffect(() => {
+    enter.setValue(0);
+    Animated.timing(enter, { toValue: 1, duration: 300, easing: Easing.out(Easing.cubic), useNativeDriver: true }).start();
+  }, [index, enter]);
+  const enterStyle = {
+    opacity: enter,
+    transform: [{ translateX: enter.interpolate({ inputRange: [0, 1], outputRange: [24, 0] }) }],
+  };
+
   return (
-    <View style={styles.quizScreen}>
-      <View style={[styles.quizHeader, { paddingTop: Math.max(insets.top, 20) + 10 }]}>
-        <Pressable
-          onPress={onExit}
-          accessibilityRole="button"
-          accessibilityLabel="Exit quiz"
-          style={({ pressed }) => [styles.closeButton, pressed && styles.pressed]}
-        >
+    <View style={styles.flex}>
+      <View style={[styles.quizHeader, { paddingTop: Math.max(insets.top, 40) + 6 }]}>
+        <GlassButton onPress={onExit} label="Exit quiz">
           <Icon name="close" size={18} color={colors.ink} strokeWidth={2} />
-        </Pressable>
-        <View style={styles.quizProgressTrack}>
-          <View style={[styles.quizProgressFill, { width: `${(index / total) * 100}%` }]} />
+        </GlassButton>
+        <View
+          style={styles.track}
+          accessible
+          accessibilityRole="progressbar"
+          accessibilityLabel={`Question ${index + 1} of ${total}`}
+        >
+          <Animated.View
+            style={[styles.fill, { width: progress.interpolate({ inputRange: [0, 1], outputRange: ['0%', '100%'] }) }]}
+          />
         </View>
-        <View style={[styles.streakPill, streak > 0 && styles.streakPillLit]}>
-          <Icon name="flame" size={14} color={streak > 0 ? colors.amber : colors.faint} fill={streak > 0 ? colors.amber : 'none'} />
-          <Text style={[type.metadata, { color: streak > 0 ? colors.yellowText : colors.faint }]}>{streak}</Text>
-        </View>
+        <StreakPill streak={streak} />
       </View>
 
-      <ScrollView contentContainerStyle={styles.quizBody} showsVerticalScrollIndicator={false}>
-        <Text style={[type.caption, styles.muted]}>
-          Question {index + 1} of {total}
-        </Text>
-        <Text style={[type.sectionHeading, styles.ink, styles.prompt]}>{question.prompt}</Text>
-
-        {answered && isCorrect ? (
-          <View style={styles.xpPop}>
-            <Text style={[type.badge, { color: colors.yellowText }]}>+10 XP</Text>
-          </View>
-        ) : null}
-
-        {answered ? (
-          <View style={[styles.explainBox, isCorrect ? styles.explainCorrect : styles.explainWrong]}>
-            <Icon
-              name={isCorrect ? 'check' : 'close'}
-              size={16}
-              color={isCorrect ? colors.mintText : colors.redText}
-              strokeWidth={2.2}
-            />
-            <Text style={[type.caption, { color: isCorrect ? colors.mintText : colors.redText }]}>
-              {question.explanation}
-            </Text>
-          </View>
-        ) : null}
+      <ScrollView contentContainerStyle={styles.questionBody} showsVerticalScrollIndicator={false}>
+        <Animated.View style={[styles.questionBlock, enterStyle]}>
+          <Text style={styles.eyebrow}>
+            {index + 1} of {total}
+          </Text>
+          <Text style={styles.prompt} accessibilityRole="header">
+            {question.prompt}
+          </Text>
+          {answered ? <Explanation correct={isCorrect} text={question.explanation} /> : null}
+        </Animated.View>
       </ScrollView>
 
-      <View style={[styles.choiceZone, { paddingBottom: Math.max(insets.bottom, 12) + 16 }]}>
+      {/* Choices sit in the thumb zone; one tap answers. */}
+      <Animated.View
+        style={[styles.choiceZone, { paddingBottom: Math.max(insets.bottom, 0) + (answered ? 28 : 32) }, enterStyle]}
+        accessibilityRole="radiogroup"
+        accessibilityLabel="Answers"
+      >
         {question.choices.map((choice, i) => {
-          const isSelected = selected === i;
-          const isRightAnswer = i === question.correctIndex;
-          const showCorrect = answered && isRightAnswer;
-          const showWrong = answered && isSelected && !isRightAnswer;
+          const isRight = i === question.correctIndex;
+          const state: OptionState = !answered
+            ? 'idle'
+            : isRight
+              ? 'right'
+              : selected === i
+                ? 'wrong'
+                : 'dim';
           return (
-            <Pressable
-              key={i}
-              onPress={() => onAnswer(i)}
+            <OptionRow
+              key={`${index}-${i}`}
+              letter={KEYS[i] ?? String(i + 1)}
+              label={choice}
+              state={state}
               disabled={answered}
-              accessibilityRole="button"
-              style={[
-                styles.choice,
-                showCorrect && styles.choiceCorrect,
-                showWrong && styles.choiceWrong,
-              ]}
-            >
-              <Text
-                style={[
-                  type.body,
-                  styles.choiceText,
-                  showCorrect && styles.choiceTextCorrect,
-                  showWrong && styles.choiceTextWrong,
-                ]}
-              >
-                {choice}
-              </Text>
-              {showCorrect ? <Icon name="check" size={18} color={colors.mintText} strokeWidth={2.4} /> : null}
-              {showWrong ? <Icon name="close" size={18} color={colors.redText} strokeWidth={2.4} /> : null}
-            </Pressable>
+              onPress={() => onAnswer(i)}
+            />
           );
         })}
-
         {answered ? (
-          <Pressable
-            onPress={onNext}
-            accessibilityRole="button"
-            style={({ pressed }) => [styles.submit, styles.nextButton, pressed && styles.submitPressed]}
-          >
-            <Text style={[type.button, styles.submitLabel]}>{isLast ? 'See results →' : 'Next question →'}</Text>
-          </Pressable>
+          <FadeIn>
+            <GradientButton label={isLast ? 'See results' : 'Next question'} onPress={onNext} style={styles.nextButton} />
+          </FadeIn>
         ) : null}
-      </View>
+      </Animated.View>
     </View>
   );
 }
+
+function StreakPill({ streak }: { streak: number }) {
+  const lit = streak > 0;
+  const pop = useRef(new Animated.Value(1)).current;
+  const last = useRef(streak);
+  useEffect(() => {
+    if (streak > last.current) {
+      pop.setValue(1.18);
+      Animated.spring(pop, { toValue: 1, useNativeDriver: true, speed: 14, bounciness: 12 }).start();
+    }
+    last.current = streak;
+  }, [streak, pop]);
+
+  return (
+    <Animated.View
+      accessibilityLabel={`Streak ${streak}`}
+      style={[styles.streak, lit ? styles.streakLit : styles.streakOff, { transform: [{ scale: pop }] }]}
+    >
+      <Icon
+        name="flame"
+        size={14}
+        color={lit ? colors.amber : colors.faint}
+        fill={lit ? colors.amber : 'none'}
+        strokeWidth={lit ? 1.6 : 1.8}
+      />
+      <Text style={[styles.streakText, { color: lit ? colors.yellowText : colors.faint }]}>{streak}</Text>
+    </Animated.View>
+  );
+}
+
+function Explanation({ correct, text }: { correct: boolean; text: string }) {
+  return (
+    <FadeIn>
+      <View role="status" style={[styles.explain, { backgroundColor: correct ? colors.mint : colors.redSoft }]}>
+        <View style={styles.explainIcon}>
+          <Icon
+            name={correct ? 'tick' : 'cross'}
+            size={18}
+            color={correct ? colors.mintText : colors.redText}
+            strokeWidth={2.2}
+          />
+        </View>
+        <Text style={[styles.explainText, { color: correct ? colors.mintText : colors.redText }]}>{text}</Text>
+      </View>
+    </FadeIn>
+  );
+}
+
+type OptionState = 'idle' | 'right' | 'wrong' | 'dim';
+
+function OptionRow({
+  letter,
+  label,
+  state,
+  disabled,
+  onPress,
+}: {
+  letter: string;
+  label: string;
+  state: OptionState;
+  disabled: boolean;
+  onPress: () => void;
+}) {
+  // A quick press-in, and a small pop or shake when the answer lands.
+  const scale = useRef(new Animated.Value(1)).current;
+  const shake = useRef(new Animated.Value(0)).current;
+  const dim = useRef(new Animated.Value(1)).current;
+
+  useEffect(() => {
+    if (state === 'right') {
+      scale.setValue(0.97);
+      Animated.spring(scale, { toValue: 1, useNativeDriver: true, speed: 16, bounciness: 10 }).start();
+    } else if (state === 'wrong') {
+      Animated.sequence(
+        [6, -6, 4, -4, 0].map((x) =>
+          Animated.timing(shake, { toValue: x, duration: 55, easing: Easing.linear, useNativeDriver: true })
+        )
+      ).start();
+    }
+    Animated.timing(dim, { toValue: state === 'dim' ? 0.45 : 1, duration: 220, useNativeDriver: true }).start();
+  }, [state, scale, shake, dim]);
+
+  const tone =
+    state === 'right'
+      ? { bg: colors.mint, border: colors.green, fg: colors.mintText, keyBg: colors.green, keyFg: '#FFFFFF' }
+      : state === 'wrong'
+        ? { bg: colors.redSoft, border: colors.red, fg: colors.redText, keyBg: colors.red, keyFg: '#FFFFFF' }
+        : { bg: colors.surface, border: colors.border, fg: colors.ink, keyBg: 'rgba(21,21,26,0.05)', keyFg: colors.muted };
+
+  return (
+    <Animated.View style={{ opacity: dim, transform: [{ scale }, { translateX: shake }] }}>
+      <Pressable
+        onPress={onPress}
+        onPressIn={() => Animated.timing(scale, { toValue: 0.98, duration: 90, useNativeDriver: true }).start()}
+        onPressOut={() => {
+          if (state === 'idle') Animated.spring(scale, { toValue: 1, useNativeDriver: true, speed: 20 }).start();
+        }}
+        disabled={disabled}
+        accessibilityRole="radio"
+        accessibilityState={{ checked: state === 'right' || state === 'wrong', disabled }}
+        accessibilityLabel={
+          state === 'right' ? `${label}, correct answer` : state === 'wrong' ? `${label}, your answer, wrong` : label
+        }
+        style={[
+          styles.opt,
+          { backgroundColor: tone.bg, borderColor: tone.border, borderWidth: state === 'right' || state === 'wrong' ? 1.5 : 1 },
+        ]}
+      >
+        <View style={[styles.key, { backgroundColor: tone.keyBg }]}>
+          <Text style={[styles.keyText, { color: tone.keyFg }]}>{letter}</Text>
+        </View>
+        <Text style={[styles.optText, { color: tone.fg }]}>{label}</Text>
+        {state === 'right' ? <Icon name="tick" size={18} color={colors.mintText} strokeWidth={2.4} /> : null}
+        {state === 'wrong' ? <Icon name="cross" size={18} color={colors.redText} strokeWidth={2.4} /> : null}
+      </Pressable>
+    </Animated.View>
+  );
+}
+
+/* ------------------------------------------------------------------ */
+/* GQuizResult                                                         */
+/* ------------------------------------------------------------------ */
+
+const RING = 232;
+const STROKE = 12;
+const R = (RING - STROKE) / 2 - 4; // 106, as on the board
+const CIRC = 2 * Math.PI * R;
+const AnimatedCircle = Animated.createAnimatedComponent(Circle);
 
 function ResultsView({
   insets,
@@ -757,47 +997,89 @@ function ResultsView({
   onStudyAgain,
   onDone,
 }: {
-  insets: { top: number; bottom: number };
+  insets: Insets;
   total: number;
   score: number;
   bestStreak: number;
   onStudyAgain: () => void;
   onDone: () => void;
 }) {
-  const pct = total > 0 ? Math.round((score / total) * 100) : 0;
-  const message = pct >= 80 ? 'Nailed it.' : pct >= 50 ? 'Good effort.' : 'Worth another pass.';
+  const share = total > 0 ? score / total : 0;
+  const toneKey = scoreTone(score, total);
+  const tone = TONE[toneKey];
+  const message = toneKey === 'mint' ? 'Nailed it' : toneKey === 'amber' ? 'Good effort' : 'Worth another pass';
+
+  // The ring fills to the score; the number counts up with it.
+  const fill = useRef(new Animated.Value(0)).current;
+  const pop = useRef(new Animated.Value(0)).current;
+  const [shown, setShown] = useState(0);
+  useEffect(() => {
+    const id = fill.addListener(({ value }) => setShown(Math.round(value * score)));
+    Animated.sequence([
+      Animated.delay(150),
+      Animated.timing(fill, { toValue: 1, duration: 900, easing: Easing.out(Easing.cubic), useNativeDriver: false }),
+    ]).start();
+    Animated.spring(pop, { toValue: 1, useNativeDriver: true, speed: 10, bounciness: 8 }).start();
+    return () => fill.removeListener(id);
+  }, [fill, pop, score]);
 
   return (
-    <View style={[styles.resultsScreen, { paddingTop: Math.max(insets.top, 60), paddingBottom: insets.bottom + 20 }]}>
-      <View style={styles.resultsCenter}>
-        <View style={styles.resultsIconTile}>
-          <Icon name="flame" size={28} color={colors.amber} fill={colors.amber} strokeWidth={1.6} />
-        </View>
-        <Text style={[type.hero, styles.ink]}>
-          {score}/{total}
-        </Text>
-        <Text style={[type.taskTitle, styles.muted]}>{message}</Text>
-        {bestStreak > 1 ? (
-          <Text style={[type.caption, styles.muted]}>Best streak: {bestStreak} in a row</Text>
-        ) : null}
+    <View style={[styles.flex, { paddingTop: Math.max(insets.top, 40) }]}>
+      <Svg width={420} height={420} style={styles.resultGlow} pointerEvents="none">
+        <Defs>
+          <RadialGradient id="resultGlow" cx="50%" cy="50%" r="50%">
+            <Stop offset="0" stopColor={tone.glow} stopOpacity={1} />
+            <Stop offset="1" stopColor="#FAF9F7" stopOpacity={0} />
+          </RadialGradient>
+        </Defs>
+        <Rect x={0} y={0} width={420} height={420} fill="url(#resultGlow)" />
+      </Svg>
+
+      <View style={styles.resultCenter}>
+        <Animated.View
+          style={[styles.ring, { opacity: pop, transform: [{ scale: pop.interpolate({ inputRange: [0, 1], outputRange: [0.9, 1] }) }] }]}
+          accessible
+          accessibilityRole="image"
+          accessibilityLabel={`${score} out of ${total} correct`}
+        >
+          <Svg width={RING} height={RING} style={{ transform: [{ rotate: '-90deg' }] }}>
+            <Circle cx={RING / 2} cy={RING / 2} r={R} fill="none" stroke="#F1ECE2" strokeWidth={STROKE} />
+            <AnimatedCircle
+              cx={RING / 2}
+              cy={RING / 2}
+              r={R}
+              fill="none"
+              stroke={tone.ring}
+              strokeWidth={STROKE}
+              strokeLinecap="round"
+              strokeDasharray={`${CIRC} ${CIRC}`}
+              strokeDashoffset={fill.interpolate({ inputRange: [0, 1], outputRange: [CIRC, CIRC * (1 - share)] })}
+            />
+          </Svg>
+          <View style={styles.ringInner}>
+            <Icon name="flame" size={26} color={colors.amber} fill={colors.amber} strokeWidth={1.4} />
+            <View style={styles.scoreRow}>
+              <Text style={styles.scoreBig}>{shown}</Text>
+              <Text style={styles.scoreOf}>/{total}</Text>
+            </View>
+          </View>
+        </Animated.View>
+
+        <FadeIn delay={500}>
+          <View style={styles.resultText}>
+            <Text style={styles.resultMessage}>{message}</Text>
+            {bestStreak > 1 ? (
+              <View style={styles.bestStreak}>
+                <Text style={styles.bestStreakText}>Best streak · {bestStreak} in a row</Text>
+              </View>
+            ) : null}
+          </View>
+        </FadeIn>
       </View>
 
-      {/* Pinned to the bottom, not centered with the score — the thumb zone is where a decision like this belongs. */}
-      <View style={styles.resultsActions}>
-        <Pressable
-          onPress={onStudyAgain}
-          accessibilityRole="button"
-          style={({ pressed }) => [styles.secondaryButton, pressed && styles.pressed]}
-        >
-          <Text style={[type.button, styles.ink]}>Study again</Text>
-        </Pressable>
-        <Pressable
-          onPress={onDone}
-          accessibilityRole="button"
-          style={({ pressed }) => [styles.submit, styles.buildButton, pressed && styles.submitPressed]}
-        >
-          <Text style={[type.button, styles.submitLabel]}>Done</Text>
-        </Pressable>
+      <View style={[styles.resultActions, { paddingBottom: Math.max(insets.bottom, 0) + 28 }]}>
+        <SecondaryButton label="Study again" onPress={onStudyAgain} style={styles.flex} />
+        <GradientButton label="Done" onPress={onDone} style={styles.flex} />
       </View>
     </View>
   );
@@ -811,340 +1093,499 @@ const styles = StyleSheet.create({
   flex: {
     flex: 1,
   },
-  content: {
-    paddingHorizontal: layout.screenPadding,
-    gap: layout.sectionGap,
+  fullWidth: {
+    alignSelf: 'stretch',
   },
-  header: {
-    flexDirection: 'row',
-  },
-  closeButton: {
-    width: 40,
-    height: 40,
-    borderRadius: 20,
-    backgroundColor: colors.surface,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  pressed: {
-    opacity: 0.6,
-  },
-  intro: {
-    gap: 8,
-  },
-  ink: {
+  // Board type
+  h1: {
+    fontFamily: type.pageTitle.fontFamily,
+    fontSize: 32,
+    lineHeight: 35,
+    letterSpacing: -0.9,
     color: colors.ink,
   },
-  muted: {
+  lead: {
+    fontFamily: type.sectionHeading.fontFamily,
+    fontSize: 18,
+    lineHeight: 24,
+    letterSpacing: -0.2,
+    color: colors.ink,
+  },
+  t: {
+    fontFamily: type.taskTitle.fontFamily,
+    fontSize: 15,
+    lineHeight: 21,
+    color: colors.ink,
+  },
+  m: {
+    fontFamily: type.caption.fontFamily,
+    fontSize: 13,
+    lineHeight: 18,
     color: colors.muted,
   },
-  subtitle: {
-    marginTop: 4,
+  eyebrow: {
+    fontFamily: type.metadata.fontFamily,
+    fontSize: 12,
+    lineHeight: 16,
+    letterSpacing: 0.6,
+    textTransform: 'uppercase',
+    color: colors.muted,
   },
-  mcqCard: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 12,
-    padding: layout.cardPadding,
-    borderRadius: radius.card,
+  caption: {
+    fontFamily: type.caption.fontFamily,
+    fontSize: 13,
+    lineHeight: 18,
+    color: colors.muted,
+  },
+  card: {
     backgroundColor: colors.surface,
+    borderRadius: 22,
     borderWidth: StyleSheet.hairlineWidth,
     borderColor: 'rgba(17,17,17,0.06)',
+    shadowColor: '#1C1633',
+    shadowOpacity: 0.06,
+    shadowRadius: 22,
+    shadowOffset: { width: 0, height: 8 },
+    elevation: 2,
   },
-  mcqTile: {
-    width: layout.iconTile,
-    height: layout.iconTile,
-    borderRadius: layout.iconTileRadius,
-    backgroundColor: colors.purpleSoft,
-    alignItems: 'center',
-    justifyContent: 'center',
+  pressedCard: {
+    transform: [{ scale: 0.985 }],
+    opacity: 0.94,
   },
-  mcqText: {
+  pressedRow: {
+    opacity: 0.6,
+  },
+  pressedSmall: {
+    opacity: 0.6,
+  },
+  flexText: {
     flex: 1,
     minWidth: 0,
     gap: 2,
   },
-  // The card is the tap target; this is the affordance, not a second
-  // button — hence no label and no hit area of its own.
-  mcqAction: {
-    width: 36,
-    height: 36,
-    borderRadius: 18,
-    backgroundColor: colors.purple,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  pointersEmpty: {
-    gap: 4,
-    padding: layout.cardPadding,
-    borderRadius: radius.card,
-    backgroundColor: colors.surface,
-    borderWidth: StyleSheet.hairlineWidth,
-    borderColor: 'rgba(17,17,17,0.06)',
+  hair: {
+    height: StyleSheet.hairlineWidth,
+    backgroundColor: colors.border,
+    marginLeft: 16,
   },
   section: {
-    gap: 10,
+    gap: 12,
   },
-  submit: {
+  leadBlock: {
+    gap: 2,
+  },
+  // GStudy
+  listContent: {
+    paddingHorizontal: 20,
+    gap: 24,
+  },
+  practice: {
     flexDirection: 'row',
-    height: 52,
-    borderRadius: 16,
-    backgroundColor: colors.purple,
+    alignItems: 'center',
+    gap: 14,
+    padding: 16,
+  },
+  practiceTile: {
+    width: 48,
+    height: 48,
+    borderRadius: 15,
+    backgroundColor: colors.purpleSoft,
     alignItems: 'center',
     justifyContent: 'center',
-    gap: 10,
   },
-  submitDisabled: {
-    opacity: 0.5,
+  plusShadow: {
+    width: 44,
+    height: 44,
+    borderRadius: 22,
+    backgroundColor: '#6C4CE8',
+    shadowColor: '#5836D6',
+    shadowOpacity: 0.28,
+    shadowRadius: 7,
+    shadowOffset: { width: 0, height: 6 },
+    elevation: 4,
   },
-  submitPressed: {
-    opacity: 0.85,
-  },
-  submitLabel: {
-    color: colors.onInk,
-  },
-  errorBox: {
-    flexDirection: 'row',
-    alignItems: 'flex-start',
-    gap: 8,
-    backgroundColor: colors.redSoft,
-    borderRadius: 12,
-    padding: 12,
-  },
-  errorText: {
+  plus: {
     flex: 1,
-    color: colors.redText,
+    borderRadius: 22,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  emptyCard: {
+    padding: 16,
+    gap: 2,
   },
   listLoading: {
     paddingVertical: 24,
   },
-  emptyRow: {
+  qrow: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 12,
-    backgroundColor: colors.surface,
-    borderRadius: radius.card,
-    padding: 16,
+    paddingRight: 4,
   },
-  emptyTile: {
-    width: layout.iconTile,
-    height: layout.iconTile,
-    borderRadius: layout.iconTileRadius,
-    backgroundColor: colors.mint,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  emptyText: {
-    flex: 1,
-    gap: 2,
-  },
-  quizRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    paddingRight: 12,
-  },
-  quizRowMain: {
+  qrowMain: {
     flex: 1,
     flexDirection: 'row',
     alignItems: 'center',
     gap: 12,
-    minHeight: 44,
+    minHeight: 48,
     paddingVertical: 12,
     paddingLeft: 16,
-    paddingRight: 8,
   },
-  rowPressed: {
-    backgroundColor: colors.surfaceMuted,
-  },
-  quizIconTile: {
-    width: layout.iconTile,
-    height: layout.iconTile,
-    borderRadius: layout.iconTileRadius,
-    backgroundColor: colors.purpleSoft,
+  pill: {
+    height: 24,
+    paddingHorizontal: 10,
+    borderRadius: 12,
     alignItems: 'center',
     justifyContent: 'center',
   },
-  quizText: {
-    flex: 1,
-    minWidth: 0,
-    gap: 2,
+  pillGrey: {
+    backgroundColor: 'rgba(21,21,26,0.05)',
   },
-  deleteButton: {
+  pillText: {
+    fontFamily: type.badge.fontFamily,
+    fontSize: 12,
+    lineHeight: 16,
+  },
+  del: {
+    width: 44,
+    height: 44,
+    borderRadius: 22,
+    marginLeft: 12,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  delPressed: {
+    backgroundColor: colors.redSoft,
+  },
+  errorBox: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    gap: 10,
+    backgroundColor: colors.redSoft,
+    borderRadius: 18,
+    paddingVertical: 14,
+    paddingHorizontal: 16,
+  },
+  errorText: {
+    flex: 1,
+    fontFamily: type.caption.fontFamily,
+    fontSize: 14,
+    lineHeight: 20,
+    color: colors.redText,
+  },
+  // GQuiz
+  setupContent: {
+    paddingHorizontal: 20,
+    gap: 24,
+  },
+  group: {
+    gap: 10,
+  },
+  fileCard: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 14,
+    paddingVertical: 14,
+    paddingLeft: 16,
+    paddingRight: 14,
+  },
+  pdfTile: {
+    width: 48,
+    height: 56,
+    borderRadius: 10,
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 2,
+    borderWidth: 0.5,
+    borderColor: 'rgba(196,64,59,0.15)',
+  },
+  pdfLabel: {
+    fontFamily: 'Manrope_700Bold',
+    fontSize: 9,
+    lineHeight: 11,
+    letterSpacing: 0.4,
+    color: colors.redText,
+  },
+  removeFile: {
     width: 32,
     height: 32,
     borderRadius: 16,
+    backgroundColor: 'rgba(21,21,26,0.05)',
     alignItems: 'center',
     justifyContent: 'center',
   },
-  deleteButtonPressed: {
-    backgroundColor: colors.redSoft,
-  },
-  textArea: {
-    minHeight: 180,
-    borderRadius: 18,
-    padding: 16,
+  notes: {
+    minHeight: 160,
+    borderRadius: 16,
     backgroundColor: colors.surface,
-    borderWidth: 1.5,
+    borderWidth: 1,
     borderColor: colors.border,
+    padding: 16,
     color: colors.ink,
     fontFamily: type.body.fontFamily,
-    fontSize: type.body.fontSize,
-    lineHeight: type.body.lineHeight,
+    fontSize: 16,
+    lineHeight: 22,
   },
-  pillRow: {
+  link: {
     flexDirection: 'row',
+    alignItems: 'center',
     gap: 8,
-  },
-  pill: {
-    flex: 1,
     height: 44,
-    borderRadius: 22,
-    borderWidth: 1.5,
-    borderColor: colors.border,
+    alignSelf: 'flex-start',
+  },
+  linkText: {
+    fontFamily: type.button.fontFamily,
+    fontSize: 14,
+    lineHeight: 20,
+    color: colors.purple,
+  },
+  bars: {
+    flexDirection: 'row',
+    alignItems: 'flex-end',
+    gap: 2,
+    height: 12,
+  },
+  bar: {
+    width: 3,
+    borderRadius: 1,
+  },
+  bottomAction: {
+    position: 'absolute',
+    left: 20,
+    right: 20,
+    bottom: 0,
+    alignItems: 'center',
+    gap: 10,
+  },
+  // GQuizWriting
+  writing: {
+    flex: 1,
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 28,
+    paddingHorizontal: 32,
+  },
+  mascotWrap: {
+    width: 240,
+    height: 220,
     alignItems: 'center',
     justifyContent: 'center',
   },
-  pillActive: {
-    backgroundColor: colors.ink,
-    borderColor: colors.ink,
+  mascot: {
+    width: 200,
+    height: 167,
   },
-  // Quiz player
-  quizScreen: {
-    flex: 1,
-    backgroundColor: colors.bg,
+  writingText: {
+    alignItems: 'center',
+    gap: 8,
   },
+  writingTitle: {
+    fontFamily: type.pageTitle.fontFamily,
+    fontSize: 28,
+    lineHeight: 31,
+    letterSpacing: -0.7,
+    color: colors.ink,
+    textAlign: 'center',
+  },
+  writingSource: {
+    fontFamily: type.taskTitle.fontFamily,
+    fontSize: 15,
+    lineHeight: 21,
+    color: colors.muted,
+    textAlign: 'center',
+  },
+  indeterminate: {
+    width: 160,
+    height: 6,
+    borderRadius: 3,
+    backgroundColor: colors.track,
+    overflow: 'hidden',
+  },
+  indeterminateFill: {
+    width: 64,
+    height: 6,
+    borderRadius: 3,
+    backgroundColor: colors.purple,
+  },
+  // GQuizQuestion / GQuizChecked
   quizHeader: {
     flexDirection: 'row',
     alignItems: 'center',
     gap: 12,
-    paddingHorizontal: layout.screenPadding,
-    paddingBottom: 14,
+    paddingHorizontal: 20,
   },
-  quizProgressTrack: {
+  track: {
     flex: 1,
-    height: layout.progressBarHeight,
-    borderRadius: layout.progressBarHeight / 2,
+    height: 8,
+    borderRadius: 4,
     backgroundColor: colors.track,
     overflow: 'hidden',
   },
-  quizProgressFill: {
+  fill: {
     height: '100%',
-    borderRadius: layout.progressBarHeight / 2,
+    borderRadius: 4,
     backgroundColor: colors.purple,
   },
-  streakPill: {
+  streak: {
     flexDirection: 'row',
     alignItems: 'center',
     gap: 5,
-    height: layout.pillHeight,
-    paddingHorizontal: 10,
-    borderRadius: layout.pillRadius,
-    backgroundColor: colors.surfaceMuted,
+    height: 32,
+    borderRadius: 16,
+    paddingHorizontal: 12,
   },
-  streakPillLit: {
+  streakLit: {
     backgroundColor: colors.yellowSoft,
   },
-  quizBody: {
-    paddingHorizontal: layout.screenPadding,
-    paddingTop: 8,
-    gap: 14,
+  streakOff: {
+    backgroundColor: 'rgba(21,21,26,0.05)',
+  },
+  streakText: {
+    fontFamily: type.badge.fontFamily,
+    fontSize: 14,
+    lineHeight: 18,
+  },
+  questionBody: {
+    paddingHorizontal: 20,
+    paddingTop: 40,
+    paddingBottom: 16,
+  },
+  questionBlock: {
+    gap: 12,
   },
   prompt: {
-    marginTop: 2,
-  },
-  xpPop: {
-    alignSelf: 'flex-start',
-    backgroundColor: colors.yellowSoft,
-    borderRadius: 999,
-    paddingHorizontal: 10,
-    paddingVertical: 4,
-  },
-  explainBox: {
-    flexDirection: 'row',
-    alignItems: 'flex-start',
-    gap: 8,
-    borderRadius: 14,
-    padding: layout.cardPadding,
-  },
-  explainCorrect: {
-    backgroundColor: colors.mint,
-  },
-  explainWrong: {
-    backgroundColor: colors.redSoft,
-  },
-  choiceZone: {
-    paddingHorizontal: layout.screenPadding,
-    paddingTop: 10,
-    gap: 10,
-  },
-  choice: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    gap: 10,
-    minHeight: 56,
-    borderRadius: 16,
-    paddingHorizontal: 16,
-    paddingVertical: 12,
-    backgroundColor: colors.surface,
-    borderWidth: 1.5,
-    borderColor: colors.border,
-  },
-  choiceCorrect: {
-    backgroundColor: colors.mint,
-    borderColor: colors.green,
-  },
-  choiceWrong: {
-    backgroundColor: colors.redSoft,
-    borderColor: colors.red,
-  },
-  choiceText: {
-    flex: 1,
+    fontFamily: type.pageTitle.fontFamily,
+    fontSize: 28,
+    lineHeight: 32,
+    letterSpacing: -0.7,
     color: colors.ink,
   },
-  choiceTextCorrect: {
-    color: colors.mintText,
+  explain: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    gap: 10,
+    marginTop: 8,
+    paddingVertical: 14,
+    paddingHorizontal: 16,
+    borderRadius: 18,
   },
-  choiceTextWrong: {
-    color: colors.redText,
+  explainIcon: {
+    marginTop: 1,
   },
-  nextButton: {
-    marginTop: 4,
-  },
-  // Results
-  resultsScreen: {
+  explainText: {
     flex: 1,
-    justifyContent: 'space-between',
-    paddingHorizontal: layout.screenPadding,
+    fontFamily: type.caption.fontFamily,
+    fontSize: 14,
+    lineHeight: 20,
   },
-  resultsCenter: {
-    flex: 1,
+  choiceZone: {
+    paddingHorizontal: 20,
+    gap: 10,
+  },
+  opt: {
+    minHeight: 60,
+    borderRadius: 18,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 14,
+    paddingVertical: 10,
+    paddingLeft: 12,
+    paddingRight: 16,
+    shadowColor: '#1C1633',
+    shadowOpacity: 0.04,
+    shadowRadius: 12,
+    shadowOffset: { width: 0, height: 4 },
+  },
+  key: {
+    width: 34,
+    height: 34,
+    borderRadius: 11,
     alignItems: 'center',
     justifyContent: 'center',
-    gap: 8,
   },
-  resultsIconTile: {
-    width: 64,
-    height: 64,
-    borderRadius: 20,
+  keyText: {
+    fontFamily: type.button.fontFamily,
+    fontSize: 14,
+    lineHeight: 18,
+  },
+  optText: {
+    flex: 1,
+    fontFamily: type.taskTitle.fontFamily,
+    fontSize: 16,
+    lineHeight: 22,
+  },
+  nextButton: {
+    marginTop: 8,
+  },
+  // GQuizResult
+  resultGlow: {
+    position: 'absolute',
+    alignSelf: 'center',
+    top: 150,
+  },
+  resultCenter: {
+    flex: 1,
+    alignItems: 'center',
+    paddingTop: 120,
+    gap: 28,
+  },
+  ring: {
+    width: RING,
+    height: RING,
+  },
+  ringInner: {
+    ...StyleSheet.absoluteFill,
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 2,
+  },
+  scoreRow: {
+    flexDirection: 'row',
+    alignItems: 'baseline',
+  },
+  scoreBig: {
+    fontFamily: type.hero.fontFamily,
+    fontSize: 88,
+    lineHeight: 92,
+    letterSpacing: -3,
+    color: colors.ink,
+    fontVariant: ['tabular-nums'],
+  },
+  scoreOf: {
+    fontFamily: type.pageTitle.fontFamily,
+    fontSize: 32,
+    lineHeight: 34,
+    letterSpacing: -0.5,
+    color: colors.faint,
+  },
+  resultText: {
+    alignItems: 'center',
+    gap: 12,
+  },
+  resultMessage: {
+    fontFamily: type.pageTitle.fontFamily,
+    fontSize: 28,
+    lineHeight: 32,
+    letterSpacing: -0.7,
+    color: colors.ink,
+  },
+  bestStreak: {
+    height: 30,
+    borderRadius: 15,
+    paddingHorizontal: 12,
     backgroundColor: colors.yellowSoft,
     alignItems: 'center',
     justifyContent: 'center',
-    marginBottom: 8,
   },
-  resultsActions: {
+  bestStreakText: {
+    fontFamily: type.badge.fontFamily,
+    fontSize: 13,
+    lineHeight: 18,
+    color: colors.yellowText,
+  },
+  resultActions: {
     flexDirection: 'row',
-    gap: 10,
-  },
-  secondaryButton: {
-    flex: 1,
-    height: 52,
-    borderRadius: 16,
-    backgroundColor: colors.surfaceMuted,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  buildButton: {
-    flex: 1,
+    gap: 12,
+    paddingHorizontal: 20,
   },
 });
