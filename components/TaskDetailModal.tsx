@@ -1,18 +1,20 @@
-import { useMemo, useState } from 'react';
-import { ActivityIndicator, Modal, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
+import { useMemo, useRef, useState } from 'react';
+import { ActivityIndicator, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { Avatar, UnclaimedAvatar } from './Avatar';
+import { Avatar } from './Avatar';
 import { ConfirmDialog } from './ConfirmDialog';
+import { FadeIn } from './FadeIn';
+import { GradientButton } from './GradientButton';
 import { Icon } from './Icon';
+import { Sheet } from './Sheet';
 import { TaskFormModal } from './TaskFormModal';
-import { TaskStatusDot } from './TaskStatusDot';
 import { Task, Priority, TaskStatus } from '../data/tasks';
 import { useAuth } from '../state/AuthProvider';
 import { shareTask } from '../state/messages';
 import { useNavigation } from '../state/NavigationProvider';
 import { notifyMessage } from '../state/pushNotifications';
 import { useProject } from '../state/ProjectRepository';
-import { colors, layout, type } from '../theme';
+import { colors, type } from '../theme';
 import { formatShortDate } from '../utils/dates';
 
 type Props = {
@@ -22,23 +24,23 @@ type Props = {
   onClaimed?: (task: Task) => void;
 };
 
-const PRIORITY: Record<Priority, { label: string; mark: string; text: string }> = {
-  high: { label: 'High priority', mark: colors.red, text: colors.redText },
-  medium: { label: 'Medium priority', mark: colors.amber, text: colors.yellowText },
-  low: { label: 'Low priority', mark: colors.faint, text: colors.muted },
+const PRIORITY: Record<Priority, { label: string; bg: string; fg: string }> = {
+  high: { label: 'High', bg: colors.redSoft, fg: colors.redText },
+  medium: { label: 'Medium', bg: colors.yellowSoft, fg: colors.yellowText },
+  low: { label: 'Low', bg: 'rgba(21,21,26,0.05)', fg: colors.muted },
 };
 
-const STATUS_LABEL: Record<TaskStatus, string> = {
-  not_started: 'Not started',
-  in_progress: 'In progress',
-  completed: 'Completed',
+const STATUS: Record<TaskStatus, { label: string; bg: string; fg: string; ring: string; fill?: string }> = {
+  not_started: { label: 'Not started', bg: 'rgba(21,21,26,0.05)', fg: colors.muted, ring: colors.control },
+  in_progress: { label: 'In progress', bg: colors.purpleSoft, fg: colors.purple, ring: colors.purple },
+  completed: { label: 'Done', bg: colors.mint, fg: colors.mintText, ring: colors.green, fill: colors.green },
 };
 
 /**
- * The one place every task action lives — status transitions, reassignment,
- * and the existing AI-written guidance/outline behind "Help" — so the
- * compact rows in the Tasks list can stay scannable instead of carrying a
- * button for each of these.
+ * Task detail (board GTaskDetail): one sheet with every task action —
+ * status, claim, the AI "Help", reassignment, share, edit, delete — so the
+ * rows elsewhere stay scannable. The main action sits in a bar pinned to
+ * the thumb zone.
  */
 export function TaskDetailModal({ taskId, onClose, onClaimed }: Props) {
   const insets = useSafeAreaInsets();
@@ -54,29 +56,32 @@ export function TaskDetailModal({ taskId, onClose, onClaimed }: Props) {
   const [claiming, setClaiming] = useState(false);
   const [claimError, setClaimError] = useState<string | null>(null);
   const [sharing, setSharing] = useState(false);
-  const [shared, setShared] = useState(false);
   const [shareError, setShareError] = useState<string | null>(null);
   const today = useMemo(() => new Date(), []);
 
-  const task = tasks.find((t) => t.id === taskId);
-  const visible = task !== undefined;
+  // The sheet animates out after taskId clears, so keep drawing the last
+  // task until it has gone.
+  const found = tasks.find((t) => t.id === taskId);
+  const lastTask = useRef<Task | undefined>(found);
+  if (found) lastTask.current = found;
+  const task = found ?? lastTask.current;
+  const visible = found !== undefined;
 
   function close() {
     setHelpOpen(false);
     setHelpError(null);
-    setShared(false);
+    setClaimError(null);
     setShareError(null);
     onClose();
   }
 
-  /**
-   * Guidance/outline used to be written for every task the moment a brief
-   * was parsed. Now it's generated the first time someone actually taps
-   * Help on THIS task, and cached on it afterwards — a second tap just
-   * toggles visibility of what's already there instead of calling the AI again.
-   */
+  const hasGuidance = Boolean(task?.guidance && task.guidance.trim().length > 0);
+  const hasOutline = Boolean(task?.outline && task.outline.length > 0);
+  const hasHelp = hasGuidance || hasOutline;
+
+  /** Help is written the first time someone taps it on THIS task, then cached on the task. */
   async function handleHelpPress() {
-    if (helpLoading) return;
+    if (helpLoading || !task) return;
     if (helpOpen) {
       setHelpOpen(false);
       return;
@@ -85,16 +90,12 @@ export function TaskDetailModal({ taskId, onClose, onClaimed }: Props) {
       setHelpOpen(true);
       return;
     }
-    if (!task) return;
     setHelpLoading(true);
     setHelpError(null);
     const result = await generateTaskHelp(task.id);
     setHelpLoading(false);
-    if (result.error) {
-      setHelpError(result.error);
-    } else {
-      setHelpOpen(true);
-    }
+    if (result.error) setHelpError(result.error);
+    else setHelpOpen(true);
   }
 
   function confirmDelete() {
@@ -110,11 +111,8 @@ export function TaskDetailModal({ taskId, onClose, onClaimed }: Props) {
     setClaimError(null);
     const result = await claimTask(task.id);
     setClaiming(false);
-    if (result.error) {
-      setClaimError(result.error);
-    } else {
-      onClaimed?.({ ...task, assigneeId: currentUserId });
-    }
+    if (result.error) setClaimError(result.error);
+    else onClaimed?.({ ...task, assigneeId: currentUserId });
   }
 
   async function handleShare() {
@@ -123,17 +121,14 @@ export function TaskDetailModal({ taskId, onClose, onClaimed }: Props) {
     setShareError(null);
     try {
       await shareTask(project.id, currentUserId, task.id);
-      // Task-claim cards always broadcast to the whole group (see
-      // shareTask's own comment) — notify every other member, not a DM.
+      // Task cards always go to the whole group: notify every other member.
       const senderName = profile?.fullName ?? 'Someone';
       for (const member of members) {
         if (member.id === currentUserId) continue;
         notifyMessage(member.id, senderName, `Shared a task: ${task.title}`, project.id);
       }
-      setShared(true);
       setSharing(false);
-      // Sharing is only useful if you land where it landed — jump straight
-      // into the conversation instead of leaving the user to find it.
+      // Land where it landed.
       close();
       goToChat();
     } catch (err) {
@@ -142,245 +137,206 @@ export function TaskDetailModal({ taskId, onClose, onClaimed }: Props) {
     }
   }
 
-  if (!task) {
-    return <Modal visible={false} transparent animationType="slide" />;
-  }
+  if (!task) return null;
 
   const priority = PRIORITY[task.priority];
-  const hasGuidance = Boolean(task.guidance && task.guidance.trim().length > 0);
-  const hasOutline = Boolean(task.outline && task.outline.length > 0);
-  const hasHelp = hasGuidance || hasOutline;
+  const status = STATUS[task.status];
   const completedDate = task.completedAt ? formatShortDate(new Date(task.completedAt), today) : null;
+  const meta = [
+    task.effortHours ? `${Number(task.effortHours.toFixed(1))}h` : null,
+    task.status === 'completed' && completedDate ? `Done ${completedDate}` : task.dueLabel ? `Due ${task.dueLabel}` : null,
+    task.sectionRef ? task.sectionRef : null,
+  ]
+    .filter(Boolean)
+    .join(' · ');
+
+  const primary =
+    task.status === 'not_started'
+      ? { label: 'Start working', next: 'in_progress' as const }
+      : task.status === 'in_progress'
+        ? { label: 'Finish task', next: 'completed' as const }
+        : { label: 'Reopen task', next: 'not_started' as const };
 
   return (
     <>
-    <Modal visible={visible} transparent animationType="slide" onRequestClose={close}>
-      <View style={styles.backdrop}>
-        <Pressable style={StyleSheet.absoluteFill} onPress={close} />
+      <Sheet
+        visible={visible}
+        onClose={close}
+        full
+        footer={
+          <View style={styles.bar}>
+            <Pressable
+              onPress={handleShare}
+              disabled={sharing}
+              accessibilityRole="button"
+              accessibilityLabel={`Share ${task.title} to chat`}
+              style={({ pressed }) => [styles.share, pressed && styles.pressed]}
+            >
+              {sharing ? (
+                <ActivityIndicator size="small" color={colors.ink} />
+              ) : (
+                <Icon name="chat" size={18} color={colors.ink} strokeWidth={1.8} />
+              )}
+              <Text style={styles.shareText}>Share</Text>
+            </Pressable>
+            <GradientButton
+              label={primary.label}
+              onPress={() => setTaskStatus(task.id, primary.next)}
+              style={styles.flex}
+            />
+          </View>
+        }
+      >
         <ScrollView
-          style={styles.sheet}
-          contentContainerStyle={{ paddingBottom: 20 + Math.max(insets.bottom, 14) }}
+          contentContainerStyle={[styles.body, { paddingBottom: 56 + 28 + 40 + Math.max(insets.bottom, 0) }]}
           showsVerticalScrollIndicator={false}
         >
-          <View style={styles.handle} />
           <View style={styles.header}>
-            <Text style={[type.sectionHeading, styles.title]}>{task.title}</Text>
+            <Text style={styles.title} accessibilityRole="header">
+              {task.title}
+            </Text>
             <Pressable
-              style={styles.iconButton}
               onPress={() => setEditing(true)}
               accessibilityRole="button"
-              accessibilityLabel={`Edit ${task.title}`}
+              accessibilityLabel="Edit task"
+              style={({ pressed }) => [styles.softButton, pressed && styles.pressed]}
             >
-              <Icon name="edit" size={16} color={colors.ink} strokeWidth={1.8} />
+              <Icon name="edit" size={18} color={colors.ink} strokeWidth={1.8} />
             </Pressable>
-            <Pressable style={styles.iconButton} onPress={close} accessibilityRole="button" accessibilityLabel="Close">
-              <Icon name="close" size={16} color={colors.ink} strokeWidth={2.2} />
-            </Pressable>
-          </View>
-
-          <View style={styles.metaRow}>
-            <Icon name="flag" size={13} color={priority.mark} fill={priority.mark} strokeWidth={1.8} />
-            <Text style={[type.caption, { color: priority.text }]}>{priority.label}</Text>
-            {task.sectionRef ? (
-              <>
-                <Text style={[type.caption, styles.metaDot]}>·</Text>
-                <Text style={[type.caption, styles.muted]}>{task.sectionRef}</Text>
-              </>
-            ) : null}
-            {task.effortHours ? (
-              <>
-                <Text style={[type.caption, styles.metaDot]}>·</Text>
-                <Text style={[type.caption, styles.muted]}>{Number(task.effortHours.toFixed(1))}h</Text>
-              </>
-            ) : null}
-            {task.dueLabel ? (
-              <>
-                <Text style={[type.caption, styles.metaDot]}>·</Text>
-                <Text style={[type.caption, task.dueUrgent ? styles.dueUrgent : styles.muted]}>{task.dueLabel}</Text>
-              </>
-            ) : null}
-          </View>
-
-          <View style={styles.statusRow}>
-            <TaskStatusDot status={task.status} size={22} />
-            <Text style={[type.button, styles.ink]}>
-              {STATUS_LABEL[task.status]}
-              {completedDate ? ` · ${completedDate}` : ''}
-            </Text>
-          </View>
-
-          {task.status === 'not_started' ? (
             <Pressable
-              onPress={() => setTaskStatus(task.id, 'in_progress')}
-              style={styles.primaryButton}
+              onPress={close}
               accessibilityRole="button"
+              accessibilityLabel="Close"
+              style={({ pressed }) => [styles.softButton, pressed && styles.pressed]}
             >
-              <Text style={[type.button, { color: colors.onInk }]}>Start working</Text>
+              <Icon name="close" size={18} color={colors.ink} strokeWidth={2} />
             </Pressable>
-          ) : task.status === 'in_progress' ? (
-            <>
-              <Pressable
-                onPress={() => setTaskStatus(task.id, 'completed')}
-                style={styles.primaryButton}
-                accessibilityRole="button"
-              >
-                <Text style={[type.button, { color: colors.onInk }]}>Finish task</Text>
-              </Pressable>
-              <Pressable onPress={() => setTaskStatus(task.id, 'not_started')} style={styles.linkButton} hitSlop={8}>
-                <Text style={[type.caption, styles.link]}>Move back to not started</Text>
-              </Pressable>
-            </>
-          ) : (
-            <Pressable onPress={() => setTaskStatus(task.id, 'not_started')} style={styles.linkButton} hitSlop={8}>
-              <Text style={[type.caption, styles.link]}>Reopen task</Text>
-            </Pressable>
-          )}
+          </View>
 
-          <Pressable
-            onPress={handleHelpPress}
-            disabled={helpLoading}
-            style={[styles.helpButton, helpLoading && styles.helpButtonDisabled]}
-            accessibilityRole="button"
-            accessibilityLabel={
-              helpLoading
-                ? `Writing help for ${task.title}`
-                : `${helpOpen ? 'Hide' : 'Show'} what to write for ${task.title}`
-            }
-          >
-            {helpLoading ? (
-              <>
-                <ActivityIndicator size="small" color={colors.muted} />
-                <Text style={[type.button, styles.ink]}>Writing help…</Text>
-              </>
-            ) : (
-              <>
-                <Text style={[type.button, styles.ink]}>{helpOpen ? 'Hide help' : 'Help'}</Text>
-                <Icon name={helpOpen ? 'chevronUp' : 'chevronDown'} size={14} color={colors.muted} strokeWidth={2} />
-              </>
-            )}
-          </Pressable>
-          {helpError ? (
-            <View style={styles.claimErrorBox}>
-              <Icon name="exclamation" size={16} color={colors.redText} strokeWidth={2.2} />
-              <Text style={[type.caption, styles.claimErrorText]}>{helpError}</Text>
+          <View style={styles.pills}>
+            <View style={[styles.pill, { backgroundColor: status.bg }]}>
+              <View style={[styles.statusRing, { borderColor: status.ring, backgroundColor: status.fill ?? 'transparent' }]} />
+              <Text style={[styles.pillText, { color: status.fg }]}>{status.label}</Text>
             </View>
-          ) : null}
-
-          {helpOpen && hasGuidance ? (
-            <View style={styles.guidanceBox}>
-              <Text style={[type.metadata, styles.eyebrow]}>WHAT TO WRITE</Text>
-              <Text style={[type.body, styles.ink]}>{task.guidance}</Text>
+            <View style={[styles.pill, { backgroundColor: priority.bg }]}>
+              <Icon name="flagSolid" size={11} color={priority.fg} fill={priority.fg} strokeWidth={2} />
+              <Text style={[styles.pillText, { color: priority.fg }]}>{priority.label}</Text>
             </View>
-          ) : null}
-          {helpOpen && hasOutline ? (
-            <View style={styles.guidanceBox}>
-              <Text style={[type.metadata, styles.eyebrow]}>OUTLINE</Text>
-              {task.outline!.map((point, i) => (
-                <View key={i} style={styles.outlineRow}>
-                  <View style={styles.outlineDot} />
-                  <Text style={[type.body, styles.ink]}>{point}</Text>
-                </View>
-              ))}
-            </View>
-          ) : null}
+            {meta ? <Text style={[styles.m, task.dueUrgent && task.status !== 'completed' && styles.urgent]}>{meta}</Text> : null}
+          </View>
 
           {task.assigneeId === null && currentUserId ? (
-            <>
+            <View style={styles.claimRow}>
+              <View style={styles.claimDash} />
+              <Text style={[styles.t, styles.claimText]}>Nobody yet</Text>
               <Pressable
                 onPress={handleClaim}
                 disabled={claiming}
-                style={[styles.claimButton, claiming && styles.claimButtonDisabled]}
                 accessibilityRole="button"
                 accessibilityLabel={`Claim ${task.title}`}
+                style={({ pressed }) => [styles.claimButton, (pressed || claiming) && styles.pressed]}
               >
-                <Icon name="check" size={15} color={colors.purple} strokeWidth={2.4} />
-                <Text style={[type.button, styles.claimButtonText]}>
-                  {claiming ? 'Claiming…' : 'Claim this task'}
-                </Text>
+                <Text style={styles.claimButtonText}>{claiming ? 'Claiming…' : 'Claim it'}</Text>
               </Pressable>
-              {claimError ? (
-                <View style={styles.claimErrorBox}>
-                  <Icon name="exclamation" size={16} color={colors.redText} strokeWidth={2.2} />
-                  <Text style={[type.caption, styles.claimErrorText]}>{claimError}</Text>
-                </View>
-              ) : null}
-            </>
-          ) : null}
-
-          <View style={styles.assignSection}>
-            <Text style={[type.metadata, styles.eyebrow]}>ASSIGNED TO</Text>
-            <View style={styles.assignRow}>
-              <Pressable
-                onPress={() => reassignTask(task.id, null)}
-                hitSlop={4}
-                accessibilityRole="button"
-                accessibilityLabel="Unassign"
-                style={styles.assignOption}
-              >
-                <UnclaimedAvatar size={40} borderColor={task.assigneeId === null ? colors.purple : undefined} />
-                <Text
-                  style={[type.tinyLabel, task.assigneeId === null ? styles.assignNameActive : styles.muted]}
-                  numberOfLines={1}
-                >
-                  Unclaimed
-                </Text>
-              </Pressable>
-              {members.map((member) => (
-                <Pressable
-                  key={member.id}
-                  onPress={() => reassignTask(task.id, member.id)}
-                  hitSlop={4}
-                  accessibilityRole="button"
-                  accessibilityLabel={`Assign to ${member.name}`}
-                  style={styles.assignOption}
-                >
-                  <Avatar
-                    {...member}
-                    size={40}
-                    borderColor={member.id === task.assigneeId ? colors.purple : colors.surface}
-                  />
-                  <Text
-                    style={[type.tinyLabel, member.id === task.assigneeId ? styles.assignNameActive : styles.muted]}
-                    numberOfLines={1}
-                  >
-                    {member.name}
-                  </Text>
-                </Pressable>
-              ))}
             </View>
+          ) : null}
+          {claimError ? <ErrorBox text={claimError} /> : null}
+
+          <View style={styles.helpSection}>
+            <Pressable
+              onPress={handleHelpPress}
+              disabled={helpLoading}
+              accessibilityRole="button"
+              accessibilityState={{ expanded: helpOpen, busy: helpLoading }}
+              accessibilityLabel={helpLoading ? 'Writing help' : 'Help'}
+              style={({ pressed }) => [styles.helpRow, pressed && styles.pressed]}
+            >
+              <View style={styles.helpTile}>
+                <Icon name="sparkle" size={19} color={colors.purple} strokeWidth={1.8} />
+              </View>
+              <Text style={[styles.t, styles.flex]}>{helpLoading ? 'Writing help…' : 'Help'}</Text>
+              {helpLoading ? (
+                <ActivityIndicator size="small" color={colors.muted} />
+              ) : (
+                <Icon name={helpOpen ? 'chevronUp' : 'chevronDown'} size={18} color={colors.muted} strokeWidth={2} />
+              )}
+            </Pressable>
+            {helpError ? <ErrorBox text={helpError} /> : null}
+            {helpOpen && hasHelp ? (
+              <FadeIn>
+                <View style={styles.helpBox}>
+                  {hasGuidance ? (
+                    <View style={styles.helpBlock}>
+                      <Text style={styles.eyebrow}>What to write</Text>
+                      <Text style={styles.helpText}>{task.guidance}</Text>
+                    </View>
+                  ) : null}
+                  {hasOutline ? (
+                    <View style={styles.helpBlock}>
+                      <Text style={styles.eyebrow}>Outline</Text>
+                      {task.outline!.map((point, i) => (
+                        <View key={i} style={styles.bulRow}>
+                          <View style={styles.bulDot} />
+                          <Text style={styles.bulText}>{point}</Text>
+                        </View>
+                      ))}
+                    </View>
+                  ) : null}
+                </View>
+              </FadeIn>
+            ) : null}
           </View>
 
-          <Pressable
-            onPress={handleShare}
-            disabled={sharing}
-            style={styles.shareToChat}
-            accessibilityRole="button"
-            accessibilityLabel={`Share ${task.title} to chat`}
-          >
-            <Icon name="chat" size={15} color={colors.purple} strokeWidth={1.8} />
-            <Text style={[type.button, styles.shareToChatText]}>
-              {sharing ? 'Sharing…' : shared ? 'Shared to chat' : 'Share to chat'}
-            </Text>
-          </Pressable>
-          {shareError ? (
-            <View style={styles.claimErrorBox}>
-              <Icon name="exclamation" size={16} color={colors.redText} strokeWidth={2.2} />
-              <Text style={[type.caption, styles.claimErrorText]}>{shareError}</Text>
-            </View>
-          ) : null}
+          <View style={styles.assignSection}>
+            <Text style={styles.eyebrow}>Assigned to</Text>
+            <ScrollView
+              horizontal
+              showsHorizontalScrollIndicator={false}
+              contentContainerStyle={styles.picks}
+              accessibilityRole="radiogroup"
+              accessibilityLabel="Assigned to"
+            >
+              <Pick
+                label="Nobody"
+                selected={task.assigneeId === null}
+                onPress={() => reassignTask(task.id, null)}
+                face={<View style={styles.nobodyFace} />}
+              />
+              {members.map((member) => (
+                <Pick
+                  key={member.id}
+                  label={member.name.split(' ')[0]}
+                  selected={member.id === task.assigneeId}
+                  onPress={() => reassignTask(task.id, member.id)}
+                  face={<Avatar initials={member.initials} bg={member.bg} fg={member.fg} size={44} />}
+                />
+              ))}
+            </ScrollView>
+          </View>
 
-          <Pressable
-            onPress={() => setDeleting(true)}
-            style={styles.deleteLink}
-            hitSlop={8}
-            accessibilityRole="button"
-            accessibilityLabel={`Delete ${task.title}`}
-          >
-            <Text style={[type.caption, styles.deleteLinkText]}>Delete task</Text>
-          </Pressable>
+          {shareError ? <ErrorBox text={shareError} /> : null}
+
+          <View style={styles.footLinks}>
+            {task.status === 'in_progress' ? (
+              <Pressable
+                onPress={() => setTaskStatus(task.id, 'not_started')}
+                accessibilityRole="button"
+                style={({ pressed }) => [styles.footLink, pressed && styles.pressed]}
+              >
+                <Text style={styles.backText}>Move back to not started</Text>
+              </Pressable>
+            ) : null}
+            <Pressable
+              onPress={() => setDeleting(true)}
+              accessibilityRole="button"
+              accessibilityLabel={`Delete ${task.title}`}
+              style={({ pressed }) => [styles.footLink, pressed && styles.pressed]}
+            >
+              <Text style={styles.deleteText}>Delete task</Text>
+            </Pressable>
+          </View>
         </ScrollView>
-      </View>
-    </Modal>
+      </Sheet>
 
       <TaskFormModal visible={editing} task={task} onClose={() => setEditing(false)} />
       <ConfirmDialog
@@ -396,196 +352,318 @@ export function TaskDetailModal({ taskId, onClose, onClaimed }: Props) {
   );
 }
 
+function Pick({ label, selected, onPress, face }: { label: string; selected: boolean; onPress: () => void; face: React.ReactNode }) {
+  return (
+    <Pressable
+      onPress={onPress}
+      accessibilityRole="radio"
+      accessibilityState={{ checked: selected }}
+      accessibilityLabel={label}
+      style={({ pressed }) => [styles.pick, pressed && styles.pressed]}
+    >
+      <View style={[styles.pickRing, selected && styles.pickRingOn]}>{face}</View>
+      <Text style={[styles.pickLabel, selected && styles.pickLabelOn]} numberOfLines={1}>
+        {label}
+      </Text>
+    </Pressable>
+  );
+}
+
+function ErrorBox({ text }: { text: string }) {
+  return (
+    <View style={styles.errorBox} accessibilityRole="alert">
+      <Icon name="exclamation" size={18} color={colors.redText} strokeWidth={2.2} />
+      <Text style={styles.errorText}>{text}</Text>
+    </View>
+  );
+}
+
 const styles = StyleSheet.create({
-  backdrop: {
+  flex: {
     flex: 1,
-    backgroundColor: 'rgba(20,16,30,0.45)',
-    justifyContent: 'flex-end',
   },
-  sheet: {
-    backgroundColor: colors.bg,
-    borderTopLeftRadius: 28,
-    borderTopRightRadius: 28,
+  pressed: {
+    opacity: 0.6,
+  },
+  body: {
     paddingHorizontal: 20,
-    paddingTop: 10,
-    maxHeight: '85%',
-  },
-  handle: {
-    width: 40,
-    height: 4,
-    borderRadius: 2,
-    backgroundColor: colors.border,
-    alignSelf: 'center',
-    marginBottom: 14,
   },
   header: {
     flexDirection: 'row',
     alignItems: 'flex-start',
-    gap: 12,
-    marginBottom: 10,
+    gap: 8,
+    paddingTop: 16,
   },
   title: {
     flex: 1,
+    paddingTop: 6,
+    fontFamily: type.pageTitle.fontFamily,
+    fontSize: 26,
+    lineHeight: 30,
+    letterSpacing: -0.6,
     color: colors.ink,
   },
-  iconButton: {
+  softButton: {
+    width: 44,
+    height: 44,
+    borderRadius: 22,
+    backgroundColor: 'rgba(21,21,26,0.05)',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  pills: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    alignItems: 'center',
+    gap: 8,
+    marginTop: 12,
+  },
+  pill: {
+    height: 24,
+    paddingHorizontal: 10,
+    borderRadius: 12,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 5,
+  },
+  pillText: {
+    fontFamily: type.badge.fontFamily,
+    fontSize: 12,
+    lineHeight: 16,
+  },
+  statusRing: {
+    width: 8,
+    height: 8,
+    borderRadius: 4,
+    borderWidth: 1.5,
+  },
+  t: {
+    fontFamily: type.taskTitle.fontFamily,
+    fontSize: 15,
+    lineHeight: 21,
+    color: colors.ink,
+  },
+  m: {
+    fontFamily: type.caption.fontFamily,
+    fontSize: 13,
+    lineHeight: 18,
+    color: colors.muted,
+  },
+  urgent: {
+    color: colors.redText,
+  },
+  eyebrow: {
+    fontFamily: type.metadata.fontFamily,
+    fontSize: 12,
+    lineHeight: 16,
+    letterSpacing: 0.6,
+    textTransform: 'uppercase',
+    color: colors.muted,
+  },
+  claimRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 12,
+    marginTop: 20,
+    paddingVertical: 12,
+    paddingRight: 12,
+    paddingLeft: 14,
+    borderRadius: 18,
+    backgroundColor: colors.yellowSoft,
+  },
+  claimDash: {
+    width: 32,
+    height: 32,
+    borderRadius: 16,
+    borderWidth: 1.5,
+    borderStyle: 'dashed',
+    borderColor: '#D9B66A',
+  },
+  claimText: {
+    flex: 1,
+    color: colors.yellowText,
+  },
+  claimButton: {
+    height: 44,
+    paddingHorizontal: 18,
+    borderRadius: 14,
+    backgroundColor: colors.surface,
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderWidth: StyleSheet.hairlineWidth,
+    borderColor: 'rgba(17,17,17,0.08)',
+    shadowColor: '#1C1633',
+    shadowOpacity: 0.06,
+    shadowRadius: 6,
+    shadowOffset: { width: 0, height: 2 },
+    elevation: 1,
+  },
+  claimButtonText: {
+    fontFamily: type.button.fontFamily,
+    fontSize: 15,
+    lineHeight: 20,
+    color: colors.purple,
+  },
+  helpSection: {
+    marginTop: 20,
+    gap: 8,
+  },
+  helpRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 12,
+    height: 52,
+  },
+  helpTile: {
+    width: 40,
+    height: 40,
+    borderRadius: 13,
+    backgroundColor: colors.purpleSoft,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  helpBox: {
+    gap: 14,
+    padding: 16,
+    borderRadius: 18,
+    backgroundColor: colors.surfaceMuted,
+  },
+  helpBlock: {
+    gap: 6,
+  },
+  helpText: {
+    fontFamily: type.caption.fontFamily,
+    fontSize: 14,
+    lineHeight: 21,
+    color: colors.ink,
+  },
+  bulRow: {
+    flexDirection: 'row',
+    gap: 10,
+  },
+  bulDot: {
+    width: 5,
+    height: 5,
+    borderRadius: 3,
+    backgroundColor: colors.faint,
+    marginTop: 8,
+  },
+  bulText: {
+    flex: 1,
+    fontFamily: type.caption.fontFamily,
+    fontSize: 14,
+    lineHeight: 20,
+    color: colors.ink,
+  },
+  assignSection: {
+    marginTop: 22,
+    gap: 12,
+  },
+  picks: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    gap: 12,
+    paddingVertical: 4,
+  },
+  pick: {
+    width: 56,
+    alignItems: 'center',
+    gap: 6,
+  },
+  pickRing: {
+    width: 52,
+    height: 52,
+    borderRadius: 26,
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderWidth: 2,
+    borderColor: 'transparent',
+  },
+  pickRingOn: {
+    borderColor: colors.purple,
+  },
+  nobodyFace: {
     width: 44,
     height: 44,
     borderRadius: 22,
     backgroundColor: colors.surface,
-    alignItems: 'center',
-    justifyContent: 'center',
-    marginTop: -6,
+    borderWidth: 1.5,
+    borderStyle: 'dashed',
+    borderColor: '#C9C5D3',
   },
-  metaRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    flexWrap: 'wrap',
-    gap: 5,
-    marginBottom: 18,
-  },
-  metaDot: {
-    color: colors.faint,
-  },
-  muted: {
+  pickLabel: {
+    fontFamily: type.metadata.fontFamily,
+    fontSize: 12,
+    lineHeight: 16,
     color: colors.muted,
   },
-  ink: {
+  pickLabelOn: {
+    fontFamily: type.badge.fontFamily,
+    color: colors.purple,
+  },
+  footLinks: {
+    alignItems: 'center',
+    marginTop: 10,
+  },
+  footLink: {
+    height: 44,
+    paddingHorizontal: 12,
+    justifyContent: 'center',
+  },
+  backText: {
+    fontFamily: type.taskTitle.fontFamily,
+    fontSize: 14,
+    lineHeight: 20,
+    color: colors.purple,
+  },
+  deleteText: {
+    fontFamily: type.taskTitle.fontFamily,
+    fontSize: 14,
+    lineHeight: 20,
+    color: colors.redText,
+  },
+  bar: {
+    flexDirection: 'row',
+    gap: 10,
+  },
+  share: {
+    width: 124,
+    height: 56,
+    borderRadius: 18,
+    backgroundColor: colors.surface,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 8,
+    borderWidth: StyleSheet.hairlineWidth,
+    borderColor: 'rgba(17,17,17,0.1)',
+    shadowColor: '#1C1633',
+    shadowOpacity: 0.05,
+    shadowRadius: 12,
+    shadowOffset: { width: 0, height: 4 },
+    elevation: 1,
+  },
+  shareText: {
+    fontFamily: type.button.fontFamily,
+    fontSize: 15,
+    lineHeight: 20,
     color: colors.ink,
   },
-  dueUrgent: {
-    color: colors.redText,
-  },
-  statusRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 10,
-    marginBottom: 14,
-  },
-  primaryButton: {
-    height: 52,
-    borderRadius: 26,
-    backgroundColor: colors.purple,
-    alignItems: 'center',
-    justifyContent: 'center',
-    marginBottom: 8,
-  },
-  linkButton: {
-    alignSelf: 'center',
-    paddingVertical: 10,
-    marginBottom: 8,
-  },
-  link: {
-    color: colors.purple,
-  },
-  helpButton: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center',
-    gap: 6,
-    height: 48,
-    borderRadius: 24,
-    borderWidth: 1.5,
-    borderColor: colors.border,
-    marginTop: 6,
-    marginBottom: 12,
-  },
-  helpButtonDisabled: {
-    opacity: 0.6,
-  },
-  claimButton: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center',
-    gap: 6,
-    height: 48,
-    borderRadius: 24,
-    borderWidth: 1.5,
-    borderColor: colors.purple,
-    marginBottom: 8,
-  },
-  claimButtonDisabled: {
-    opacity: 0.5,
-  },
-  claimButtonText: {
-    color: colors.purple,
-  },
-  claimErrorBox: {
+  errorBox: {
     flexDirection: 'row',
     alignItems: 'flex-start',
-    gap: 8,
+    gap: 10,
+    marginTop: 12,
     backgroundColor: colors.redSoft,
-    borderRadius: 12,
-    padding: 12,
-    marginBottom: 8,
+    borderRadius: 18,
+    paddingVertical: 14,
+    paddingHorizontal: 16,
   },
-  claimErrorText: {
+  errorText: {
     flex: 1,
-    color: colors.redText,
-  },
-  guidanceBox: {
-    padding: 14,
-    borderRadius: 14,
-    backgroundColor: colors.surfaceMuted,
-    gap: 6,
-    marginBottom: 12,
-  },
-  eyebrow: {
-    color: colors.muted,
-    letterSpacing: 0.4,
-  },
-  outlineRow: {
-    flexDirection: 'row',
-    alignItems: 'flex-start',
-    gap: 8,
-    paddingLeft: 2,
-  },
-  outlineDot: {
-    width: 4,
-    height: 4,
-    borderRadius: 2,
-    backgroundColor: colors.faint,
-    marginTop: 9,
-  },
-  assignSection: {
-    gap: 10,
-    marginTop: 8,
-  },
-  assignRow: {
-    flexDirection: 'row',
-    gap: 16,
-  },
-  assignOption: {
-    alignItems: 'center',
-    gap: 6,
-    width: layout.checkboxSize + 44,
-  },
-  assignNameActive: {
-    color: colors.purple,
-  },
-  // Matches claimButton's weight, not the neutral border it had before —
-  // a muted-gray outline read as the least important thing on the sheet,
-  // which is why "increase the visibility" was a fair complaint.
-  shareToChat: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center',
-    gap: 6,
-    height: 48,
-    borderRadius: 24,
-    borderWidth: 1.5,
-    borderColor: colors.purple,
-    marginTop: 8,
-  },
-  shareToChatText: {
-    color: colors.purple,
-  },
-  deleteLink: {
-    alignSelf: 'center',
-    paddingVertical: 12,
-    marginTop: 18,
-  },
-  deleteLinkText: {
+    fontFamily: type.caption.fontFamily,
+    fontSize: 14,
+    lineHeight: 20,
     color: colors.redText,
   },
 });
