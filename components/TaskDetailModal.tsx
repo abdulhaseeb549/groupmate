@@ -14,6 +14,7 @@ import { shareTask } from '../state/messages';
 import { useNavigation } from '../state/NavigationProvider';
 import { notifyMessage } from '../state/pushNotifications';
 import { useProject } from '../state/ProjectRepository';
+import { TaskSchedule } from '../state/projectSchedule';
 import { colors, type } from '../theme';
 import { formatShortDate } from '../utils/dates';
 
@@ -44,7 +45,20 @@ const STATUS: Record<TaskStatus, { label: string; bg: string; fg: string; ring: 
  */
 export function TaskDetailModal({ taskId, onClose, onClaimed }: Props) {
   const insets = useSafeAreaInsets();
-  const { project, tasks, members, setTaskStatus, reassignTask, claimTask, generateTaskHelp, removeTask } = useProject();
+  const {
+    project,
+    tasks,
+    members,
+    requirements,
+    taskRequirements,
+    taskDependencies,
+    schedule,
+    setTaskStatus,
+    reassignTask,
+    claimTask,
+    generateTaskHelp,
+    removeTask,
+  } = useProject();
   const { session, profile } = useAuth();
   const { goToChat } = useNavigation();
   const currentUserId = session?.user.id;
@@ -162,7 +176,6 @@ export function TaskDetailModal({ taskId, onClose, onClaimed }: Props) {
       <Sheet
         visible={visible}
         onClose={close}
-        full
         footer={
           <View style={styles.bar}>
             <Pressable
@@ -241,6 +254,16 @@ export function TaskDetailModal({ taskId, onClose, onClaimed }: Props) {
             </View>
           ) : null}
           {claimError ? <ErrorBox text={claimError} /> : null}
+
+          <PlanCard
+            task={task}
+            today={today}
+            tasks={tasks}
+            requirements={requirements}
+            taskRequirements={taskRequirements}
+            taskDependencies={taskDependencies}
+            schedule={schedule.byTaskId[task.id]}
+          />
 
           <View style={styles.helpSection}>
             <Pressable
@@ -349,6 +372,130 @@ export function TaskDetailModal({ taskId, onClose, onClaimed }: Props) {
         onCancel={() => setDeleting(false)}
       />
     </>
+  );
+}
+
+/**
+ * What the app already knows about this task's place in the plan: the dates
+ * the backward schedule gives it, what it waits on, what it unblocks and
+ * which part of the brief it counts toward. Rows with nothing to say drop out.
+ */
+function PlanCard({
+  task,
+  today,
+  tasks,
+  requirements,
+  taskRequirements,
+  taskDependencies,
+  schedule,
+}: {
+  task: Task;
+  today: Date;
+  tasks: Task[];
+  requirements: { id: string; label: string }[];
+  taskRequirements: { taskId: string; requirementId: string }[];
+  taskDependencies: { taskId: string; dependsOnTaskId: string }[];
+  schedule?: TaskSchedule;
+}) {
+  const done = task.status === 'completed';
+  const byId = new Map(tasks.map((t) => [t.id, t]));
+  const waitingOn = taskDependencies
+    .filter((d) => d.taskId === task.id)
+    .map((d) => byId.get(d.dependsOnTaskId))
+    .filter((t): t is Task => Boolean(t));
+  const unblocks = (schedule?.blocks ?? []).map((id) => byId.get(id)).filter((t): t is Task => Boolean(t));
+  const reqIds = new Set(taskRequirements.filter((r) => r.taskId === task.id).map((r) => r.requirementId));
+  const countsToward = requirements.filter((r) => reqIds.has(r.id));
+
+  const rows: { label: string; node: React.ReactNode }[] = [];
+  if (schedule && !done) {
+    const startPast = schedule.latestStart.getTime() < new Date(today.getFullYear(), today.getMonth(), today.getDate()).getTime();
+    rows.push({
+      label: 'Start by',
+      node: (
+        <View style={styles.planValueRow}>
+          <Text style={[styles.t, schedule.atRisk && styles.urgent]}>
+            {startPast ? 'Now' : formatShortDate(schedule.latestStart, today)}
+          </Text>
+          {schedule.atRisk ? (
+            <View style={[styles.pill, { backgroundColor: colors.redSoft }]}>
+              <Text style={[styles.pillText, { color: colors.redText }]}>Behind</Text>
+            </View>
+          ) : null}
+        </View>
+      ),
+    });
+    rows.push({ label: 'Done by', node: <Text style={styles.t}>{formatShortDate(schedule.latestFinish, today)}</Text> });
+  }
+  if (waitingOn.length > 0) {
+    rows.push({
+      label: 'Waiting on',
+      node: (
+        <View style={styles.planList}>
+          {waitingOn.map((t) => (
+            <View key={t.id} style={styles.planItem}>
+              <Icon
+                name={t.status === 'completed' ? 'tick' : 'clock'}
+                size={14}
+                color={t.status === 'completed' ? colors.mintText : colors.yellowText}
+                strokeWidth={2.2}
+              />
+              <Text style={[styles.t, styles.flex, t.status === 'completed' && styles.planDone]} numberOfLines={2}>
+                {t.title}
+              </Text>
+            </View>
+          ))}
+        </View>
+      ),
+    });
+  }
+  if (unblocks.length > 0) {
+    rows.push({
+      label: 'Unblocks',
+      node: (
+        <View style={styles.planList}>
+          {unblocks.map((t) => (
+            <Text key={t.id} style={styles.t} numberOfLines={2}>
+              {t.title}
+            </Text>
+          ))}
+        </View>
+      ),
+    });
+  }
+  if (countsToward.length > 0) {
+    rows.push({
+      label: 'Counts toward',
+      node: (
+        <View style={styles.chips}>
+          {countsToward.map((r) => (
+            <View key={r.id} style={styles.chip}>
+              <Text style={styles.chipText} numberOfLines={3}>
+                {r.label}
+              </Text>
+            </View>
+          ))}
+        </View>
+      ),
+    });
+  }
+  if (rows.length === 0) return null;
+
+  return (
+    <View style={styles.planSection}>
+      <Text style={styles.eyebrow}>Plan</Text>
+      <View style={styles.planCard}>
+        {rows.map((row, i) => (
+          <View key={row.label}>
+            {i > 0 ? <View style={styles.hair} /> : null}
+            <View style={styles.planRow}>
+              <Text style={[styles.m, styles.planLabel]}>{row.label}</Text>
+              <View style={styles.flex}>{row.node}</View>
+            </View>
+          </View>
+        ))}
+      </View>
+    </View>
   );
 }
 
@@ -502,6 +649,68 @@ const styles = StyleSheet.create({
     fontFamily: type.button.fontFamily,
     fontSize: 15,
     lineHeight: 20,
+    color: colors.purple,
+  },
+  planSection: {
+    marginTop: 22,
+    gap: 12,
+  },
+  planCard: {
+    borderRadius: 18,
+    backgroundColor: colors.surface,
+    borderWidth: 1,
+    borderColor: colors.border,
+  },
+  planRow: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    gap: 12,
+    paddingVertical: 13,
+    paddingHorizontal: 16,
+  },
+  planLabel: {
+    width: 104,
+    paddingTop: 2,
+  },
+  planValueRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+  },
+  planList: {
+    gap: 6,
+  },
+  planItem: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    gap: 8,
+  },
+  planDone: {
+    color: colors.muted,
+  },
+  hair: {
+    height: StyleSheet.hairlineWidth,
+    backgroundColor: colors.border,
+    marginLeft: 16,
+  },
+  chips: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 6,
+  },
+  chip: {
+    minHeight: 28,
+    paddingHorizontal: 10,
+    paddingVertical: 5,
+    borderRadius: 14,
+    backgroundColor: colors.purpleSoft,
+    justifyContent: 'center',
+    maxWidth: '100%',
+  },
+  chipText: {
+    fontFamily: type.taskTitle.fontFamily,
+    fontSize: 13,
+    lineHeight: 18,
     color: colors.purple,
   },
   helpSection: {
