@@ -1,7 +1,8 @@
 import { useEffect, useMemo, useState } from 'react';
-import { Image, Linking, LayoutAnimation, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
+import { Linking, LayoutAnimation, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { BottomNav, NavTab } from '../components/BottomNav';
+import { GlassScene, GlassTarget } from '../components/Glass';
 import { Card, CardDivider } from '../components/Card';
 import { ActivitySheet } from '../components/ActivitySheet';
 import { ConfirmDialog } from '../components/ConfirmDialog';
@@ -9,9 +10,10 @@ import { FadeIn } from '../components/FadeIn';
 import { Icon } from '../components/Icon';
 import { SectionHeader } from '../components/SectionHeader';
 import { AttentionRow } from '../components/home/AttentionRow';
-import { ProjectOverviewCard } from '../components/home/ProjectOverviewCard';
+import { MiniTile, OnlineFaces, ProjectTile } from '../components/home/BentoTiles';
 import { TaskRow } from '../components/home/TaskRow';
-import { WeekStrip, weekDates } from '../components/home/WeekStrip';
+import { WeekCard } from '../components/home/WeekCard';
+import { weekDates } from '../components/home/WeekStrip';
 import { Priority, Task } from '../data/tasks';
 import { RequirementState } from '../state/projectState';
 import { useAuth } from '../state/AuthProvider';
@@ -37,7 +39,7 @@ type Props = {
 
 export function HomeScreen({ activeTab, onSelectTab }: Props) {
   const insets = useSafeAreaInsets();
-  const { project, tasks, projectState, members, schedule, setTaskStatus } = useProject();
+  const { project, tasks, projectState, members, membersById, schedule, setTaskStatus, onlineUserIds } = useProject();
   const { session, profile } = useAuth();
   const { hasUnread, summaries } = useChatUnread();
   const { goToChat, openSettings } = useNavigation();
@@ -112,6 +114,34 @@ export function HomeScreen({ activeTab, onSelectTab }: Props) {
     );
   }, [myOpenTasks, schedule, today]);
 
+  const weekStart = weekDates(today)[0];
+  const doneThisWeek = tasks.filter(
+    (t) =>
+      t.assigneeId === currentUserId &&
+      t.status === 'completed' &&
+      t.completedAt !== undefined &&
+      new Date(t.completedAt) >= weekStart
+  ).length;
+  const urgentCount = myOpenTasks.filter((t) => t.dueUrgent).length;
+  const openHours = myOpenTasks.reduce((sum, t) => sum + (t.effortHours ?? 0), 0);
+
+  // The newest message in any of your conversations, for the chat tile's one live line.
+  const latestMessage = Object.values(summaries).reduce<(typeof summaries)[string] | null>(
+    (newest, summary) => (!newest || summary.lastAt > newest.lastAt ? summary : newest),
+    null
+  );
+  const latestAuthor = latestMessage
+    ? latestMessage.lastAuthorId === currentUserId
+      ? 'You'
+      : membersById[latestMessage.lastAuthorId]?.name.split(' ')[0]
+    : undefined;
+  const chatCaption = latestMessage
+    ? latestAuthor
+      ? `${latestAuthor}: ${latestMessage.preview}`
+      : latestMessage.preview
+    : 'Say hi to your team';
+  const othersOnline = members.filter((m) => m.id !== currentUserId && onlineUserIds.has(m.id)).length;
+
   const unmet = projectState.requirementStates
     .filter((r) => r.status !== 'met')
     .sort((a, b) => risk(a, currentUserId) - risk(b, currentUserId) || b.blockingTasks.length - a.blockingTasks.length);
@@ -131,7 +161,8 @@ export function HomeScreen({ activeTab, onSelectTab }: Props) {
   }
 
   return (
-    <View style={styles.screen}>
+    <GlassScene style={styles.screen}>
+      <GlassTarget>
       <ScrollView
         contentContainerStyle={[
           styles.content,
@@ -151,13 +182,8 @@ export function HomeScreen({ activeTab, onSelectTab }: Props) {
               <Text style={[type.avatarInitials, styles.avatarText]}>{initials}</Text>
             </Pressable>
             <View style={styles.headerText}>
+              <Text style={[type.metadata, styles.muted, styles.eyebrow]}>{formatLongDate(today).toUpperCase()}</Text>
               <Text style={[type.greeting, styles.ink]}>Hello, {firstName}</Text>
-              <Text style={[type.subtitle, styles.muted]}>{formatLongDate(today)}</Text>
-              <Pressable onPress={handleCheckForUpdate} disabled={checkingUpdate} hitSlop={6}>
-                <Text style={[type.caption, styles.updateLink]}>
-                  {checkingUpdate ? 'Checking…' : 'Check for update'}
-                </Text>
-              </Pressable>
             </View>
             <Pressable
               onPress={openActivity}
@@ -170,42 +196,58 @@ export function HomeScreen({ activeTab, onSelectTab }: Props) {
             </Pressable>
           </View>
 
-          {/* Ink with a muted qualifier, not purple: purple is kept for actions, never large text. */}
-          <View style={styles.hero}>
-            <Text style={[type.hero, styles.ink, styles.heroText]} accessibilityRole="header">
-              {myOpenTasks.length === 0 ? (
-                'You’re all\ncaught up'
-              ) : (
-                <>
-                  {myOpenTasks.length === 1 ? 'One thing needs' : `${myOpenTasks.length} things need`}
-                  {'\n'}you <Text style={styles.muted}>this week</Text>
-                </>
-              )}
-            </Text>
-            {/* Checked against the rendered DOM at a real 375px viewport: at 85 wide the
-                heading keeps to two lines. Height follows the PNG's 1.2:1 aspect ratio. */}
-            <Image
-              source={require('../assets/Mascot-png.png')}
-              style={styles.mascot}
-              resizeMode="contain"
-              accessibilityIgnoresInvertColors
-            />
-          </View>
+          <WeekCard
+            today={today}
+            counts={weekCounts}
+            openCount={myOpenTasks.length}
+            doneThisWeek={doneThisWeek}
+            urgentCount={urgentCount}
+            hours={openHours}
+          />
         </View>
         </FadeIn>
 
-        <FadeIn delay={60}>
-          <ProjectOverviewCard
-            project={project}
-            state={projectState}
-            members={members}
-            today={today}
-            onOpen={goToProjects}
-          />
-        </FadeIn>
-
-        <FadeIn delay={120}>
-          <WeekStrip today={today} counts={weekCounts} />
+        {/* Bento: the project on the left, the two live things about your team on the right. */}
+        <FadeIn delay={80}>
+          <View style={styles.bento}>
+            <ProjectTile
+              project={project}
+              state={projectState}
+              today={today}
+              onOpen={goToProjects}
+            />
+            <View style={styles.bentoColumn}>
+              <MiniTile
+                lead={
+                  <View style={styles.chatTile}>
+                    <Icon name="chat" size={18} color={colors.purple} strokeWidth={1.9} />
+                  </View>
+                }
+                badge={
+                  hasUnread ? (
+                    <View style={styles.newPill}>
+                      <Text style={[type.badge, styles.action]}>New</Text>
+                    </View>
+                  ) : null
+                }
+                title="Team chat"
+                caption={chatCaption}
+                accessibilityLabel={`Team chat${hasUnread ? ', new messages' : ''}. ${chatCaption}`}
+                onPress={() => goToChat()}
+              />
+              <MiniTile
+                lead={<OnlineFaces members={members} onlineIds={onlineUserIds} />}
+                title="Your team"
+                caption={
+                  othersOnline > 0
+                    ? `${othersOnline} online now`
+                    : `${members.length} ${members.length === 1 ? 'member' : 'members'}`
+                }
+                accessibilityLabel={`Your team, ${members.length} members${othersOnline > 0 ? `, ${othersOnline} online now` : ''}`}
+                onPress={goToProjects}
+              />
+            </View>
+          </View>
         </FadeIn>
 
         <FadeIn delay={180}>
@@ -287,7 +329,19 @@ export function HomeScreen({ activeTab, onSelectTab }: Props) {
             </Card>
           </View>
         ) : null}
+
+        {/* Moved out of the header, where it sat between the greeting and the date. */}
+        <Pressable
+          onPress={handleCheckForUpdate}
+          disabled={checkingUpdate}
+          accessibilityRole="button"
+          style={({ pressed }) => [styles.updateRow, pressed && styles.pressed]}
+        >
+          <Icon name="download" size={15} color={colors.muted} strokeWidth={1.9} />
+          <Text style={[type.caption, styles.muted]}>{checkingUpdate ? 'Checking…' : 'Check for app update'}</Text>
+        </Pressable>
       </ScrollView>
+      </GlassTarget>
 
       <BottomNav active={activeTab} onSelect={onSelectTab} chatUnread={hasUnread} />
 
@@ -325,7 +379,7 @@ export function HomeScreen({ activeTab, onSelectTab }: Props) {
         }}
         onCancel={() => setUpdateCheck(null)}
       />
-    </View>
+    </GlassScene>
   );
 }
 
@@ -349,8 +403,9 @@ const styles = StyleSheet.create({
     paddingHorizontal: layout.screenPadding,
     gap: layout.sectionGap,
   },
+  // Small, because the week card's mascot already rises into this space.
   intro: {
-    gap: 20,
+    gap: layout.sectionGap,
   },
   header: {
     flexDirection: 'row',
@@ -374,9 +429,41 @@ const styles = StyleSheet.create({
     flex: 1,
     gap: 2,
   },
-  updateLink: {
-    color: colors.purple,
-    marginTop: 2,
+  eyebrow: {
+    letterSpacing: 0.6,
+  },
+  bento: {
+    flexDirection: 'row',
+    gap: 12,
+    minHeight: 236,
+  },
+  bentoColumn: {
+    flex: 1,
+    gap: 12,
+  },
+  chatTile: {
+    width: 32,
+    height: 32,
+    borderRadius: 10,
+    backgroundColor: colors.purpleSoft,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  newPill: {
+    minHeight: 22,
+    paddingHorizontal: 8,
+    borderRadius: 11,
+    backgroundColor: colors.purpleSoft,
+    justifyContent: 'center',
+  },
+  updateRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    alignSelf: 'center',
+    gap: 6,
+    minHeight: 44,
+    paddingHorizontal: 12,
   },
   ink: {
     color: colors.ink,
@@ -415,19 +502,6 @@ const styles = StyleSheet.create({
     backgroundColor: colors.red,
     borderWidth: 2,
     borderColor: colors.surface,
-  },
-  hero: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    gap: 7,
-  },
-  heroText: {
-    flex: 1,
-  },
-  mascot: {
-    width: 112,
-    height: 112 / 1.2,
   },
   section: {
     gap: 12,

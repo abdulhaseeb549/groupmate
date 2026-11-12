@@ -78,6 +78,7 @@ export function TaskRow({ task, context, onComplete }: Props) {
           <Icon name="flag" size={13} color={priority.mark} fill={priority.mark} strokeWidth={1.8} />
           <Text style={[type.caption, styles.meta]} numberOfLines={1}>
             <Text style={[styles.priority, { color: priority.text }]}>{priority.label}</Text>
+            {task.effortHours ? ` · ${Number(task.effortHours.toFixed(1))}h` : ''}
             {context ? ` · ${context}` : ''}
           </Text>
         </View>
@@ -123,7 +124,8 @@ const styles = StyleSheet.create({
   checkbox: {
     width: layout.checkboxSize,
     height: layout.checkboxSize,
-    borderRadius: 6,
+    // Round, like a to-do, so it doesn't read as a settings checkbox.
+    borderRadius: layout.checkboxSize / 2,
     borderWidth: 1.5,
     borderColor: colors.control,
     alignItems: 'center',

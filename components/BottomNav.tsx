@@ -3,8 +3,9 @@ import { Pressable, StyleSheet, Text, View } from 'react-native';
 import { LinearGradient } from 'expo-linear-gradient';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { CreateMenu } from './CreateMenu';
+import { Glass } from './Glass';
 import { Icon, IconName } from './Icon';
-import { colors, gradients, layout, purpleHalo, type } from '../theme';
+import { colors, gradients, layout, type } from '../theme';
 
 export type NavTab = 'home' | 'projects' | 'chat' | 'study';
 
@@ -16,6 +17,11 @@ const TABS: Record<NavTab, { label: string; icon: IconName }> = {
 };
 
 const ORDER: NavTab[] = ['home', 'projects', 'chat', 'study'];
+
+/** Distance from the screen's bottom edge to the nav bar. Shared with CreateMenu so the × sits exactly where the + was. */
+export function navBottom(insetBottom: number) {
+  return Math.max(insetBottom, 12) + 10;
+}
 
 function Tab({
   id,
@@ -36,21 +42,25 @@ function Tab({
       onPress={onPress}
       accessibilityRole="tab"
       aria-selected={active}
-      style={styles.tab}
+      accessibilityLabel={badge ? `${TABS[id].label}, new messages` : TABS[id].label}
+      style={[styles.tab, active && styles.tabActive]}
     >
-      <View style={[styles.tabContent, active && styles.tabContentActive]}>
-        <View>
-          <Icon name={TABS[id].icon} size={20} color={tint} strokeWidth={active ? 1.9 : 1.7} />
-          {badge ? <View style={[styles.badge, active && styles.badgeOnActive]} /> : null}
-        </View>
-        <Text style={[active ? type.navigationActive : type.navigation, { color: tint }]}>
-          {TABS[id].label}
-        </Text>
+      <View>
+        <Icon name={TABS[id].icon} size={21} color={tint} strokeWidth={active ? 1.9 : 1.7} />
+        {badge ? <View style={styles.badge} /> : null}
       </View>
+      <Text numberOfLines={1} style={[active ? type.navigationActive : type.navigation, { color: tint }]}>
+        {TABS[id].label}
+      </Text>
     </Pressable>
   );
 }
 
+/**
+ * Four named tabs in one glass capsule, and "+" as its own button beside it,
+ * so making something never looks like a fifth page. Render it as a sibling
+ * of the scrolling content (under a GlassScene) so content slides beneath.
+ */
 export function BottomNav({
   active,
   onSelect,
@@ -64,34 +74,30 @@ export function BottomNav({
   /** Unread dot on the Chat tab, so a direct message is noticed from anywhere rather than only when you happen to open Chat. */
   chatUnread?: boolean;
 }) {
-  // Split as evenly as ORDER's length allows — each side is a flex:1 zone
-  // (not just "however many tabs happen to be there"), so the create
-  // button stays centered even when the two sides hold an uneven number
-  // of tabs, like the current 2-and-1.
-  const mid = Math.ceil(ORDER.length / 2);
-  const [left, right] = [ORDER.slice(0, mid), ORDER.slice(mid)];
   const insets = useSafeAreaInsets();
   const [createOpen, setCreateOpen] = useState(false);
 
   return (
-    <View style={[styles.bar, { bottom: Math.max(insets.bottom, 12) + 16 }]}>
-      <View style={styles.side}>
-        {left.map((id) => (
-          <Tab
-            key={id}
-            id={id}
-            active={active === id}
-            badge={id === 'chat' && chatUnread}
-            onPress={() => onSelect(id)}
-          />
-        ))}
-      </View>
+    <View style={[styles.bar, { bottom: navBottom(insets.bottom) }]} pointerEvents="box-none">
+      <Glass radius={layout.navHeight / 2} style={styles.capsule}>
+        <View accessibilityRole="tablist" style={styles.tabs}>
+          {ORDER.map((id) => (
+            <Tab
+              key={id}
+              id={id}
+              active={active === id}
+              badge={id === 'chat' && chatUnread}
+              onPress={() => onSelect(id)}
+            />
+          ))}
+        </View>
+      </Glass>
 
       <Pressable
         onPress={() => setCreateOpen(true)}
         accessibilityRole="button"
         accessibilityLabel="Create"
-        style={styles.createHalo}
+        style={styles.createShadow}
       >
         <LinearGradient
           colors={gradients.purpleDeep}
@@ -100,21 +106,9 @@ export function BottomNav({
           style={styles.createButton}
         >
           <LinearGradient colors={gradients.sheen} style={styles.createSheen} />
-          <Icon name="plus" size={20} color={colors.onInk} strokeWidth={2.4} />
+          <Icon name="plus" size={24} color={colors.onInk} strokeWidth={2.2} />
         </LinearGradient>
       </Pressable>
-
-      <View style={styles.side}>
-        {right.map((id) => (
-          <Tab
-            key={id}
-            id={id}
-            active={active === id}
-            badge={id === 'chat' && chatUnread}
-            onPress={() => onSelect(id)}
-          />
-        ))}
-      </View>
 
       <CreateMenu visible={createOpen} canInvite={canInvite} onClose={() => setCreateOpen(false)} />
     </View>
@@ -127,93 +121,67 @@ const styles = StyleSheet.create({
     left: layout.navSideMargin,
     right: layout.navSideMargin,
     height: layout.navHeight,
-    borderRadius: layout.navHeight / 2,
-    backgroundColor: colors.surface,
     flexDirection: 'row',
     alignItems: 'center',
-    justifyContent: 'space-between',
-    paddingHorizontal: 22,
-    shadowColor: '#2D2350',
-    shadowOpacity: 0.2,
-    shadowRadius: 22,
-    shadowOffset: { width: 0, height: 6 },
-    elevation: 8,
+    gap: layout.navGap,
   },
-  side: {
+  capsule: {
+    flex: 1,
+    height: layout.navHeight,
+  },
+  tabs: {
     flex: 1,
     flexDirection: 'row',
     alignItems: 'center',
-    // Evenly, not hugging the outer edge: flex-start/flex-end left a wide
-    // dead gap right next to the create button once there were 2 tabs on
-    // each side instead of 2-and-1.
-    justifyContent: 'space-evenly',
+    paddingHorizontal: 5,
+    gap: 2,
   },
   tab: {
-    height: layout.navHeight,
+    flex: 1,
+    height: 52,
+    borderRadius: 26,
     alignItems: 'center',
     justifyContent: 'center',
+    gap: 2,
   },
-  tabContent: {
-    alignItems: 'center',
-    justifyContent: 'center',
-    gap: 3,
-    paddingVertical: 6,
-    paddingHorizontal: 10,
-    borderRadius: 14,
+  // The "lens": a faint purple wash, not a filled pill. Purple stays a mark.
+  tabActive: {
+    backgroundColor: 'rgba(108,76,232,0.10)',
   },
-  tabContentActive: {
-    backgroundColor: colors.purpleSoft,
-  },
-  // Ringed in the bar's own surface so the dot stays legible where it
-  // overlaps the icon's strokes.
+  // Ringed in white so the dot stays legible where it overlaps the icon's strokes.
   badge: {
     position: 'absolute',
     top: -2,
-    right: -3,
+    right: -4,
     width: 9,
     height: 9,
     borderRadius: 4.5,
     backgroundColor: colors.red,
-    borderWidth: 2,
+    borderWidth: 1.5,
     borderColor: colors.surface,
   },
-  badgeOnActive: {
-    borderColor: colors.purpleSoft,
-  },
-  createHalo: {
-    width: 58,
-    height: 58,
-    borderRadius: 29,
-    marginTop: -28,
-    alignItems: 'center',
-    justifyContent: 'center',
-    backgroundColor: purpleHalo,
-    // No elevation here on purpose: Android draws an elevation shadow as a
-    // rectangle behind this translucent disc, which turned the soft halo
-    // into a hard boxy ring. The button inside carries the lift instead.
-    shadowColor: colors.purple,
-    shadowOpacity: 0.3,
-    shadowRadius: 18,
-    shadowOffset: { width: 0, height: 10 },
-  },
-  createButton: {
+  createShadow: {
     width: layout.createButtonSize,
     height: layout.createButtonSize,
+    borderRadius: layout.createButtonSize / 2,
+    shadowColor: '#5836D6',
+    shadowOpacity: 0.32,
+    shadowRadius: 12,
+    shadowOffset: { width: 0, height: 10 },
+    elevation: 6,
+  },
+  createButton: {
+    flex: 1,
     borderRadius: layout.createButtonSize / 2,
     alignItems: 'center',
     justifyContent: 'center',
     overflow: 'hidden',
-    shadowColor: '#1A1330',
-    shadowOpacity: 0.25,
-    shadowRadius: 6,
-    shadowOffset: { width: 0, height: 3 },
-    elevation: 5,
   },
   createSheen: {
     position: 'absolute',
     left: 0,
     right: 0,
     top: 0,
-    height: '58%',
+    height: '45%',
   },
 });

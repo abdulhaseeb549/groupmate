@@ -19,6 +19,7 @@ import * as Sharing from 'expo-sharing';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Avatar } from '../components/Avatar';
 import { ConfirmDialog } from '../components/ConfirmDialog';
+import { Glass, GlassButton, GlassScene, GlassTarget } from '../components/Glass';
 import { Icon, IconName } from '../components/Icon';
 import { KeyboardAvoider } from '../components/KeyboardAvoider';
 import { TaskDetailModal } from '../components/TaskDetailModal';
@@ -98,6 +99,9 @@ export function ChatScreen({ conversation, onBack }: Props) {
   const [input, setInput] = useState('');
   const [sending, setSending] = useState(false);
   const [attaching, setAttaching] = useState(false);
+  const [attachOpen, setAttachOpen] = useState(false);
+  const [composerHeight, setComposerHeight] = useState(0);
+  const [headerHeight, setHeaderHeight] = useState(0);
   const [attachError, setAttachError] = useState<string | null>(null);
   const [openTaskId, setOpenTaskId] = useState<string | null>(null);
   const [claimedTask, setClaimedTask] = useState<Task | null>(null);
@@ -359,155 +363,191 @@ export function ChatScreen({ conversation, onBack }: Props) {
   return (
     <>
       <KeyboardAvoider style={styles.screen}>
-        <View style={[styles.header, { paddingTop: Math.max(insets.top, 40) + 10 }]}>
-          <Pressable
-            onPress={onBack}
-            accessibilityRole="button"
-            accessibilityLabel="Back to chats"
-            style={({ pressed }) => [styles.headerButton, pressed && styles.pressed]}
-          >
-            <Icon name="chevronLeft" size={20} color={colors.ink} strokeWidth={2} />
-          </Pressable>
-          <View style={styles.headerText}>
-            <Text style={[type.projectTitle, styles.ink]} numberOfLines={1}>
-              {title}
-            </Text>
-            <View style={styles.headerSubRow}>
-              <View style={[styles.liveDot, headerDotOn ? styles.liveDotOn : styles.liveDotOff]} />
-              <Text style={[type.caption, styles.muted]} numberOfLines={1}>
-                {subtitle}
-              </Text>
-              {typingName ? <TypingDots /> : null}
-            </View>
-          </View>
-          {/* Balances the back button's width so the title stays optically centered — invisible, not an empty-looking button. */}
-          <View style={styles.headerSpacer} />
-        </View>
-
-        {messages === null ? (
-          <View style={styles.centerBox}>
-            <ActivityIndicator color={colors.purple} />
-          </View>
-        ) : loadError ? (
-          <View style={styles.centerBox}>
-            <Icon name="exclamation" size={20} color={colors.redText} strokeWidth={2.2} />
-            <Text style={[type.body, styles.muted, styles.centerText]}>{loadError}</Text>
-          </View>
-        ) : messages.length === 0 ? (
-          <View style={styles.centerBox}>
-            <View style={styles.emptyTile}>
-              <Icon name="chat" size={22} color={colors.purple} strokeWidth={1.8} />
-            </View>
-            <Text style={[type.taskTitle, styles.ink]}>No messages yet</Text>
-            <Text style={[type.caption, styles.muted, styles.centerText]}>
-              {conversation.type === 'group'
-                ? 'Say hello, or share a task from its detail view so your team can claim it.'
-                : `Say hello to ${title}.`}
-            </Text>
-          </View>
-        ) : (
-          <FlatList
-            ref={listRef}
-            data={messages}
-            keyExtractor={(m) => m.id}
-            contentContainerStyle={styles.list}
-            onContentSizeChange={() => listRef.current?.scrollToEnd({ animated: true })}
-            renderItem={({ item, index }) => {
-              const prevItem = index > 0 ? messages[index - 1] : undefined;
-              const showHeader = !prevItem || prevItem.authorId !== item.authorId;
-              const sharedTask = item.sharedTaskId ? (tasks.find((t) => t.id === item.sharedTaskId) ?? null) : null;
-              return (
-                <MessageRow
-                  message={item}
-                  isOwn={item.authorId === currentUserId}
-                  author={membersById[item.authorId]}
-                  showHeader={showHeader}
-                  sharedTask={sharedTask}
-                  membersById={membersById}
-                  onClaim={claimTask}
-                  onOpen={setOpenTaskId}
-                  onClaimed={handleClaimed}
-                  reactions={reactions.filter((r) => r.messageId === item.id)}
-                  currentUserId={currentUserId}
-                  onToggleReaction={toggleReaction}
-                  onAnchor={setAnchor}
-                  isNew={!settledIdsRef.current.has(item.id)}
-                  onSettled={() => settledIdsRef.current.add(item.id)}
-                />
-              );
-            }}
-          />
-        )}
-
-        {attachError ? (
-          <View style={styles.attachErrorBox}>
-            <Icon name="exclamation" size={14} color={colors.redText} strokeWidth={2.2} />
-            <Text style={[type.caption, styles.errorText]} numberOfLines={2}>
-              {attachError}
-            </Text>
-          </View>
-        ) : null}
-        {deleteError ? (
-          <View style={styles.attachErrorBox}>
-            <Icon name="exclamation" size={14} color={colors.redText} strokeWidth={2.2} />
-            <Text style={[type.caption, styles.errorText]} numberOfLines={2}>
-              {deleteError}
-            </Text>
-          </View>
-        ) : null}
-
-        <View style={styles.attachRow}>
-          {ATTACH_KINDS.map((kind) => (
-            <Pressable
-              key={kind.label}
-              onPress={() => handleAttach(kind.source)}
-              disabled={attaching}
-              accessibilityRole="button"
-              accessibilityLabel={`Attach ${kind.label.toLowerCase()}`}
-              style={({ pressed }) => [styles.attachChip, (pressed || attaching) && styles.attachChipPressed]}
-            >
-              <Icon name={kind.icon} size={13} color={colors.muted} strokeWidth={1.8} />
-              <Text style={[type.tinyLabel, styles.muted]}>{kind.label}</Text>
-            </Pressable>
-          ))}
-          {attaching ? <ActivityIndicator size="small" color={colors.muted} /> : null}
-        </View>
-
-        <View style={[styles.composer, { marginBottom: Math.max(insets.bottom, 12) + 6 }]}>
-          <TextInput
-            value={input}
-            onChangeText={handleInputChange}
-            placeholder={conversation.type === 'group' ? 'Message your team…' : `Message ${title}…`}
-            placeholderTextColor={colors.faint}
-            multiline
-            style={styles.input}
-          />
-          <Pressable
-            onPress={handleSend}
-            disabled={!canSend}
-            accessibilityRole="button"
-            accessibilityLabel="Send"
-            accessibilityState={{ disabled: !canSend }}
-            style={({ pressed }) => [styles.sendButton, pressed && canSend && styles.sendButtonPressed]}
-          >
-            {canSend ? (
-              <LinearGradient
-                colors={gradients.purpleDeep}
-                start={{ x: 0.25, y: 0 }}
-                end={{ x: 0.75, y: 1 }}
-                style={styles.sendFill}
-              >
-                <Icon name="send" size={17} color={colors.onInk} strokeWidth={1.9} />
-              </LinearGradient>
-            ) : (
-              // A flat neutral circle, not the gradient at 0.4 opacity: faded
-              // purple read as a half-painted blob rather than a disabled button.
-              <View style={[styles.sendFill, styles.sendFillDisabled]}>
-                <Icon name="send" size={17} color={colors.faint} strokeWidth={1.9} />
+        <GlassScene>
+          {/* The messages fill the whole screen and slide under the glass header
+              and composer, so the blur has something real to blur. */}
+          <GlassTarget>
+            {messages === null ? (
+              <View style={[styles.centerBox, { paddingTop: headerHeight, paddingBottom: composerHeight }]}>
+                <ActivityIndicator color={colors.purple} />
               </View>
+            ) : loadError ? (
+              <View style={[styles.centerBox, { paddingTop: headerHeight, paddingBottom: composerHeight }]}>
+                <Icon name="exclamation" size={20} color={colors.redText} strokeWidth={2.2} />
+                <Text style={[type.body, styles.muted, styles.centerText]}>{loadError}</Text>
+              </View>
+            ) : messages.length === 0 ? (
+              <View style={[styles.centerBox, { paddingTop: headerHeight, paddingBottom: composerHeight }]}>
+                <View style={styles.emptyTile}>
+                  <Icon name="chat" size={22} color={colors.purple} strokeWidth={1.8} />
+                </View>
+                <Text style={[type.taskTitle, styles.ink]}>No messages yet</Text>
+                <Text style={[type.caption, styles.muted, styles.centerText]}>
+                  {conversation.type === 'group'
+                    ? 'Say hello, or share a task from its detail view so your team can claim it.'
+                    : `Say hello to ${title}.`}
+                </Text>
+              </View>
+            ) : (
+              <FlatList
+                ref={listRef}
+                data={messages}
+                keyExtractor={(m) => m.id}
+                contentContainerStyle={[
+                  styles.list,
+                  { paddingTop: headerHeight + 8, paddingBottom: composerHeight + 12 },
+                ]}
+                onContentSizeChange={() => listRef.current?.scrollToEnd({ animated: true })}
+                renderItem={({ item, index }) => {
+                  const prevItem = index > 0 ? messages[index - 1] : undefined;
+                  const showHeader = !prevItem || prevItem.authorId !== item.authorId;
+                  const sharedTask = item.sharedTaskId ? (tasks.find((t) => t.id === item.sharedTaskId) ?? null) : null;
+                  return (
+                    <MessageRow
+                      message={item}
+                      isOwn={item.authorId === currentUserId}
+                      author={membersById[item.authorId]}
+                      showHeader={showHeader}
+                      sharedTask={sharedTask}
+                      membersById={membersById}
+                      onClaim={claimTask}
+                      onOpen={setOpenTaskId}
+                      onClaimed={handleClaimed}
+                      reactions={reactions.filter((r) => r.messageId === item.id)}
+                      currentUserId={currentUserId}
+                      onToggleReaction={toggleReaction}
+                      onAnchor={setAnchor}
+                      isNew={!settledIdsRef.current.has(item.id)}
+                      onSettled={() => settledIdsRef.current.add(item.id)}
+                    />
+                  );
+                }}
+              />
             )}
-          </Pressable>
-        </View>
+          </GlassTarget>
+
+          <View
+            pointerEvents="box-none"
+            style={[styles.header, { paddingTop: Math.max(insets.top, 40) + 6 }]}
+            onLayout={(e) => setHeaderHeight(e.nativeEvent.layout.height)}
+          >
+            <GlassButton label="Back to chats" onPress={onBack}>
+              <Icon name="chevronLeft" size={20} color={colors.ink} strokeWidth={2} />
+            </GlassButton>
+            {/* Heavier wash than the tab bar: this glass sits over text. */}
+            <Glass radius={24} wash={0.74} style={styles.titleCapsule}>
+              <View style={styles.titleInner}>
+                <Text style={[type.projectTitle, styles.ink]} numberOfLines={1}>
+                  {title}
+                </Text>
+                <View style={styles.headerSubRow}>
+                  <View style={[styles.liveDot, headerDotOn ? styles.liveDotOn : styles.liveDotOff]} />
+                  <Text
+                    style={[type.caption, typingName ? styles.typingText : styles.muted]}
+                    numberOfLines={1}
+                  >
+                    {subtitle}
+                  </Text>
+                  {typingName ? <TypingDots /> : null}
+                </View>
+              </View>
+            </Glass>
+          </View>
+
+          <View
+            pointerEvents="box-none"
+            style={[styles.bottomDock, { paddingBottom: Math.max(insets.bottom, 12) + 6 }]}
+            onLayout={(e) => setComposerHeight(e.nativeEvent.layout.height)}
+          >
+            {attachError ? (
+              <View style={styles.attachErrorBox}>
+                <Icon name="exclamation" size={14} color={colors.redText} strokeWidth={2.2} />
+                <Text style={[type.caption, styles.errorText]} numberOfLines={2}>
+                  {attachError}
+                </Text>
+              </View>
+            ) : null}
+            {deleteError ? (
+              <View style={styles.attachErrorBox}>
+                <Icon name="exclamation" size={14} color={colors.redText} strokeWidth={2.2} />
+                <Text style={[type.caption, styles.errorText]} numberOfLines={2}>
+                  {deleteError}
+                </Text>
+              </View>
+            ) : null}
+
+            {attachOpen || attaching ? (
+              <View style={styles.attachRow}>
+                {ATTACH_KINDS.map((kind) => (
+                  <Pressable
+                    key={kind.label}
+                    onPress={() => {
+                      setAttachOpen(false);
+                      handleAttach(kind.source);
+                    }}
+                    disabled={attaching}
+                    accessibilityRole="button"
+                    accessibilityLabel={`Attach ${kind.label.toLowerCase()}`}
+                    style={({ pressed }) => [styles.attachChip, (pressed || attaching) && styles.attachChipPressed]}
+                  >
+                    <Icon name={kind.icon} size={14} color={colors.muted} strokeWidth={1.8} />
+                    <Text style={[type.tinyLabel, styles.muted]}>{kind.label}</Text>
+                  </Pressable>
+                ))}
+                {attaching ? <ActivityIndicator size="small" color={colors.muted} /> : null}
+              </View>
+            ) : null}
+
+            <View style={styles.composer}>
+              <GlassButton
+                label={attachOpen ? 'Hide attachments' : 'Attach'}
+                onPress={() => setAttachOpen((v) => !v)}
+                size={SEND_SIZE + 2}
+                style={styles.attachButton}
+              >
+                <Icon name={attachOpen ? 'close' : 'plus'} size={20} color={colors.ink} strokeWidth={2} />
+              </GlassButton>
+              <Glass radius={SEND_SIZE / 2 + 4} style={styles.inputCapsule}>
+                <View style={styles.inputRow}>
+                  <TextInput
+                    value={input}
+                    onChangeText={handleInputChange}
+                    placeholder={conversation.type === 'group' ? 'Message' : `Message ${title}`}
+                    placeholderTextColor={colors.faint}
+                    multiline
+                    numberOfLines={1}
+                    style={styles.input}
+                  />
+                  <Pressable
+                    onPress={handleSend}
+                    disabled={!canSend}
+                    accessibilityRole="button"
+                    accessibilityLabel="Send"
+                    accessibilityState={{ disabled: !canSend }}
+                    style={({ pressed }) => [styles.sendButton, pressed && canSend && styles.sendButtonPressed]}
+                  >
+                    {canSend ? (
+                      <LinearGradient
+                        colors={gradients.purpleDeep}
+                        start={{ x: 0.25, y: 0 }}
+                        end={{ x: 0.75, y: 1 }}
+                        style={styles.sendFill}
+                      >
+                        <Icon name="send" size={17} color={colors.onInk} strokeWidth={1.9} />
+                      </LinearGradient>
+                    ) : (
+                      // A flat neutral circle, not the gradient at 0.4 opacity: faded
+                      // purple read as a half-painted blob rather than a disabled button.
+                      <View style={[styles.sendFill, styles.sendFillDisabled]}>
+                        <Icon name="send" size={17} color={colors.faint} strokeWidth={1.9} />
+                      </View>
+                    )}
+                  </Pressable>
+                </View>
+              </Glass>
+            </View>
+          </View>
+        </GlassScene>
       </KeyboardAvoider>
 
       <TaskDetailModal taskId={openTaskId} onClose={() => setOpenTaskId(null)} onClaimed={handleClaimed} />
@@ -1220,28 +1260,31 @@ const styles = StyleSheet.create({
     flex: 1,
     backgroundColor: colors.bg,
   },
+  // Floats over the messages: back button + a title capsule, no bar behind them.
   header: {
+    position: 'absolute',
+    top: 0,
+    left: 0,
+    right: 0,
     flexDirection: 'row',
     alignItems: 'center',
     gap: 10,
     paddingHorizontal: layout.screenPadding,
-    paddingBottom: 12,
+    paddingBottom: 8,
   },
-  headerButton: {
-    width: 40,
-    height: 40,
-    borderRadius: 20,
-    backgroundColor: colors.surface,
-    alignItems: 'center',
-    justifyContent: 'center',
+  titleCapsule: {
+    flex: 1,
+    height: 48,
   },
-  headerSpacer: {
-    width: 40,
-  },
-  headerText: {
+  titleInner: {
     flex: 1,
     alignItems: 'center',
-    gap: 2,
+    justifyContent: 'center',
+    paddingHorizontal: 16,
+    gap: 1,
+  },
+  typingText: {
+    color: colors.mintText,
   },
   headerSubRow: {
     flexDirection: 'row',
@@ -1537,20 +1580,28 @@ const styles = StyleSheet.create({
   viewerSaveText: {
     color: colors.ink,
   },
+  // Everything below the messages: errors, attach chips, composer.
+  bottomDock: {
+    position: 'absolute',
+    left: 0,
+    right: 0,
+    bottom: 0,
+    paddingTop: 8,
+  },
   attachRow: {
     flexDirection: 'row',
     alignItems: 'center',
     gap: 8,
     paddingHorizontal: layout.screenPadding,
-    paddingBottom: 8,
+    paddingBottom: 10,
   },
   attachChip: {
     flexDirection: 'row',
     alignItems: 'center',
     gap: 5,
-    height: 30,
-    paddingHorizontal: 11,
-    borderRadius: 15,
+    height: 36,
+    paddingHorizontal: 13,
+    borderRadius: 18,
     backgroundColor: colors.surface,
     borderWidth: StyleSheet.hairlineWidth,
     borderColor: colors.border,
@@ -1565,28 +1616,38 @@ const styles = StyleSheet.create({
     gap: 10,
     paddingHorizontal: layout.screenPadding,
   },
-  // Height is pinned to SEND_SIZE rather than left to line-height so the
-  // input and the send button are exactly the same height and bottom-align
-  // cleanly; it only grows past that once the text actually wraps.
+  attachButton: {
+    marginBottom: 0,
+  },
+  inputCapsule: {
+    flex: 1,
+  },
+  inputRow: {
+    flexDirection: 'row',
+    alignItems: 'flex-end',
+    gap: 6,
+    paddingLeft: 6,
+    paddingRight: 5,
+    paddingVertical: 4,
+  },
+  // Height is pinned to the send button's so the two bottom-align cleanly;
+  // it only grows past that once the text actually wraps. No box of its own:
+  // the glass capsule around it is the field.
   input: {
     flex: 1,
-    minHeight: SEND_SIZE,
+    minHeight: SEND_SIZE - 2,
     maxHeight: 120,
-    borderRadius: SEND_SIZE / 2,
-    paddingHorizontal: 18,
-    paddingTop: 13,
-    paddingBottom: 13,
-    backgroundColor: colors.surface,
-    borderWidth: 1.5,
-    borderColor: colors.border,
+    paddingHorizontal: 14,
+    paddingTop: 12,
+    paddingBottom: 12,
     color: colors.ink,
     fontFamily: type.body.fontFamily,
     fontSize: type.body.fontSize,
   },
   sendButton: {
-    width: SEND_SIZE,
-    height: SEND_SIZE,
-    borderRadius: SEND_SIZE / 2,
+    width: SEND_SIZE - 2,
+    height: SEND_SIZE - 2,
+    borderRadius: (SEND_SIZE - 2) / 2,
     overflow: 'hidden',
   },
   sendButtonPressed: {

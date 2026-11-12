@@ -12,6 +12,7 @@ import {
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { AttachRow } from '../components/AttachRow';
 import { BottomNav, NavTab } from '../components/BottomNav';
+import { GlassScene, GlassTarget } from '../components/Glass';
 import { BriefReview } from '../components/BriefReview';
 import { Card } from '../components/Card';
 import { ConfirmDialog } from '../components/ConfirmDialog';
@@ -84,7 +85,8 @@ export function OnboardingScreen({ onDone, activeTab, onSelectTab, startMode, on
   const hasNav = activeTab !== undefined && onSelectTab !== undefined;
 
   return (
-    <View style={styles.screen}>
+    <GlassScene style={styles.screen}>
+      <GlassTarget>
       <ScrollView
         contentContainerStyle={[
           styles.content,
@@ -188,6 +190,7 @@ export function OnboardingScreen({ onDone, activeTab, onSelectTab, startMode, on
           Split work by section, not by hours — it's easier to claim.
         </Text>
       </ScrollView>
+      </GlassTarget>
 
       {hasNav ? <BottomNav active={activeTab} onSelect={onSelectTab} canInvite={false} /> : null}
 
@@ -203,7 +206,7 @@ export function OnboardingScreen({ onDone, activeTab, onSelectTab, startMode, on
         }}
         onCancel={() => setSignOutVisible(false)}
       />
-    </View>
+    </GlassScene>
   );
 }
 

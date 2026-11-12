@@ -1,6 +1,7 @@
 import { Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { BottomNav, NavTab } from '../components/BottomNav';
+import { GlassScene, GlassTarget } from '../components/Glass';
 import { Icon, IconName } from '../components/Icon';
 import { useNavigation } from '../state/NavigationProvider';
 import { colors, layout, type } from '../theme';
@@ -78,7 +79,8 @@ function EmptyTab({
   const insets = useSafeAreaInsets();
 
   return (
-    <View style={styles.screen}>
+    <GlassScene style={styles.screen}>
+      <GlassTarget>
       <ScrollView
         contentContainerStyle={[
           styles.content,
@@ -103,9 +105,10 @@ function EmptyTab({
           </Pressable>
         </View>
       </ScrollView>
+      </GlassTarget>
 
       <BottomNav active={tab} onSelect={onSelectTab} canInvite={false} />
-    </View>
+    </GlassScene>
   );
 }
 

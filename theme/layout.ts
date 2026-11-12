@@ -51,9 +51,10 @@ export const layout = {
   quickActionGap: 13,
   quickActionIconSize: 42,
 
-  navHeight: 60,
-  navSideMargin: 20,
-  createButtonSize: 46,
+  navHeight: 62,
+  navSideMargin: 16,
+  navGap: 10,
+  createButtonSize: 62,
 
   avatarHeader: 44,
   avatarOverlap: 10,

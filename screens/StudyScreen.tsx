@@ -12,6 +12,7 @@ import {
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { AttachRow } from '../components/AttachRow';
 import { BottomNav, NavTab } from '../components/BottomNav';
+import { GlassScene, GlassTarget } from '../components/Glass';
 import { Card, CardDivider } from '../components/Card';
 import { ConfirmDialog } from '../components/ConfirmDialog';
 import { FadeIn } from '../components/FadeIn';
@@ -256,7 +257,8 @@ export function StudyScreen({ activeTab, onSelectTab }: Props) {
   }, phase !== 'list' && !busy);
 
   return (
-    <View style={styles.screen}>
+    <GlassScene style={styles.screen}>
+      <GlassTarget>
       {phase === 'list' ? (
         <ListView
           insets={insets}
@@ -312,6 +314,7 @@ export function StudyScreen({ activeTab, onSelectTab }: Props) {
           }}
         />
       ) : null}
+      </GlassTarget>
 
       {phase === 'list' || phase === 'setup' ? <BottomNav active={activeTab} onSelect={onSelectTab} chatUnread={hasUnread} /> : null}
 
@@ -324,7 +327,7 @@ export function StudyScreen({ activeTab, onSelectTab }: Props) {
         onConfirm={confirmDelete}
         onCancel={() => setDeleteTarget(null)}
       />
-    </View>
+    </GlassScene>
   );
 }
 

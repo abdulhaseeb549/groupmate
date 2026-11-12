@@ -4,6 +4,7 @@ import { LinearGradient } from 'expo-linear-gradient';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Avatar } from '../components/Avatar';
 import { BottomNav, NavTab } from '../components/BottomNav';
+import { GlassButton, GlassScene, GlassTarget } from '../components/Glass';
 import { CapacityModal } from '../components/CapacityModal';
 import { Card } from '../components/Card';
 import { DistributionEditor } from '../components/DistributionEditor';
@@ -90,7 +91,8 @@ export function ProjectsScreen({ activeTab, onSelectTab }: Props) {
   });
 
   return (
-    <View style={styles.screen}>
+    <GlassScene style={styles.screen}>
+      <GlassTarget>
       <ScrollView
         contentContainerStyle={[
           styles.scrollContent,
@@ -100,56 +102,100 @@ export function ProjectsScreen({ activeTab, onSelectTab }: Props) {
       >
         <FadeIn>
         <View style={styles.header}>
-          <Pressable
-            onPress={() => setSwitcherVisible(true)}
-            accessibilityRole="button"
-            accessibilityLabel={`${project.name}, switch project`}
-            style={({ pressed }) => [styles.titleRow, pressed && styles.titlePressed]}
-          >
-            <Text style={type.pageTitle} numberOfLines={1}>
-              {project.name}
-            </Text>
-            {projects.length > 1 ? (
-              <Icon name="chevronDown" size={18} color={colors.muted} strokeWidth={2} />
-            ) : null}
-          </Pressable>
-          <View style={styles.dueRow}>
-            <Text style={[type.body, { color: colors.muted }]}>
-              {project.team} · Due {formatDueDate(project.dueDate, today)}
+          <View style={styles.headerText}>
+            <Text style={[type.metadata, styles.eyebrow]} numberOfLines={1}>
+              {[project.course, project.team].filter(Boolean).join(' · ').toUpperCase()}
             </Text>
             <Pressable
-              onPress={() => setDueDateVisible(true)}
-              hitSlop={8}
+              onPress={() => setSwitcherVisible(true)}
               accessibilityRole="button"
-              accessibilityLabel="Change due date"
+              accessibilityLabel={`${project.name}, switch project`}
+              style={({ pressed }) => [styles.titleRow, pressed && styles.titlePressed]}
             >
-              <Text style={[type.button, styles.editHoursLink]}>Edit</Text>
+              <Text style={[type.pageTitle, styles.titleText]} numberOfLines={2}>
+                {project.name}
+              </Text>
+              {projects.length > 1 ? (
+                <View style={styles.switchChip}>
+                  <Icon name="chevronDown" size={16} color={colors.muted} strokeWidth={2.2} />
+                </View>
+              ) : null}
             </Pressable>
           </View>
+          <GlassButton label="Change due date" onPress={() => setDueDateVisible(true)} style={styles.editButton}>
+            <Icon name="edit" size={19} color={colors.ink} strokeWidth={1.8} />
+          </GlassButton>
         </View>
         </FadeIn>
 
         <FadeIn delay={60}>
-        <View style={styles.statusCard}>
-          <View style={styles.statusTop}>
-            <View style={[styles.healthPill, { backgroundColor: health.bg }]}>
-              <View style={[styles.healthDot, { backgroundColor: health.dot }]} />
-              <Text style={[type.badge, { color: health.text }]} numberOfLines={1}>
-                {health.label}
-              </Text>
+        <View style={styles.shadow}>
+          <View style={styles.statusCard}>
+            <LinearGradient
+              colors={[colors.purpleSoft, colors.surface]}
+              start={{ x: 1, y: 0 }}
+              end={{ x: 0.35, y: 0.8 }}
+              style={StyleSheet.absoluteFill}
+            />
+            <View style={styles.statusTop}>
+              <View
+                style={styles.bigNumberRow}
+                accessible
+                accessibilityLabel={`${percent} percent done`}
+              >
+                <Text style={styles.bigNumber}>{percent}%</Text>
+                <Text style={[type.subtitle, { color: colors.muted }]}>done</Text>
+              </View>
+              <View style={styles.statusSide}>
+                <View style={[styles.healthPill, { backgroundColor: health.bg }]}>
+                  <View style={[styles.healthDot, { backgroundColor: health.dot }]} />
+                  <Text style={[type.badge, { color: health.text }]} numberOfLines={1}>
+                    {health.label}
+                  </Text>
+                </View>
+                <Text style={[type.caption, { color: colors.muted }]}>{daysLabel}</Text>
+              </View>
             </View>
-            <Text style={[type.caption, { color: colors.muted }]}>{daysLabel}</Text>
-          </View>
-          <View style={styles.progressRow}>
             <View style={styles.track}>
               <View style={[styles.fill, { width: `${percent}%` }]} />
             </View>
-            <Text style={[type.button, { color: colors.ink }]}>{percent}%</Text>
+            <View style={styles.stats}>
+              <View style={[styles.stat, styles.statWide]}>
+                <Text style={styles.statNumber}>
+                  {projectState.requirementProgress.met}
+                  <Text style={styles.statTotal}>/{projectState.requirementProgress.total}</Text>
+                </Text>
+                <Text style={[type.caption, { color: colors.muted }]}>Requirements</Text>
+              </View>
+              <View style={styles.statDivider} />
+              <View style={styles.stat}>
+                <Text style={styles.statNumber}>
+                  {projectState.taskProgress.done}
+                  <Text style={styles.statTotal}>/{projectState.taskProgress.total}</Text>
+                </Text>
+                <Text style={[type.caption, { color: colors.muted }]}>Tasks</Text>
+              </View>
+              <View style={styles.statDivider} />
+              <View style={styles.stat}>
+                <View style={styles.faces}>
+                  {members.slice(0, 3).map((m, i) => (
+                    <Avatar
+                      key={m.id}
+                      initials={m.initials}
+                      bg={m.bg}
+                      fg={m.fg}
+                      size={30}
+                      borderColor={colors.surface}
+                      style={i > 0 ? { marginLeft: -8 } : undefined}
+                    />
+                  ))}
+                </View>
+                <Text style={[type.caption, { color: colors.muted }]}>
+                  {members.length} {members.length === 1 ? 'member' : 'members'}
+                </Text>
+              </View>
+            </View>
           </View>
-          <Text style={[type.caption, { color: colors.muted }]}>
-            {projectState.requirementProgress.met} of {projectState.requirementProgress.total} requirements met ·{' '}
-            {projectState.taskProgress.done} of {projectState.taskProgress.total} tasks done
-          </Text>
         </View>
         </FadeIn>
 
@@ -157,32 +203,34 @@ export function ProjectsScreen({ activeTab, onSelectTab }: Props) {
           <View style={styles.scheduleWarning}>
             <Icon name="exclamation" size={16} color={colors.redText} strokeWidth={2.2} />
             <Text style={[type.caption, styles.scheduleWarningText]}>
-              At current pace, the work still in progress won't finish by the due date — check the Timeline below for
-              what's furthest behind.
+              At this pace the work won't finish by the due date. The Timeline shows what's furthest behind.
             </Text>
           </View>
         ) : null}
 
-        <ScrollView
-          horizontal
-          showsHorizontalScrollIndicator={false}
-          contentContainerStyle={styles.tabRow}
-        >
-          {SECTIONS.map((s) => {
-            const active = s === section;
+        <View accessibilityRole="tablist" style={styles.segs}>
+          {SECTIONS.map((sec) => {
+            const active = sec === section;
             return (
               <Pressable
-                key={s}
-                onPress={() => setSection(s)}
+                key={sec}
+                onPress={() => setSection(sec)}
                 accessibilityRole="tab"
                 aria-selected={active}
-                style={[styles.tabPill, active && styles.tabPillActive]}
+                style={[styles.seg, sec === 'Requirements' && styles.segWide, active && styles.segActive]}
               >
-                <Text style={[type.button, { color: active ? colors.onInk : colors.muted }]}>{s}</Text>
+                <Text
+                  numberOfLines={1}
+                  adjustsFontSizeToFit
+                  minimumFontScale={0.8}
+                  style={[active ? type.button : type.subtitle, { color: active ? colors.ink : colors.muted }]}
+                >
+                  {sec}
+                </Text>
               </Pressable>
             );
           })}
-        </ScrollView>
+        </View>
 
         <FadeIn key={section}>
         {section === 'Timeline' ? (
@@ -289,25 +337,25 @@ export function ProjectsScreen({ activeTab, onSelectTab }: Props) {
 
         {section === 'Tasks' ? (
           <View style={styles.section}>
-            <View style={styles.filterRow}>
+            <View style={styles.segs}>
               {FILTERS.map((f) => {
                 const active = f === filter;
                 return (
                   <Pressable
                     key={f}
                     onPress={() => setFilter(f)}
-                    style={[styles.filterPill, active && styles.filterPillActive]}
+                    accessibilityRole="button"
+                    aria-selected={active}
+                    style={[styles.seg, active && styles.segActive]}
                   >
-                    <Text style={[type.button, { color: active ? colors.onInk : colors.muted }]}>
+                    <Text style={[active ? type.button : type.subtitle, { color: active ? colors.ink : colors.muted }]}>
                       {f}
                     </Text>
                   </Pressable>
                 );
               })}
             </View>
-            <Text style={[type.body, { color: colors.muted }]}>
-              Tap a task to start it, finish it, or reassign it. Changes here apply to the whole project.
-            </Text>
+            <Text style={[type.caption, { color: colors.muted }]}>Tap a task to start, finish or reassign it.</Text>
             <View style={styles.card}>
               <DistributionEditor members={filteredMemberIds} includeUnclaimed={filter !== 'My tasks'} />
             </View>
@@ -315,6 +363,7 @@ export function ProjectsScreen({ activeTab, onSelectTab }: Props) {
         ) : null}
         </FadeIn>
       </ScrollView>
+      </GlassTarget>
 
       <BottomNav active={activeTab} onSelect={onSelectTab} chatUnread={hasUnread} />
 
@@ -322,7 +371,7 @@ export function ProjectsScreen({ activeTab, onSelectTab }: Props) {
       <CapacityModal visible={capacityVisible} onClose={() => setCapacityVisible(false)} />
       <DueDateModal visible={dueDateVisible} onClose={() => setDueDateVisible(false)} />
       <RequirementEditDialog requirement={editingRequirement} onClose={() => setEditingRequirement(null)} />
-    </View>
+    </GlassScene>
   );
 }
 
@@ -330,7 +379,7 @@ export function ProjectsScreen({ activeTab, onSelectTab }: Props) {
 function daysRemainingLabel(daysRemaining: number, health: ProjectHealth): string {
   if (health === 'ready') return 'All requirements met';
   if (daysRemaining === 0) return 'Due today';
-  if (daysRemaining > 0) return `Due in ${daysRemaining} ${daysRemaining === 1 ? 'day' : 'days'}`;
+  if (daysRemaining > 0) return `${daysRemaining} ${daysRemaining === 1 ? 'day' : 'days'} left`;
   const overdue = Math.abs(daysRemaining);
   return `${overdue} ${overdue === 1 ? 'day' : 'days'} overdue`;
 }
@@ -352,17 +401,41 @@ const styles = StyleSheet.create({
     // title off the screen padding.
     paddingVertical: 4,
     marginVertical: -4,
+    alignSelf: 'flex-start',
+    maxWidth: '100%',
+  },
+  titleText: {
+    flexShrink: 1,
+    // Keeps the switch chip beside the last word rather than at the far edge.
+    flexGrow: 0,
+    color: colors.ink,
+  },
+  switchChip: {
+    width: 28,
+    height: 28,
+    borderRadius: 14,
+    backgroundColor: 'rgba(21,21,26,0.05)',
+    alignItems: 'center',
+    justifyContent: 'center',
   },
   titlePressed: {
     opacity: 0.6,
   },
-  header: {
+  eyebrow: {
+    color: colors.muted,
+    letterSpacing: 0.6,
+  },
+  headerText: {
+    flex: 1,
     gap: 4,
   },
-  dueRow: {
+  editButton: {
+    marginTop: 4,
+  },
+  header: {
     flexDirection: 'row',
-    alignItems: 'center',
-    gap: 10,
+    alignItems: 'flex-start',
+    gap: 12,
   },
   section: {
     gap: 12,
@@ -390,23 +463,32 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
   },
-  tabRow: {
+  // Four views in one quiet track; the open one is a raised white chip.
+  segs: {
     flexDirection: 'row',
-    gap: 8,
-    paddingRight: 4,
+    gap: 4,
+    padding: 4,
+    borderRadius: 16,
+    backgroundColor: 'rgba(21,21,26,0.05)',
   },
-  tabPill: {
+  seg: {
+    flex: 1,
     height: 44,
-    paddingHorizontal: 18,
-    borderRadius: 22,
-    borderWidth: 1.5,
-    borderColor: colors.border,
+    borderRadius: 12,
+    paddingHorizontal: 4,
     alignItems: 'center',
     justifyContent: 'center',
   },
-  tabPillActive: {
-    backgroundColor: colors.ink,
-    borderColor: colors.ink,
+  segWide: {
+    flex: 1.45,
+  },
+  segActive: {
+    backgroundColor: colors.surface,
+    shadowColor: '#1C1633',
+    shadowOpacity: 0.08,
+    shadowRadius: 8,
+    shadowOffset: { width: 0, height: 2 },
+    elevation: 2,
   },
   editHoursRow: {
     alignSelf: 'flex-end',
@@ -414,33 +496,77 @@ const styles = StyleSheet.create({
   editHoursLink: {
     color: colors.purple,
   },
-  filterRow: {
-    flexDirection: 'row',
-    gap: 8,
-  },
-  filterPill: {
-    height: 44,
-    paddingHorizontal: 16,
-    borderRadius: 22,
-    borderWidth: 1.5,
-    borderColor: colors.border,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  filterPillActive: {
-    backgroundColor: colors.ink,
-    borderColor: colors.ink,
-  },
   card: {
     backgroundColor: colors.surface,
     borderRadius: radius.card,
     padding: 16,
   },
-  statusCard: {
-    backgroundColor: colors.purpleSoft,
+  shadow: {
     borderRadius: radius.card,
-    padding: 16,
+    backgroundColor: colors.surface,
+    shadowColor: '#1C1633',
+    shadowOpacity: 0.07,
+    shadowRadius: 18,
+    shadowOffset: { width: 0, height: 8 },
+    elevation: 3,
+  },
+  statusCard: {
+    borderRadius: radius.card,
+    overflow: 'hidden',
+    borderWidth: StyleSheet.hairlineWidth,
+    borderColor: 'rgba(17,17,17,0.06)',
+    padding: 20,
+    gap: 16,
+  },
+  bigNumberRow: {
+    flexDirection: 'row',
+    alignItems: 'baseline',
+    gap: 6,
+  },
+  bigNumber: {
+    fontFamily: 'CabinetGrotesk-Extrabold',
+    fontSize: 56,
+    lineHeight: 58,
+    letterSpacing: -2,
+    color: colors.ink,
+  },
+  statusSide: {
+    alignItems: 'flex-end',
+    gap: 6,
+  },
+  stats: {
+    flexDirection: 'row',
+    alignItems: 'center',
     gap: 12,
+  },
+  stat: {
+    flex: 1,
+    gap: 4,
+  },
+  statWide: {
+    flex: 1.35,
+  },
+  statNumber: {
+    fontFamily: type.statNumber.fontFamily,
+    fontSize: 20,
+    lineHeight: 26,
+    letterSpacing: -0.3,
+    color: colors.ink,
+  },
+  statTotal: {
+    fontFamily: type.body.fontFamily,
+    fontSize: 14,
+    color: colors.muted,
+  },
+  statDivider: {
+    width: StyleSheet.hairlineWidth,
+    alignSelf: 'stretch',
+    backgroundColor: colors.border,
+  },
+  faces: {
+    flexDirection: 'row',
+    height: 30,
+    alignItems: 'center',
   },
   scheduleWarning: {
     flexDirection: 'row',
@@ -456,7 +582,7 @@ const styles = StyleSheet.create({
   },
   statusTop: {
     flexDirection: 'row',
-    alignItems: 'center',
+    alignItems: 'flex-end',
     justifyContent: 'space-between',
     gap: 10,
   },
@@ -478,21 +604,16 @@ const styles = StyleSheet.create({
     height: 6,
     borderRadius: 3,
   },
-  progressRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 12,
-  },
   track: {
     flex: 1,
-    height: layout.progressBarHeight,
-    borderRadius: layout.progressBarHeight / 2,
+    height: 8,
+    borderRadius: 4,
     backgroundColor: colors.track,
     overflow: 'hidden',
   },
   fill: {
     height: '100%',
-    borderRadius: layout.progressBarHeight / 2,
+    borderRadius: 4,
     backgroundColor: colors.purple,
   },
   workloadRow: {

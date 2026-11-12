@@ -5,6 +5,8 @@ type Props = {
   today: Date;
   /** How many of your unfinished tasks must be done by each day, Monday-first. Seven entries, aligned with weekDates(). */
   counts: number[];
+  /** Off when the strip sits inside a card that already says what week it is. */
+  showHeader?: boolean;
 };
 
 const DAY_LETTERS = ['M', 'T', 'W', 'T', 'F', 'S', 'S'];
@@ -27,18 +29,20 @@ export function weekDates(today: Date): Date[] {
  * boxes in a row read as seven objects competing with the real cards above
  * and below; the strip is one object, so only today is marked.
  */
-export function WeekStrip({ today, counts }: Props) {
+export function WeekStrip({ today, counts, showHeader = true }: Props) {
   const dates = weekDates(today);
   const total = counts.reduce((sum, n) => sum + n, 0);
 
   return (
     <View style={styles.section}>
-      <View style={styles.labelRow}>
-        <Text style={[type.metadata, styles.label]}>THIS WEEK</Text>
-        <Text style={[type.caption, styles.muted]}>
-          {total === 0 ? 'Nothing due' : `${total} ${total === 1 ? 'task due' : 'tasks due'}`}
-        </Text>
-      </View>
+      {showHeader ? (
+        <View style={styles.labelRow}>
+          <Text style={[type.metadata, styles.label]}>THIS WEEK</Text>
+          <Text style={[type.caption, styles.muted]}>
+            {total === 0 ? 'Nothing due' : `${total} ${total === 1 ? 'task due' : 'tasks due'}`}
+          </Text>
+        </View>
+      ) : null}
       <View style={styles.row}>
         {dates.map((date, i) => {
           const isToday = date.toDateString() === today.toDateString();

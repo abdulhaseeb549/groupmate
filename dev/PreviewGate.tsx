@@ -99,8 +99,15 @@ function FakeProject() {
     projectState,
     schedule,
     // Local-only so the UI still responds to interaction; nothing persists.
+    // Stamps completedAt the way ProjectRepository does, so "done this week" counts move here too.
     setTaskStatus: (taskId: string, status: any) =>
-      setTasks((prev) => prev.map((t) => (t.id === taskId ? { ...t, status } : t))),
+      setTasks((prev) =>
+        prev.map((t) =>
+          t.id === taskId
+            ? { ...t, status, completedAt: status === 'completed' ? new Date().toISOString() : undefined }
+            : t
+        )
+      ),
     reassignTask: (taskId: string, memberId: string | null) =>
       setTasks((prev) => prev.map((t) => (t.id === taskId ? { ...t, assigneeId: memberId } : t))),
     claimTask: async (taskId: string) => {

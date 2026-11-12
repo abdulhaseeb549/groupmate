@@ -38,7 +38,7 @@ type Props = {
 // square off while scrolling. Insetting it keeps all four corners inside
 // the clip at every scroll position, and the exposed sliver of the next
 // card is the usual carousel hint that there is one.
-const SIDE_INSET = 14;
+const SIDE_INSET = 18;
 const CARD_GAP = 12;
 
 // Short and eased rather than a spring: this runs beside a scroll the
@@ -149,7 +149,7 @@ export function NotePager({ pages, compact = false }: Props) {
                 {page.points.slice(0, compact ? 2 : page.points.length).map((point, p) => (
                   <View key={p} style={styles.pointRow}>
                     <View style={styles.bullet} />
-                    <Text style={[type.caption, styles.pointText]}>{point}</Text>
+                    <Text style={[type.subtitle, styles.pointText]}>{point}</Text>
                   </View>
                 ))}
               </View>
@@ -227,27 +227,29 @@ function Arrow({
 }
 
 const styles = StyleSheet.create({
+  // No frame of its own: each card is the surface, and the next one
+  // peeking in from the right says there is more.
   outer: {
-    backgroundColor: colors.surface,
-    borderRadius: radius.card,
-    padding: 10,
-    gap: 10,
-    borderWidth: StyleSheet.hairlineWidth,
-    borderColor: 'rgba(17,17,17,0.06)',
-    // So whatever does reach the boundary is cut by this rounded rect
-    // rather than by a square one.
-    overflow: 'hidden',
+    gap: 8,
   },
   // The same inset on all four sides of a card. It was SIDE_INSET left and
   // right but only the outer container's 10px on top, so a card sat visibly
   // closer to the top edge of its frame than to either side.
   track: {
-    padding: SIDE_INSET,
+    paddingHorizontal: 0,
+    paddingVertical: 10,
     gap: CARD_GAP,
   },
   card: {
-    backgroundColor: colors.ink,
-    borderRadius: 18,
+    backgroundColor: colors.surface,
+    borderRadius: radius.card,
+    borderWidth: StyleSheet.hairlineWidth,
+    borderColor: 'rgba(17,17,17,0.06)',
+    shadowColor: '#1C1633',
+    shadowOpacity: 0.07,
+    shadowRadius: 14,
+    shadowOffset: { width: 0, height: 6 },
+    elevation: 3,
     padding: 20,
     // A floor, not the height: cross-axis stretch raises every card to
     // the tallest, so this only matters when every card is short.
@@ -264,8 +266,9 @@ const styles = StyleSheet.create({
     padding: layout.cardPadding,
   },
   eyebrow: {
-    color: 'rgba(255,255,255,0.62)',
-    letterSpacing: 0.8,
+    color: colors.purple,
+    letterSpacing: 0.6,
+    textTransform: 'uppercase',
   },
   // A size step up from type.metadata's 12px — the tag was reading as fine
   // print against the 28px heading right under it. Overridden locally
@@ -275,7 +278,10 @@ const styles = StyleSheet.create({
     lineHeight: 17,
   },
   heading: {
-    color: colors.onInk,
+    color: colors.ink,
+    fontSize: 24,
+    lineHeight: 28,
+    letterSpacing: -0.5,
   },
   points: {
     gap: 7,
@@ -287,22 +293,21 @@ const styles = StyleSheet.create({
     alignItems: 'flex-start',
   },
   bullet: {
-    width: 4,
-    height: 4,
-    borderRadius: 2,
-    backgroundColor: 'rgba(255,255,255,0.5)',
+    width: 6,
+    height: 6,
+    borderRadius: 3,
+    backgroundColor: colors.purple,
     marginTop: 7,
   },
   pointText: {
     flex: 1,
-    color: 'rgba(255,255,255,0.8)',
+    color: '#3C3A47',
   },
   footer: {
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
-    gap: 12,
-    paddingLeft: 6,
+    gap: 14,
   },
   progress: {
     flexDirection: 'row',
@@ -314,14 +319,15 @@ const styles = StyleSheet.create({
     flex: 1,
     maxWidth: 26,
     borderRadius: 2,
-    backgroundColor: colors.border,
+    backgroundColor: colors.track,
   },
   segmentActive: {
     backgroundColor: colors.purple,
     maxWidth: 40,
   },
   segmentPassed: {
-    backgroundColor: colors.purpleSoft,
+    backgroundColor: colors.purple,
+    opacity: 0.35,
   },
   arrows: {
     flexDirection: 'row',
@@ -329,9 +335,9 @@ const styles = StyleSheet.create({
     gap: 6,
   },
   arrow: {
-    width: 34,
-    height: 34,
-    borderRadius: 17,
+    width: 40,
+    height: 40,
+    borderRadius: 20,
     alignItems: 'center',
     justifyContent: 'center',
   },
