@@ -73,6 +73,10 @@ type PickerAnchor = {
   width: number;
   height: number;
   isOwn: boolean;
+  /** A text message's words, so the hold menu can lift a copy of the bubble above the dimmed chat. Null for tasks and files. */
+  body: string | null;
+  /** Whether the held bubble opens its stack (its corners differ). */
+  first: boolean;
 };
 
 const REACTION_PALETTE = ['❤️', '👍', '🎉', '👏', '😄'];
@@ -139,6 +143,18 @@ const WEEKDAYS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
 const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
 
 /** Local calendar day of a timestamp, for grouping messages under a date. */
+/** Messages from one person within this long of each other share one bubble stack. */
+const GROUP_WINDOW_MS = 10 * 60 * 1000;
+
+/** True when b continues a's stack: same person, same day, close in time. A shared task always stands alone. */
+function sameGroup(a: Message | undefined, b: Message | undefined): boolean {
+  if (!a || !b) return false;
+  if (a.authorId !== b.authorId) return false;
+  if (a.sharedTaskId !== null || b.sharedTaskId !== null) return false;
+  if (dayKey(a.createdAt) !== dayKey(b.createdAt)) return false;
+  return Math.abs(new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()) < GROUP_WINDOW_MS;
+}
+
 function dayKey(iso: string): string {
   const d = new Date(iso);
   return `${d.getFullYear()}-${d.getMonth()}-${d.getDate()}`;
@@ -515,7 +531,20 @@ export function ChatScreen({ conversation, onBack }: Props) {
     }
   }
 
-  const title = conversation.type === 'group' ? project.name : (membersById[conversation.otherUserId]?.name ?? 'Direct message');
+  const title = conversation.type === 'group' ? 'Team chat' : (membersById[conversation.otherUserId]?.name ?? 'Direct message');
+  const hereNow = members.filter((m) => m.id !== currentUserId && onlineUserIds.has(m.id)).length;
+  // The capsule's faces: the other person in a DM; in the group, up to three
+  // teammates, the ones here now first.
+  const headerFaces = useMemo(() => {
+    if (conversation.type === 'dm') {
+      const other = membersById[conversation.otherUserId];
+      return other ? [other] : [];
+    }
+    return members
+      .filter((m) => m.id !== currentUserId)
+      .sort((a, b) => (onlineUserIds.has(a.id) ? 0 : 1) - (onlineUserIds.has(b.id) ? 0 : 1))
+      .slice(0, 3);
+  }, [conversation, members, membersById, currentUserId, onlineUserIds]);
   // Real presence (state/presence.ts) in both kinds of thread — never this
   // device's own socket state, which read as "online" no matter who else
   // had the app open. A DM: is the other person here. The group: is
@@ -618,15 +647,19 @@ export function ChatScreen({ conversation, onBack }: Props) {
   const renderItem = useCallback<ListRenderItem<Message>>(
     ({ item, index }) => {
       const prevItem = index > 0 && messages ? messages[index - 1] : undefined;
+      const nextItem = messages && index + 1 < messages.length ? messages[index + 1] : undefined;
       const newDay = !prevItem || dayKey(prevItem.createdAt) !== dayKey(item.createdAt);
-      const showHeader = newDay || !prevItem || prevItem.authorId !== item.authorId;
+      const first = !sameGroup(prevItem, item);
+      const last = !sameGroup(item, nextItem);
       const sharedTask = item.sharedTaskId ? (tasksById.get(item.sharedTaskId) ?? null) : null;
       const row = (
         <MessageRow
           message={item}
           isOwn={item.authorId === currentUserId}
           author={membersById[item.authorId]}
-          showHeader={showHeader}
+          first={first}
+          last={last}
+          spacing={index === 0 ? 0 : first ? 14 : 3}
           sharedTask={sharedTask}
           membersById={membersById}
           onClaim={stableClaim}
@@ -643,7 +676,7 @@ export function ChatScreen({ conversation, onBack }: Props) {
       if (!newDay) return row;
       return (
         <View>
-          <View style={styles.dayRow} accessibilityRole="header">
+          <View style={[styles.dayRow, index === 0 && styles.dayRowFirst]} accessibilityRole="header">
             <View style={styles.dayChip}>
               <Text style={styles.dayText}>{dayLabel(item.createdAt)}</Text>
             </View>
@@ -684,12 +717,28 @@ export function ChatScreen({ conversation, onBack }: Props) {
     userScrolledRef.current = true;
   });
 
+  // The typing bubble grows the list without a new message: keep it in view
+  // if you were reading the bottom.
+  const followTyping = useStableCallback(() => {
+    if (nearBottomRef.current) requestAnimationFrame(() => listRef.current?.scrollToEnd({ animated: true }));
+  });
+
   const listContentStyle = useMemo(
     () => [styles.list, { paddingTop: headerHeight + 8, paddingBottom: composerHeight + 12 }],
     [headerHeight, composerHeight]
   );
 
   const canSend = input.trim().length > 0 && !sending;
+
+  // Which emoji you've already put on the held message, lit in the hold menu.
+  const heldMine = useMemo(() => {
+    const set = new Set<string>();
+    if (!anchor) return set;
+    for (const r of reactionsByMessage.get(anchor.messageId) ?? NO_REACTIONS) {
+      if (r.userId === currentUserId) set.add(r.emoji);
+    }
+    return set;
+  }, [anchor, reactionsByMessage, currentUserId]);
 
   return (
     <>
@@ -744,6 +793,15 @@ export function ChatScreen({ conversation, onBack }: Props) {
                 // keeps your place instead of jumping.
                 maintainVisibleContentPosition={MAINTAIN_POSITION}
                 renderItem={renderItem}
+                ListFooterComponent={
+                  <TypingBubble
+                    hub={hub}
+                    conversation={conversation}
+                    currentUserId={currentUserId}
+                    membersById={membersById}
+                    onShow={followTyping}
+                  />
+                }
               />
             )}
           </GlassTarget>
@@ -766,19 +824,34 @@ export function ChatScreen({ conversation, onBack }: Props) {
               <Icon name="chevronLeft" size={20} color={colors.ink} strokeWidth={2} />
             </GlassButton>
             {/* Heavier wash than the tab bar: this glass sits over text. */}
-            <Glass radius={24} wash={0.74} style={styles.titleCapsule}>
-              <View style={styles.titleInner}>
-                <Text style={[type.greeting, styles.ink, styles.headerTitle]} numberOfLines={1}>
-                  {title}
-                </Text>
-                <HeaderStatus
-                  hub={hub}
-                  conversation={conversation}
-                  currentUserId={currentUserId}
-                  membersById={membersById}
-                  memberCount={members.length}
-                  otherOnline={otherOnline}
-                />
+            <Glass radius={26} wash={0.74} style={styles.titleCapsule}>
+              <View style={[styles.titleInner, headerFaces.length === 0 && styles.titleInnerBare]}>
+                {conversation.type === 'dm' && headerFaces[0] ? (
+                  <View>
+                    <Avatar {...headerFaces[0]} size={36} borderColor={colors.surface} />
+                    {otherOnline ? <View style={styles.headerOnlineDot} /> : null}
+                  </View>
+                ) : headerFaces.length > 0 ? (
+                  <View style={styles.headerFaces}>
+                    {headerFaces.map((m, i) => (
+                      <Avatar key={m.id} {...m} size={34} borderColor={colors.surface} style={i > 0 ? styles.headerFaceOverlap : undefined} />
+                    ))}
+                  </View>
+                ) : null}
+                <View style={styles.titleText}>
+                  <Text style={[styles.ink, styles.headerTitle]} numberOfLines={1}>
+                    {title}
+                  </Text>
+                  <HeaderStatus
+                    hub={hub}
+                    conversation={conversation}
+                    currentUserId={currentUserId}
+                    membersById={membersById}
+                    memberCount={members.length}
+                    hereNow={hereNow}
+                    otherOnline={otherOnline}
+                  />
+                </View>
               </View>
             </Glass>
           </View>
@@ -812,43 +885,33 @@ export function ChatScreen({ conversation, onBack }: Props) {
               </View>
             ) : null}
 
-            {attachOpen || attaching ? (
-              <View style={styles.attachRow}>
-                {ATTACH_KINDS.map((kind) => (
-                  <Pressable
-                    key={kind.label}
-                    onPress={() => {
-                      setAttachOpen(false);
-                      handleAttach(kind.source);
-                    }}
-                    disabled={attaching}
-                    accessibilityRole="button"
-                    accessibilityLabel={`Attach ${kind.label.toLowerCase()}`}
-                    style={({ pressed }) => [styles.attachChip, (pressed || attaching) && styles.attachChipPressed]}
-                  >
-                    <Icon name={kind.icon} size={14} color={colors.muted} strokeWidth={1.8} />
-                    <Text style={[type.tinyLabel, styles.muted]}>{kind.label}</Text>
-                  </Pressable>
-                ))}
-                {attaching ? <ActivityIndicator size="small" color={colors.muted} /> : null}
-              </View>
-            ) : null}
-
             <View style={styles.composer}>
-              <GlassButton
-                label={attachOpen ? 'Hide attachments' : 'Attach'}
-                onPress={() => setAttachOpen((v) => !v)}
-                size={SEND_SIZE + 2}
-                style={styles.attachButton}
-              >
-                <Icon name={attachOpen ? 'close' : 'plus'} size={20} color={colors.ink} strokeWidth={2} />
-              </GlassButton>
-              <Glass radius={SEND_SIZE / 2 + 4} style={styles.inputCapsule}>
+              {attachOpen ? (
+                // Solid ink while the menu is open: the + turned ×, so it reads as "close".
+                <Pressable
+                  onPress={() => setAttachOpen(false)}
+                  accessibilityRole="button"
+                  accessibilityLabel="Close attach menu"
+                  hitSlop={4}
+                  style={({ pressed }) => [styles.attachClose, pressed && styles.pressedLift]}
+                >
+                  <Icon name="close" size={20} color={colors.onInk} strokeWidth={2.2} />
+                </Pressable>
+              ) : (
+                <GlassButton label="Attach" onPress={() => !attaching && setAttachOpen(true)} size={COMPOSER_H}>
+                  {attaching ? (
+                    <ActivityIndicator size="small" color={colors.purple} />
+                  ) : (
+                    <Icon name="plus" size={22} color={colors.ink} strokeWidth={1.9} />
+                  )}
+                </GlassButton>
+              )}
+              <Glass radius={COMPOSER_H / 2} style={styles.inputCapsule}>
                 <View style={styles.inputRow}>
                   <TextInput
                     value={input}
                     onChangeText={handleInputChange}
-                    placeholder={conversation.type === 'group' ? 'Message' : `Message ${title}`}
+                    placeholder="Message"
                     placeholderTextColor={colors.faint}
                     multiline
                     numberOfLines={1}
@@ -860,22 +923,16 @@ export function ChatScreen({ conversation, onBack }: Props) {
                     accessibilityRole="button"
                     accessibilityLabel="Send"
                     accessibilityState={{ disabled: !canSend }}
-                    style={({ pressed }) => [styles.sendButton, pressed && canSend && styles.sendButtonPressed]}
+                    style={({ pressed }) => [styles.sendButton, canSend && styles.sendButtonOn, pressed && canSend && styles.sendButtonPressed]}
                   >
                     {canSend ? (
-                      <LinearGradient
-                        colors={gradients.purpleDeep}
-                        start={{ x: 0.25, y: 0 }}
-                        end={{ x: 0.75, y: 1 }}
-                        style={styles.sendFill}
-                      >
-                        <Icon name="send" size={17} color={colors.onInk} strokeWidth={1.9} />
+                      <LinearGradient colors={gradients.purpleDeep} start={{ x: 0, y: 0 }} end={{ x: 0, y: 1 }} style={styles.sendFill}>
+                        <Icon name="arrowUp" size={18} color={colors.onInk} strokeWidth={2} />
                       </LinearGradient>
                     ) : (
-                      // A flat neutral circle, not the gradient at 0.4 opacity: faded
-                      // purple read as a half-painted blob rather than a disabled button.
-                      <View style={[styles.sendFill, styles.sendFillDisabled]}>
-                        <Icon name="send" size={17} color={colors.faint} strokeWidth={1.9} />
+                      // Quiet lilac until there's something to send.
+                      <View style={[styles.sendFill, styles.sendFillOff]}>
+                        <Icon name="arrowUp" size={18} color={SEND_OFF_ICON} strokeWidth={2} />
                       </View>
                     )}
                   </Pressable>
@@ -883,14 +940,44 @@ export function ChatScreen({ conversation, onBack }: Props) {
               </Glass>
             </View>
           </View>
+
+          {attachOpen ? (
+            <>
+              <Pressable style={StyleSheet.absoluteFill} onPress={() => setAttachOpen(false)} accessibilityLabel="Close attach menu" />
+              {/* Opens above the + (now ×). A sibling of the dock, not inside
+                  it, so Android still delivers taps above the dock's bounds. */}
+              <View style={[styles.attachMenu, { bottom: composerHeight - 8 + 14 }]}>
+                {ATTACH_KINDS.map((kind) => (
+                  <Pressable
+                    key={kind.label}
+                    onPress={() => {
+                      setAttachOpen(false);
+                      handleAttach(kind.source);
+                    }}
+                    disabled={attaching}
+                    accessibilityRole="button"
+                    accessibilityLabel={`Attach ${kind.label.toLowerCase()}`}
+                    style={({ pressed }) => [styles.attachItem, pressed && styles.pressedLift]}
+                  >
+                    <View style={styles.attachTile}>
+                      <Icon name={kind.icon} size={22} color={colors.purple} strokeWidth={1.8} />
+                    </View>
+                    <Text style={[styles.attachLabel, styles.ink]}>{kind.label}</Text>
+                  </Pressable>
+                ))}
+              </View>
+            </>
+          ) : null}
         </GlassScene>
       </KeyboardAvoider>
 
       <TaskDetailModal taskId={openTaskId} onClose={() => setOpenTaskId(null)} onClaimed={handleClaimed} />
       <TaskClaimedModal task={claimedTask} onClose={() => setClaimedTask(null)} onView={setOpenTaskId} />
-      <ReactionPicker
+      <HoldMenu
         anchor={anchor}
+        mine={heldMine}
         topLimit={Math.max(insets.top, 40) + 8}
+        bottomLimit={Math.max(insets.bottom, 12) + 12}
         onClose={() => setAnchor(null)}
         onPick={(emoji) => {
           if (anchor) toggleReaction(anchor.messageId, emoji);
@@ -914,30 +1001,18 @@ export function ChatScreen({ conversation, onBack }: Props) {
   );
 }
 
+/** The quiet grey pill behind small labels (effort, dates, low priority). */
+const GREY_PILL = 'rgba(21,21,26,0.05)';
+
 /**
- * The header's dot + subtitle line. Owns the "is typing" state itself, so
- * a typing event re-renders only this line — not the whole screen and its
- * message list.
- *
- * Who counts: in the group, anyone typing to the group; in a DM, only the
- * other person typing to you. Typing clears after 3s of silence ("stopped
- * typing" isn't its own event) or as soon as that person's message lands.
+ * Who is typing in this thread right now, or null. In the group, anyone
+ * typing to the group; in a DM, only the other person typing to you.
+ * Typing clears after 3s of silence ("stopped typing" isn't its own event)
+ * or as soon as that person's message lands. Each caller keeps its own
+ * copy, so a typing event re-renders only the header line and the bubble,
+ * not the whole screen and its message list.
  */
-function HeaderStatus({
-  hub,
-  conversation,
-  currentUserId,
-  membersById,
-  memberCount,
-  otherOnline,
-}: {
-  hub: ChatHub | null;
-  conversation: Conversation;
-  currentUserId: string | undefined;
-  membersById: Record<string, Member>;
-  memberCount: number;
-  otherOnline: boolean;
-}) {
+function useTypingUser(hub: ChatHub | null, conversation: Conversation, currentUserId: string | undefined) {
   const [typingUserId, setTypingUserId] = useState<string | null>(null);
   const conversationRef = useRef(conversation);
   conversationRef.current = conversation;
@@ -971,35 +1046,60 @@ function HeaderStatus({
     };
   }, [hub, currentUserId, convKey]);
 
-  const typingName = typingUserId ? (membersById[typingUserId]?.name ?? 'Someone') : null;
-  const subtitle =
-    typingName
-      ? conversation.type === 'group'
-        ? `${typingName} is typing`
-        : 'Typing'
-      : conversation.type === 'group'
-        ? `${memberCount} ${memberCount === 1 ? 'person' : 'people'} in chat`
-        : otherOnline
-          ? 'Active now'
-          : 'Offline';
+  return typingUserId;
+}
+
+/** The capsule's second line: who's here, or who's typing. Mint only when someone is actually here. */
+function HeaderStatus({
+  hub,
+  conversation,
+  currentUserId,
+  membersById,
+  memberCount,
+  hereNow,
+  otherOnline,
+}: {
+  hub: ChatHub | null;
+  conversation: Conversation;
+  currentUserId: string | undefined;
+  membersById: Record<string, Member>;
+  memberCount: number;
+  hereNow: number;
+  otherOnline: boolean;
+}) {
+  const typingUserId = useTypingUser(hub, conversation, currentUserId);
+  const typingName = typingUserId ? firstName(membersById[typingUserId]?.name ?? 'Someone') : null;
+
+  let subtitle: string;
+  let live: boolean;
+  if (typingName) {
+    subtitle = conversation.type === 'group' ? `${typingName} is typing…` : 'Typing…';
+    live = true;
+  } else if (conversation.type === 'group') {
+    live = hereNow > 0;
+    subtitle = live ? `${hereNow} here now` : `${memberCount} ${memberCount === 1 ? 'member' : 'members'}`;
+  } else {
+    live = otherOnline;
+    subtitle = otherOnline ? 'Active now' : 'Offline';
+  }
 
   return (
     <View style={styles.headerSubRow}>
-      <View style={[styles.liveDot, otherOnline ? styles.liveDotOn : styles.liveDotOff]} />
-      <Text
-        style={[type.caption, typingName ? styles.typingText : styles.muted]}
-        numberOfLines={1}
-      >
+      {live ? <View style={styles.liveDot} /> : null}
+      <Text style={[styles.headerSub, live ? styles.liveText : styles.muted]} numberOfLines={1}>
         {subtitle}
       </Text>
-      {typingName ? <TypingDots /> : null}
     </View>
   );
 }
 
-/** Three dots pulsing in a stagger, next to the "Typing…" subtitle. */
+function firstName(name: string) {
+  return name.trim().split(/\s+/)[0] || name;
+}
+
+/** Three dots pulsing in a stagger, inside the typing bubble. */
 function TypingDots() {
-  const values = useRef([0, 1, 2].map(() => new Animated.Value(0.3))).current;
+  const values = useRef([0, 1, 2].map(() => new Animated.Value(0.45))).current;
 
   useEffect(() => {
     const loops = values.map((v, i) =>
@@ -1007,7 +1107,7 @@ function TypingDots() {
         Animated.sequence([
           Animated.delay(i * 150),
           Animated.timing(v, { toValue: 1, duration: 300, useNativeDriver: true }),
-          Animated.timing(v, { toValue: 0.3, duration: 300, useNativeDriver: true }),
+          Animated.timing(v, { toValue: 0.45, duration: 300, useNativeDriver: true }),
         ])
       )
     );
@@ -1024,10 +1124,42 @@ function TypingDots() {
   );
 }
 
-const PRIORITY: Record<Priority, { label: string; mark: string; text: string; bg: string }> = {
-  high: { label: 'High', mark: colors.red, text: colors.redText, bg: colors.redSoft },
-  medium: { label: 'Medium', mark: colors.amber, text: colors.yellowText, bg: colors.yellowSoft },
-  low: { label: 'Low', mark: colors.faint, text: colors.muted, bg: colors.surfaceMuted },
+/** A bubble of dots at the bottom of the thread, from whoever is typing, so it reads as a reply on its way. */
+function TypingBubble({
+  hub,
+  conversation,
+  currentUserId,
+  membersById,
+  onShow,
+}: {
+  hub: ChatHub | null;
+  conversation: Conversation;
+  currentUserId: string | undefined;
+  membersById: Record<string, Member>;
+  onShow: () => void;
+}) {
+  const typingUserId = useTypingUser(hub, conversation, currentUserId);
+  const typer = typingUserId ? membersById[typingUserId] : undefined;
+
+  useEffect(() => {
+    if (typingUserId) onShow();
+  }, [typingUserId, onShow]);
+
+  if (!typingUserId) return null;
+  return (
+    <View style={[styles.line, styles.typingLine]} accessibilityLabel={`${typer?.name ?? 'Someone'} is typing`}>
+      {typer ? <Avatar {...typer} size={AVATAR} /> : <View style={styles.avatarSpacer} />}
+      <View style={[styles.bubbleOther, styles.typingBubble, bubbleCorners(false, true)]}>
+        <TypingDots />
+      </View>
+    </View>
+  );
+}
+
+const PRIORITY: Record<Priority, { label: string; text: string; bg: string }> = {
+  high: { label: 'High', text: colors.redText, bg: colors.redSoft },
+  medium: { label: 'Medium', text: colors.yellowText, bg: colors.yellowSoft },
+  low: { label: 'Low', text: colors.muted, bg: GREY_PILL },
 };
 
 /** Fades and lifts a newly-arrived message into place. Existing history renders at rest, so scrolling never re-animates it. */
@@ -1053,12 +1185,53 @@ function MessageEntry({ animate, onSettled, children }: { animate: boolean; onSe
   );
 }
 
+/**
+ * A stack of bubbles from one person reads as one block: the first bubble
+ * keeps its round top, the tail corner (on the speaker's side, at the
+ * bottom) stays tight, and every bubble after the first is tight on the
+ * speaker's side all the way down.
+ */
+function bubbleCorners(isOwn: boolean, first: boolean) {
+  if (isOwn) {
+    return first
+      ? { borderTopLeftRadius: 20, borderTopRightRadius: 20, borderBottomRightRadius: 6, borderBottomLeftRadius: 20 }
+      : { borderTopLeftRadius: 20, borderTopRightRadius: 6, borderBottomRightRadius: 6, borderBottomLeftRadius: 20 };
+  }
+  return first
+    ? { borderTopLeftRadius: 20, borderTopRightRadius: 20, borderBottomRightRadius: 20, borderBottomLeftRadius: 6 }
+    : { borderTopLeftRadius: 6, borderTopRightRadius: 20, borderBottomRightRadius: 20, borderBottomLeftRadius: 6 };
+}
+
+/** One message's text bubble: white for others, the purple gradient for yours. Shared by the list and the hold menu's lifted copy. */
+function TextBubble({ body, isOwn, first, lifted }: { body: string; isOwn: boolean; first: boolean; lifted?: boolean }) {
+  const corners = bubbleCorners(isOwn, first);
+  if (isOwn) {
+    return (
+      <LinearGradient
+        colors={OWN_BUBBLE}
+        start={{ x: 0, y: 0 }}
+        end={{ x: 0, y: 1 }}
+        style={[styles.bubble, styles.bubbleOwn, corners, lifted && styles.bubbleOwnLifted]}
+      >
+        <Text style={[styles.bubbleText, styles.onInk]}>{body}</Text>
+      </LinearGradient>
+    );
+  }
+  return (
+    <View style={[styles.bubble, styles.bubbleOther, corners, lifted && styles.bubbleOtherLifted]}>
+      <Text style={[styles.bubbleText, styles.ink]}>{body}</Text>
+    </View>
+  );
+}
+
 /** Memoized: with stable callbacks from ChatScreen, a new message or reaction re-renders only the rows it touches. */
 const MessageRow = memo(function MessageRow({
   message,
   isOwn,
   author,
-  showHeader,
+  first,
+  last,
+  spacing,
   sharedTask,
   membersById,
   onClaim,
@@ -1074,7 +1247,12 @@ const MessageRow = memo(function MessageRow({
   message: Message;
   isOwn: boolean;
   author: Member | undefined;
-  showHeader: boolean;
+  /** Opens a stack: shows the name line (others) and the round top corners. */
+  first: boolean;
+  /** Closes a stack: shows the face (others) or the time (yours). */
+  last: boolean;
+  /** Space above this row: wider between stacks than inside one. */
+  spacing: number;
   /** Only meaningful when message.sharedTaskId is set: the live task, or null if it's since been deleted. */
   sharedTask: Task | null;
   membersById: Record<string, Member>;
@@ -1089,79 +1267,81 @@ const MessageRow = memo(function MessageRow({
   onSettled: (messageId: string) => void;
 }) {
   const time = formatTime(new Date(message.createdAt));
-  const name = isOwn ? 'You' : (author?.name ?? 'Someone');
+  const name = author?.name ? firstName(author.name) : 'Someone';
+  const isTask = message.sharedTaskId !== null;
+  const isFile = !isTask && message.attachmentPath !== null;
   const bubbleRef = useRef<View>(null);
 
   // Measured at press time rather than on layout: the list scrolls, so a
-  // cached position would put the picker over the wrong message.
+  // cached position would put the menu over the wrong message.
   function handleLongPress() {
     bubbleRef.current?.measureInWindow((x, y, width, height) => {
-      onAnchor({ messageId: message.id, x, y, width, height, isOwn });
+      onAnchor({ messageId: message.id, x, y, width, height, isOwn, body: isTask || isFile ? null : message.body, first });
     });
   }
 
+  const content = isTask ? (
+    <TaskShareCard
+      task={sharedTask}
+      isOwn={isOwn}
+      membersById={membersById}
+      onClaim={onClaim}
+      onOpen={onOpen}
+      onClaimed={onClaimed}
+      onLongPress={handleLongPress}
+    />
+  ) : isFile ? (
+    <AttachmentCard message={message} isOwn={isOwn} first={first} onLongPress={handleLongPress} />
+  ) : (
+    <Pressable onLongPress={handleLongPress} delayLongPress={300} style={({ pressed }) => pressed && styles.bubblePressed}>
+      <TextBubble body={message.body ?? ""} isOwn={isOwn} first={first} />
+    </Pressable>
+  );
+
   return (
     <MessageEntry animate={isNew} onSettled={() => onSettled(message.id)}>
-      <View style={[styles.row, isOwn && styles.rowOwn]}>
-        <View style={[styles.bubbleColumn, isOwn && styles.bubbleColumnOwn]}>
-          {showHeader ? (
-            <View style={[styles.authorRow, isOwn && styles.authorRowOwn]}>
-              {!isOwn && author ? <Avatar {...author} size={18} /> : null}
-              <Text style={[type.metadata, styles.author]} numberOfLines={1}>
-                {name} · {time}
-              </Text>
-            </View>
-          ) : null}
-          <View ref={bubbleRef} collapsable={false}>
-            {message.sharedTaskId !== null ? (
-              <TaskShareCard
-                task={sharedTask}
-                membersById={membersById}
-                onClaim={onClaim}
-                onOpen={onOpen}
-                onClaimed={onClaimed}
-                onLongPress={handleLongPress}
-              />
-            ) : message.attachmentPath !== null ? (
-              <AttachmentCard message={message} onLongPress={handleLongPress} />
-            ) : (
-              <Pressable
-                onLongPress={handleLongPress}
-                delayLongPress={300}
-                style={({ pressed }) => [
-                  styles.bubble,
-                  isOwn ? styles.bubbleOwn : styles.bubbleOther,
-                  pressed && styles.bubblePressed,
-                ]}
-              >
-                <Text style={[type.body, isOwn ? styles.bubbleTextOwn : styles.bubbleTextOther]}>{message.body}</Text>
-              </Pressable>
-            )}
+      <View style={{ marginTop: spacing }}>
+        {first && !isOwn ? (
+          <View style={styles.who}>
+            <Text style={[styles.whoName, styles.muted]} numberOfLines={1}>
+              {isTask ? `${name} shared a task` : name}
+            </Text>
+            <Text style={[styles.whoTime, styles.faint]}>{time}</Text>
           </View>
-          {reactions.length > 0 ? (
-            <ReactionPills
-              reactions={reactions}
-              currentUserId={currentUserId}
-              onToggle={(emoji) => onToggleReaction(message.id, emoji)}
-              align={isOwn ? 'flex-end' : 'flex-start'}
-            />
-          ) : null}
+        ) : null}
+        <View style={[styles.line, isOwn && styles.lineOwn]}>
+          {isOwn ? null : last && author ? <Avatar {...author} size={AVATAR} /> : <View style={styles.avatarSpacer} />}
+          <View style={[styles.bubbleWrap, reactions.length > 0 && styles.bubbleWrapReacted]}>
+            <View ref={bubbleRef} collapsable={false}>
+              {content}
+            </View>
+            {reactions.length > 0 ? (
+              <ReactionPills
+                reactions={reactions}
+                currentUserId={currentUserId}
+                onToggle={(emoji) => onToggleReaction(message.id, emoji)}
+                isOwn={isOwn}
+              />
+            ) : null}
+          </View>
         </View>
+        {isOwn && last ? <Text style={[styles.ownTime, styles.faint]}>{time}</Text> : null}
       </View>
     </MessageEntry>
   );
 });
 
+/** Reactions sit on the bubble's bottom edge, on the side away from the tail. */
 function ReactionPills({
   reactions,
   currentUserId,
   onToggle,
-  align,
+  isOwn,
 }: {
   reactions: Reaction[];
   currentUserId: string | undefined;
   onToggle: (emoji: string) => void;
-  align: 'flex-start' | 'flex-end';
+  isOwn: boolean;
 }) {
   const pop = useRef(new Animated.Value(0)).current;
   const grouped = new Map<string, number>();
@@ -1181,66 +1361,72 @@ function ReactionPills({
     <Animated.View
       style={[
         styles.reactionRow,
-        { justifyContent: align, opacity: pop, transform: [{ scale: pop.interpolate({ inputRange: [0, 1], outputRange: [0.6, 1] }) }] },
+        isOwn ? styles.reactionRowOwn : styles.reactionRowOther,
+        { transform: [{ scale: pop.interpolate({ inputRange: [0, 1], outputRange: [0.6, 1] }) }] },
       ]}
     >
-      {Array.from(grouped.entries()).map(([emoji, count]) => (
-        <Pressable
-          key={emoji}
-          onPress={() => onToggle(emoji)}
-          style={({ pressed }) => [styles.reactionPill, mine.has(emoji) && styles.reactionPillActive, pressed && styles.pressed]}
-          accessibilityRole="button"
-          accessibilityLabel={`${emoji} reaction, ${count}${mine.has(emoji) ? ', you reacted' : ''}`}
-        >
-          <Text style={styles.reactionEmoji}>{emoji}</Text>
-          <Text style={[type.tinyLabel, mine.has(emoji) ? styles.reactionCountActive : styles.muted]}>{count}</Text>
-        </Pressable>
-      ))}
+      {Array.from(grouped.entries()).map(([emoji, count]) => {
+        const isMine = mine.has(emoji);
+        return (
+          <Pressable
+            key={emoji}
+            onPress={() => onToggle(emoji)}
+            hitSlop={6}
+            style={({ pressed }) => [styles.reactionPill, isMine && styles.reactionPillMine, pressed && styles.pressedLift]}
+            accessibilityRole="button"
+            accessibilityLabel={`${emoji} reaction, ${count}${isMine ? ', you reacted' : ''}`}
+          >
+            <Text style={[styles.reactionText, isMine ? styles.reactionTextMine : styles.muted]}>
+              {emoji} {count}
+            </Text>
+          </Pressable>
+        );
+      })}
     </Animated.View>
   );
 }
 
-/** The composer's send button, and the input's resting height — kept equal so the two bottom-align exactly. */
-const SEND_SIZE = 46;
+/** Bubble face size beside incoming messages. */
+const AVATAR = 28;
+/** The composer's + button, input capsule and header capsule height. */
+const COMPOSER_H = 52;
+const SEND_OFF_ICON = '#A996F2';
+const OWN_BUBBLE = ['#7C5FF2', '#6342E2'] as const;
 
-const PICKER_ITEM = 40;
-const PICKER_GAP = 6;
-const PICKER_PAD = 8;
-const PICKER_H = PICKER_ITEM + PICKER_PAD * 2;
-
-function pickerWidth(itemCount: number) {
-  return itemCount * PICKER_ITEM + (itemCount - 1) * PICKER_GAP + PICKER_PAD * 2;
-}
+const HOLD_BAR_H = 56;
+const HOLD_ITEM = 44;
+const HOLD_GAP = 10;
+const HOLD_CARD_H = 50;
+const HOLD_BAR_W = REACTION_PALETTE.length * HOLD_ITEM + (REACTION_PALETTE.length - 1) * 2 + 12;
 
 /**
- * The emoji row, opened against the message it will react to — above it
- * where there's room, below it when the message sits near the top of the
- * screen, and edge-clamped so it never runs off either side. The backdrop
- * is only lightly dimmed on purpose: you need to still see which message
- * you're reacting to, which a full-screen modal defeats.
- *
- * On your own message, a trailing trash icon rides in the same row —
- * "unsend" is just another action on the bubble, not a separate menu.
- * It's never shown on someone else's message: only the author can unsend.
+ * Press and hold a message: the chat dims, the message lifts out, the
+ * emoji bar opens above it and — on your own message only — an Unsend
+ * card below it. Only the author can unsend. The group is nudged up or
+ * down to stay on screen; tasks and files stay in place under the dim.
  */
-function ReactionPicker({
+function HoldMenu({
   anchor,
+  mine,
   topLimit,
+  bottomLimit,
   onClose,
   onPick,
   onDeletePress,
 }: {
   anchor: PickerAnchor | null;
-  /** Lowest y the picker may occupy — below the status bar / header inset. */
+  /** Emoji you've already reacted with on this message. */
+  mine: Set<string>;
+  /** Lowest y the menu may occupy: below the status bar. */
   topLimit: number;
+  /** Space to keep clear at the bottom of the screen. */
+  bottomLimit: number;
   onClose: () => void;
   onPick: (emoji: string) => void;
   onDeletePress: () => void;
 }) {
   const progress = useRef(new Animated.Value(0)).current;
-  // One extra slot for the delete item, always allocated (hooks can't be
-  // conditional) — simply unused when the anchor isn't the viewer's own message.
-  const itemScales = useRef([...REACTION_PALETTE, 'delete'].map(() => new Animated.Value(0))).current;
+  const itemScales = useRef(REACTION_PALETTE.map(() => new Animated.Value(0))).current;
 
   useEffect(() => {
     if (!anchor) {
@@ -1259,62 +1445,82 @@ function ReactionPicker({
 
   if (!anchor) return <Modal visible={false} transparent />;
 
-  const width = pickerWidth(REACTION_PALETTE.length + (anchor.isOwn ? 1 : 0));
   const screen = Dimensions.get('window');
-  const preferredLeft = anchor.isOwn ? anchor.x + anchor.width - width : anchor.x;
-  const left = Math.min(Math.max(preferredLeft, 8), Math.max(screen.width - width - 8, 8));
-  const above = anchor.y - PICKER_H - 8;
-  const top = above >= topLimit ? above : anchor.y + anchor.height + 8;
+  const above = HOLD_BAR_H + HOLD_GAP;
+  const below = anchor.isOwn ? HOLD_GAP + HOLD_CARD_H : 0;
+  let top = anchor.y - above;
+  const maxBottom = screen.height - bottomLimit;
+  if (top + above + anchor.height + below > maxBottom) top = maxBottom - (above + anchor.height + below);
+  if (top < topLimit) top = topLimit;
+  const side = anchor.isOwn
+    ? { right: Math.max(screen.width - (anchor.x + anchor.width), 8), alignItems: 'flex-end' as const }
+    : { left: Math.min(Math.max(anchor.x, 8), Math.max(screen.width - HOLD_BAR_W - 8, 8)), alignItems: 'flex-start' as const };
 
   return (
-    <Modal visible transparent animationType="none" onRequestClose={onClose}>
-      <Pressable style={styles.pickerBackdrop} onPress={onClose} accessibilityLabel="Close message options">
-        <Animated.View
-          style={[
-            styles.pickerCard,
-            {
-              left,
-              top,
-              width,
-              // The picker IS the shadowed card, so Android can't fade it
-              // without its shadow showing through: it only pops there.
-              opacity: canFadeShadowed ? progress : 1,
-              transform: [{ scale: progress.interpolate({ inputRange: [0, 1], outputRange: [0.85, 1] }) }],
-            },
-          ]}
-        >
+    <Modal visible transparent statusBarTranslucent animationType="none" onRequestClose={onClose}>
+      <Pressable style={StyleSheet.absoluteFill} onPress={onClose} accessibilityLabel="Close message options">
+        <Animated.View style={[styles.scrim, { opacity: progress }]} />
+      </Pressable>
+      <Animated.View
+        pointerEvents="box-none"
+        style={[
+          styles.holdGroup,
+          side,
+          {
+            top,
+            // The bar and card are shadowed, so Android can't fade them
+            // without the shadow showing through: they only pop there.
+            opacity: canFadeShadowed ? progress : 1,
+            transform: [{ scale: progress.interpolate({ inputRange: [0, 1], outputRange: [0.92, 1] }) }],
+          },
+        ]}
+      >
+        <View style={styles.holdBar} accessibilityRole="toolbar" accessibilityLabel="React">
           {REACTION_PALETTE.map((emoji, i) => (
             <Animated.View key={emoji} style={{ transform: [{ scale: itemScales[i] }] }}>
               <Pressable
                 onPress={() => onPick(emoji)}
                 accessibilityRole="button"
                 accessibilityLabel={`React with ${emoji}`}
-                style={({ pressed }) => [styles.pickerItem, pressed && styles.pickerItemPressed]}
+                accessibilityState={{ selected: mine.has(emoji) }}
+                style={({ pressed }) => [styles.holdItem, (mine.has(emoji) || pressed) && styles.holdItemOn]}
               >
-                <Text style={styles.pickerEmoji}>{emoji}</Text>
+                <Text style={styles.holdEmoji}>{emoji}</Text>
               </Pressable>
             </Animated.View>
           ))}
-          {anchor.isOwn ? (
-            <Animated.View style={{ transform: [{ scale: itemScales[REACTION_PALETTE.length] }] }}>
-              <Pressable
-                onPress={onDeletePress}
-                accessibilityRole="button"
-                accessibilityLabel="Unsend this message"
-                style={({ pressed }) => [styles.pickerItem, pressed && styles.pickerItemPressed]}
-              >
-                <Icon name="trash" size={17} color={colors.redText} strokeWidth={1.9} />
-              </Pressable>
-            </Animated.View>
-          ) : null}
-        </Animated.View>
-      </Pressable>
+        </View>
+
+        {anchor.body !== null ? (
+          <View style={[styles.holdCopy, { width: anchor.width, transformOrigin: anchor.isOwn ? 'right center' : 'left center' }]}>
+            <TextBubble body={anchor.body} isOwn={anchor.isOwn} first={anchor.first} lifted />
+          </View>
+        ) : (
+          <View pointerEvents="none" style={{ width: anchor.width, height: anchor.height }} />
+        )}
+
+        {anchor.isOwn ? (
+          <View style={styles.holdCard}>
+            <Pressable
+              onPress={onDeletePress}
+              accessibilityRole="button"
+              accessibilityLabel="Unsend this message"
+              style={({ pressed }) => [styles.holdAction, pressed && styles.holdActionPressed]}
+            >
+              <Text style={styles.holdActionText}>Unsend</Text>
+              <Icon name="trash" size={18} color={colors.redText} strokeWidth={1.9} />
+            </Pressable>
+          </View>
+        ) : null}
+      </Animated.View>
     </Modal>
   );
 }
 
+/** A task shared into the chat: what it is, how big, and one tap to take it. */
 function TaskShareCard({
   task,
+  isOwn,
   membersById,
   onClaim,
   onOpen,
@@ -1322,6 +1528,7 @@ function TaskShareCard({
   onLongPress,
 }: {
   task: Task | null;
+  isOwn: boolean;
   membersById: Record<string, Member>;
   onClaim: (taskId: string) => Promise<{ error: string | null }>;
   onOpen: (taskId: string) => void;
@@ -1330,12 +1537,13 @@ function TaskShareCard({
 }) {
   const [claiming, setClaiming] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const shape = isOwn ? styles.taskCardOwn : styles.taskCardOther;
 
   if (!task) {
     return (
-      <View style={styles.taskCard}>
-        <Text style={[type.caption, styles.muted]}>This task was deleted.</Text>
-      </View>
+      <Pressable onLongPress={onLongPress} delayLongPress={300} style={[styles.bubbleOther, styles.taskCard, shape]}>
+        <Text style={[styles.taskMeta, styles.muted]}>This task was deleted.</Text>
+      </Pressable>
     );
   }
 
@@ -1354,10 +1562,6 @@ function TaskShareCard({
 
   const assignee = task.assigneeId ? membersById[task.assigneeId] : null;
   const priority = PRIORITY[task.priority];
-  // Anyone in the project can take an unclaimed task — claiming is
-  // first-come-first-served (see ProjectRepository's claimTask), so this is
-  // everyone, not a shortlist.
-  const claimers = Object.values(membersById);
 
   return (
     <Pressable
@@ -1366,65 +1570,49 @@ function TaskShareCard({
       delayLongPress={300}
       accessibilityRole="button"
       accessibilityLabel={`Open ${task.title}`}
-      style={({ pressed }) => [styles.taskCard, pressed && styles.taskCardPressed]}
+      style={({ pressed }) => [styles.bubbleOther, styles.taskCard, shape, pressed && styles.bubblePressed]}
     >
-      <View style={styles.taskCardHeader}>
-        <TaskStatusDot status={task.status} size={18} />
-        <Text style={[type.metadata, styles.taskCardEyebrow]} numberOfLines={1}>
-          {task.assigneeId === null ? 'UP FOR GRABS' : 'SHARED TASK'}
-        </Text>
-      </View>
-
-      <Text style={[type.taskTitle, styles.ink, styles.taskCardTitle]} numberOfLines={2}>
-        {task.title}
-      </Text>
-
-      <View style={styles.taskCardMeta}>
-        <View style={[styles.taskCardPriority, { backgroundColor: priority.bg }]}>
-          <Icon name="flag" size={11} color={priority.mark} fill={priority.mark} strokeWidth={1.8} />
-          <Text style={[type.tinyLabel, { color: priority.text }]}>{priority.label}</Text>
+      <View style={styles.taskTop}>
+        <View style={styles.taskCheck}>
+          <TaskStatusDot status={task.status} size={20} />
         </View>
-        {task.effortHours ? (
-          <View style={styles.taskCardMetaItem}>
-            <Icon name="clock" size={12} color={colors.muted} strokeWidth={1.8} />
-            <Text style={[type.tinyLabel, styles.muted]}>{Number(task.effortHours.toFixed(1))}h</Text>
+        <View style={styles.taskBody}>
+          <Text style={[styles.taskTitle, styles.ink]} numberOfLines={2}>
+            {task.title}
+          </Text>
+          <View style={styles.taskPills}>
+            <View style={[styles.pill, { backgroundColor: priority.bg }]}>
+              <Text style={[styles.pillText, { color: priority.text }]}>{priority.label}</Text>
+            </View>
+            {task.effortHours ? (
+              <View style={[styles.pill, styles.pillGrey]}>
+                <Text style={[styles.pillText, styles.muted]}>{Number(task.effortHours.toFixed(1))}h</Text>
+              </View>
+            ) : null}
+            {task.dueLabel ? (
+              <View style={[styles.pill, task.dueUrgent ? styles.pillCoral : styles.pillGrey]}>
+                <Text style={[styles.pillText, task.dueUrgent ? styles.dueUrgent : styles.muted]}>{task.dueLabel}</Text>
+              </View>
+            ) : null}
           </View>
-        ) : null}
-        {task.dueLabel ? (
-          <View style={styles.taskCardMetaItem}>
-            <Icon name="calendar" size={12} color={task.dueUrgent ? colors.redText : colors.muted} strokeWidth={1.8} />
-            <Text style={[type.tinyLabel, task.dueUrgent ? styles.dueUrgent : styles.muted]}>{task.dueLabel}</Text>
-          </View>
-        ) : null}
+        </View>
       </View>
 
       {task.assigneeId === null ? (
-        <View style={styles.taskCardFooter}>
-          {/* Who could take this, the way the reference card stacks faces
-              beside its action — real teammates, not decoration. */}
-          <View style={styles.taskCardFaces}>
-            {claimers.slice(0, 3).map((m, i) => (
-              <Avatar key={m.id} {...m} size={22} borderColor={colors.surface} style={i > 0 ? styles.faceOverlap : undefined} />
-            ))}
-            {claimers.length > 3 ? (
-              <Text style={[type.tinyLabel, styles.muted, styles.facesMore]}>+{claimers.length - 3}</Text>
-            ) : null}
-          </View>
-          <Pressable
-            onPress={handleClaim}
-            disabled={claiming}
-            style={({ pressed }) => [styles.taskCardClaim, (claiming || pressed) && styles.taskCardClaimDisabled]}
-            accessibilityRole="button"
-            accessibilityLabel={`Claim ${task.title}`}
-          >
-            <Text style={[type.button, styles.onInk]}>{claiming ? 'Claiming…' : 'Claim it'}</Text>
-          </Pressable>
-        </View>
+        <Pressable
+          onPress={handleClaim}
+          disabled={claiming}
+          style={({ pressed }) => [styles.claimButton, pressed && styles.pressedLift]}
+          accessibilityRole="button"
+          accessibilityLabel={`Claim ${task.title}`}
+        >
+          {claiming ? <ActivityIndicator size="small" color={colors.purple} /> : <Text style={styles.claimText}>Claim</Text>}
+        </Pressable>
       ) : (
-        <View style={styles.taskCardAssignee}>
-          {assignee ? <Avatar {...assignee} size={20} /> : null}
-          <Text style={[type.caption, styles.muted]} numberOfLines={1}>
-            {assignee ? `Claimed by ${assignee.name}` : 'Claimed'}
+        <View style={styles.taskAssignee}>
+          {assignee ? <Avatar {...assignee} size={22} /> : null}
+          <Text style={[styles.taskMeta, styles.muted]} numberOfLines={1}>
+            {assignee ? `Claimed by ${firstName(assignee.name)}` : 'Claimed'}
           </Text>
         </View>
       )}
@@ -1452,20 +1640,43 @@ function attachmentIcon(mimeType: string | null): IconName {
   return 'document';
 }
 
+/** A short, human name for the file's kind: "PDF", "Word", "Audio"… */
+function attachmentKind(mimeType: string | null, name: string | null): string {
+  const mime = mimeType ?? '';
+  if (mime === 'application/pdf') return 'PDF';
+  if (mime.includes('word')) return 'Word';
+  if (mime.includes('sheet') || mime.includes('excel')) return 'Excel';
+  if (mime.includes('presentation') || mime.includes('powerpoint')) return 'PowerPoint';
+  if (mime.startsWith('audio/')) return 'Audio';
+  if (mime.startsWith('video/')) return 'Video';
+  if (mime.startsWith('image/')) return 'Image';
+  const ext = name?.includes('.') ? name.split('.').pop() : null;
+  return ext ? ext.toUpperCase() : 'File';
+}
+
 /**
  * Images get their own path (ImageAttachmentCard below): a thumbnail in the
  * bubble and a real in-app viewer. Everything else — PDFs, docs, audio,
- * video — still opens through the OS via Linking, which is the right tool
- * for those; the "opens like a link, not a downloadable image" complaint
- * was specific to images, where handing a signed URL to the OS puts it in
- * a browser tab with no save affordance most Android browsers surface.
+ * video — opens through the OS via Linking, which is the right tool for
+ * those. Drawn as a bubble in the stack, with a tinted tile for its kind
+ * (red for PDFs).
  */
-function AttachmentCard({ message, onLongPress }: { message: Message; onLongPress: () => void }) {
+function AttachmentCard({
+  message,
+  isOwn,
+  first,
+  onLongPress,
+}: {
+  message: Message;
+  isOwn: boolean;
+  first: boolean;
+  onLongPress: () => void;
+}) {
   const [opening, setOpening] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   if (message.attachmentType?.startsWith('image/')) {
-    return <ImageAttachmentCard message={message} onLongPress={onLongPress} />;
+    return <ImageAttachmentCard message={message} corners={bubbleCorners(isOwn, first)} onLongPress={onLongPress} />;
   }
 
   async function handleOpen() {
@@ -1481,6 +1692,11 @@ function AttachmentCard({ message, onLongPress }: { message: Message; onLongPres
     setOpening(false);
   }
 
+  const isPdf = message.attachmentType === 'application/pdf';
+  const tint = isPdf ? { bg: colors.redSoft, fg: colors.redText } : { bg: colors.purpleSoft, fg: colors.purple };
+  const kind = attachmentKind(message.attachmentType, message.attachmentName);
+  const meta = message.attachmentSize !== null ? `${kind} · ${formatFileSize(message.attachmentSize)}` : kind;
+
   return (
     <Pressable
       onPress={handleOpen}
@@ -1489,22 +1705,20 @@ function AttachmentCard({ message, onLongPress }: { message: Message; onLongPres
       disabled={opening}
       accessibilityRole="button"
       accessibilityLabel={`Open ${message.attachmentName}`}
-      style={({ pressed }) => [styles.attachmentCard, pressed && styles.taskCardPressed]}
+      style={({ pressed }) => [styles.bubbleOther, styles.fileCard, bubbleCorners(isOwn, first), pressed && styles.bubblePressed]}
     >
-      <View style={styles.attachmentIconTile}>
+      <View style={[styles.fileTile, { backgroundColor: tint.bg }]}>
         {opening ? (
-          <ActivityIndicator size="small" color={colors.purple} />
+          <ActivityIndicator size="small" color={tint.fg} />
         ) : (
-          <Icon name={attachmentIcon(message.attachmentType)} size={18} color={colors.purple} strokeWidth={1.8} />
+          <Icon name={attachmentIcon(message.attachmentType)} size={20} color={tint.fg} strokeWidth={1.8} />
         )}
       </View>
-      <View style={styles.attachmentInfo}>
-        <Text style={[type.body, styles.ink]} numberOfLines={2}>
+      <View style={styles.fileInfo}>
+        <Text style={[styles.fileName, styles.ink]} numberOfLines={2}>
           {message.attachmentName}
         </Text>
-        {message.attachmentSize !== null ? (
-          <Text style={[type.caption, styles.muted]}>{formatFileSize(message.attachmentSize)}</Text>
-        ) : null}
+        <Text style={[styles.fileMeta, styles.muted]}>{meta}</Text>
         {error ? (
           <Text style={[type.caption, styles.errorText]} numberOfLines={2}>
             {error}
@@ -1521,7 +1735,15 @@ function AttachmentCard({ message, onLongPress }: { message: Message; onLongPres
  * asking for. The signed URL is resolved once, on mount, since the
  * thumbnail needs it to render at all rather than only on tap.
  */
-function ImageAttachmentCard({ message, onLongPress }: { message: Message; onLongPress: () => void }) {
+function ImageAttachmentCard({
+  message,
+  corners,
+  onLongPress,
+}: {
+  message: Message;
+  corners: ReturnType<typeof bubbleCorners>;
+  onLongPress: () => void;
+}) {
   const [url, setUrl] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [viewerOpen, setViewerOpen] = useState(false);
@@ -1550,7 +1772,7 @@ function ImageAttachmentCard({ message, onLongPress }: { message: Message; onLon
         disabled={!url}
         accessibilityRole="button"
         accessibilityLabel={`Open ${message.attachmentName ?? 'image'}`}
-        style={styles.imageThumbWrap}
+        style={({ pressed }) => [styles.imageThumbWrap, corners, pressed && styles.bubblePressed]}
       >
         {url ? (
           <Image source={{ uri: url }} style={styles.imageThumb} resizeMode="cover" />
@@ -1694,50 +1916,6 @@ const styles = StyleSheet.create({
     paddingHorizontal: layout.screenPadding,
     paddingBottom: 8,
   },
-  titleCapsule: {
-    flex: 1,
-    height: 48,
-  },
-  titleInner: {
-    flex: 1,
-    alignItems: 'center',
-    justifyContent: 'center',
-    paddingHorizontal: 16,
-    gap: 1,
-  },
-  typingText: {
-    color: colors.mintText,
-  },
-  headerSubRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 5,
-  },
-  liveDot: {
-    width: 6,
-    height: 6,
-    borderRadius: 3,
-  },
-  liveDotOn: {
-    backgroundColor: colors.green,
-  },
-  liveDotOff: {
-    backgroundColor: colors.faint,
-  },
-  typingDots: {
-    flexDirection: 'row',
-    gap: 3,
-    marginLeft: 2,
-  },
-  typingDot: {
-    width: 4,
-    height: 4,
-    borderRadius: 2,
-    backgroundColor: colors.muted,
-  },
-  pressed: {
-    opacity: 0.6,
-  },
   muted: {
     color: colors.muted,
   },
@@ -1769,11 +1947,6 @@ const styles = StyleSheet.create({
   retryText: {
     color: colors.purple,
   },
-  // Medium, not semibold: a bold name in a small capsule looked heavy on phones.
-  headerTitle: {
-    fontSize: 16,
-    lineHeight: 22,
-  },
   topFade: {
     position: 'absolute',
     top: 0,
@@ -1786,23 +1959,6 @@ const styles = StyleSheet.create({
     left: 0,
     right: 0,
   },
-  dayRow: {
-    alignItems: 'center',
-    paddingTop: 14,
-    paddingBottom: 6,
-  },
-  dayChip: {
-    paddingHorizontal: 12,
-    paddingVertical: 4,
-    borderRadius: 12,
-    backgroundColor: 'rgba(21,21,26,0.05)',
-  },
-  dayText: {
-    fontFamily: type.caption.fontFamily,
-    fontSize: 12,
-    lineHeight: 16,
-    color: colors.muted,
-  },
   emptyTile: {
     width: layout.iconTile,
     height: layout.iconTile,
@@ -1811,145 +1967,6 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
     marginBottom: 4,
-  },
-  list: {
-    paddingHorizontal: layout.screenPadding,
-    paddingBottom: 12,
-    gap: 10,
-  },
-  row: {
-    // Both sides now sit at exactly layout.screenPadding from their own
-    // edge — the list's padding is the only inset either one gets.
-    alignSelf: 'flex-start',
-    // 78% rather than 86%: a bubble that nearly spans the screen stops
-    // reading as a side, which is the thing that tells you who spoke.
-    maxWidth: '78%',
-  },
-  rowOwn: {
-    alignSelf: 'flex-end',
-  },
-  authorRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 6,
-  },
-  authorRowOwn: {
-    justifyContent: 'flex-end',
-  },
-  bubbleColumn: {
-    gap: 3,
-    flexShrink: 1,
-  },
-  bubbleColumnOwn: {
-    alignItems: 'flex-end',
-  },
-  author: {
-    color: colors.muted,
-    flexShrink: 1,
-  },
-  bubble: {
-    borderRadius: 18,
-    paddingHorizontal: 14,
-    paddingVertical: 10,
-  },
-  bubblePressed: {
-    opacity: 0.85,
-  },
-  bubbleOther: {
-    backgroundColor: colors.surface,
-    borderWidth: StyleSheet.hairlineWidth,
-    borderColor: colors.border,
-    borderTopLeftRadius: 4,
-  },
-  bubbleOwn: {
-    backgroundColor: colors.purple,
-    borderTopRightRadius: 4,
-  },
-  bubbleTextOther: {
-    color: colors.ink,
-  },
-  bubbleTextOwn: {
-    color: colors.onInk,
-  },
-  taskCard: {
-    width: 240,
-    borderRadius: 18,
-    backgroundColor: colors.surface,
-    borderWidth: 1.5,
-    borderColor: colors.purpleSoft,
-    padding: 14,
-    gap: 10,
-  },
-  taskCardPressed: {
-    opacity: 0.85,
-  },
-  taskCardHeader: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 8,
-  },
-  taskCardEyebrow: {
-    flex: 1,
-    color: colors.muted,
-    letterSpacing: 0.5,
-  },
-  taskCardTitle: {
-    marginTop: -2,
-  },
-  taskCardFooter: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    gap: 10,
-    marginTop: 2,
-  },
-  taskCardFaces: {
-    flexDirection: 'row',
-    alignItems: 'center',
-  },
-  faceOverlap: {
-    marginLeft: -8,
-  },
-  facesMore: {
-    marginLeft: 6,
-  },
-  taskCardMeta: {
-    flexDirection: 'row',
-    flexWrap: 'wrap',
-    alignItems: 'center',
-    gap: 8,
-  },
-  taskCardPriority: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 4,
-    height: 20,
-    paddingHorizontal: 8,
-    borderRadius: 10,
-  },
-  taskCardMetaItem: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 4,
-  },
-  dueUrgent: {
-    color: colors.redText,
-  },
-  taskCardClaim: {
-    height: 36,
-    paddingHorizontal: 18,
-    borderRadius: 18,
-    backgroundColor: colors.purple,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  taskCardClaimDisabled: {
-    opacity: 0.6,
-  },
-  taskCardAssignee: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 8,
   },
   onInk: {
     color: colors.onInk,
@@ -1967,30 +1984,6 @@ const styles = StyleSheet.create({
     backgroundColor: colors.redSoft,
     borderRadius: 12,
     padding: 10,
-  },
-  attachmentCard: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 10,
-    width: 220,
-    borderRadius: 16,
-    backgroundColor: colors.surface,
-    borderWidth: StyleSheet.hairlineWidth,
-    borderColor: colors.border,
-    padding: 12,
-  },
-  attachmentIconTile: {
-    width: 36,
-    height: 36,
-    borderRadius: 12,
-    backgroundColor: colors.purpleSoft,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  attachmentInfo: {
-    flex: 1,
-    minWidth: 0,
-    gap: 1,
   },
   // 220 wide to match attachmentCard, 4:3-ish so a portrait or landscape
   // photo both crop to something reasonable rather than a tall sliver.
@@ -2059,79 +2052,6 @@ const styles = StyleSheet.create({
     bottom: 0,
     paddingTop: 8,
   },
-  attachRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 8,
-    paddingHorizontal: layout.screenPadding,
-    paddingBottom: 10,
-  },
-  attachChip: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 5,
-    height: 36,
-    paddingHorizontal: 13,
-    borderRadius: 18,
-    backgroundColor: colors.surface,
-    borderWidth: StyleSheet.hairlineWidth,
-    borderColor: colors.border,
-  },
-  attachChipPressed: {
-    backgroundColor: colors.surfaceMuted,
-    opacity: 0.8,
-  },
-  composer: {
-    flexDirection: 'row',
-    alignItems: 'flex-end',
-    gap: 10,
-    paddingHorizontal: layout.screenPadding,
-  },
-  attachButton: {
-    marginBottom: 0,
-  },
-  inputCapsule: {
-    flex: 1,
-  },
-  inputRow: {
-    flexDirection: 'row',
-    alignItems: 'flex-end',
-    gap: 6,
-    paddingLeft: 6,
-    paddingRight: 5,
-    paddingVertical: 4,
-  },
-  // Height is pinned to the send button's so the two bottom-align cleanly;
-  // it only grows past that once the text actually wraps. No box of its own:
-  // the glass capsule around it is the field.
-  input: {
-    flex: 1,
-    minHeight: SEND_SIZE - 2,
-    maxHeight: 120,
-    paddingHorizontal: 14,
-    paddingTop: 12,
-    paddingBottom: 12,
-    color: colors.ink,
-    fontFamily: type.body.fontFamily,
-    fontSize: type.body.fontSize,
-  },
-  sendButton: {
-    width: SEND_SIZE - 2,
-    height: SEND_SIZE - 2,
-    borderRadius: (SEND_SIZE - 2) / 2,
-    overflow: 'hidden',
-  },
-  sendButtonPressed: {
-    transform: [{ scale: 0.92 }],
-  },
-  sendFill: {
-    flex: 1,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  sendFillDisabled: {
-    backgroundColor: colors.surfaceMuted,
-  },
   claimedBackdrop: {
     flex: 1,
     backgroundColor: 'rgba(17,15,26,0.45)',
@@ -2182,67 +2102,530 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
   },
+  pressedLift: {
+    transform: [{ scale: 0.97 }],
+  },
+  faint: {
+    color: colors.faint,
+  },
+  // Header capsule: faces, then the title over a presence line.
+  titleCapsule: {
+    flex: 1,
+    height: COMPOSER_H,
+  },
+  titleInner: {
+    flex: 1,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+    paddingLeft: 7,
+    paddingRight: 16,
+  },
+  titleInnerBare: {
+    paddingLeft: 16,
+  },
+  titleText: {
+    flex: 1,
+    minWidth: 0,
+  },
+  headerFaces: {
+    flexDirection: 'row',
+  },
+  headerFaceOverlap: {
+    marginLeft: -10,
+  },
+  headerOnlineDot: {
+    position: 'absolute',
+    right: -2,
+    bottom: -2,
+    width: 13,
+    height: 13,
+    borderRadius: 6.5,
+    backgroundColor: colors.green,
+    borderWidth: 2,
+    borderColor: colors.surface,
+  },
+  // Medium, not semibold: a bold name in a small capsule looked heavy on phones.
+  headerTitle: {
+    fontFamily: type.metadata.fontFamily,
+    fontSize: 16,
+    lineHeight: 21,
+    letterSpacing: -0.1,
+  },
+  headerSubRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 5,
+  },
+  headerSub: {
+    fontFamily: type.metadata.fontFamily,
+    fontSize: 12,
+    lineHeight: 16,
+    flexShrink: 1,
+  },
+  liveText: {
+    color: colors.mintText,
+  },
+  liveDot: {
+    width: 6,
+    height: 6,
+    borderRadius: 3,
+    backgroundColor: colors.green,
+  },
+  // Messages
+  list: {
+    paddingHorizontal: layout.screenPadding,
+  },
+  dayRow: {
+    alignItems: 'center',
+    marginTop: 22,
+  },
+  dayRowFirst: {
+    marginTop: 0,
+  },
+  dayChip: {
+    height: 26,
+    paddingHorizontal: 12,
+    borderRadius: 13,
+    backgroundColor: GREY_PILL,
+    justifyContent: 'center',
+  },
+  dayText: {
+    fontFamily: type.metadata.fontFamily,
+    fontSize: 12,
+    lineHeight: 16,
+    color: colors.muted,
+  },
+  who: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    marginLeft: AVATAR + 10,
+    marginBottom: 4,
+  },
+  whoName: {
+    fontFamily: type.metadata.fontFamily,
+    fontSize: 12,
+    lineHeight: 16,
+    flexShrink: 1,
+  },
+  whoTime: {
+    fontFamily: type.caption.fontFamily,
+    fontSize: 12,
+    lineHeight: 16,
+  },
+  ownTime: {
+    alignSelf: 'flex-end',
+    fontFamily: type.caption.fontFamily,
+    fontSize: 11,
+    lineHeight: 14,
+    marginTop: 3,
+  },
+  line: {
+    flexDirection: 'row',
+    alignItems: 'flex-end',
+    gap: 10,
+  },
+  lineOwn: {
+    justifyContent: 'flex-end',
+  },
+  avatarSpacer: {
+    width: AVATAR,
+  },
+  bubbleWrap: {
+    flexShrink: 1,
+  },
+  // Room under the bubble for the reaction pills that sit on its edge.
+  bubbleWrapReacted: {
+    paddingBottom: 14,
+  },
+  bubble: {
+    maxWidth: 262,
+    paddingHorizontal: 14,
+    paddingVertical: 9,
+  },
+  bubblePressed: {
+    transform: [{ scale: 0.98 }],
+  },
+  // No elevation on bubbles: rows fade in, and Android draws a grey box
+  // under a fading elevated view. iOS and web get the soft shadow.
+  bubbleOther: {
+    backgroundColor: colors.surface,
+    borderWidth: 0.5,
+    borderColor: 'rgba(17,17,17,0.08)',
+    shadowColor: '#1C1633',
+    shadowOpacity: 0.04,
+    shadowRadius: 2,
+    shadowOffset: { width: 0, height: 1 },
+  },
+  bubbleOtherLifted: {
+    shadowOpacity: 0.2,
+    shadowRadius: 18,
+    shadowOffset: { width: 0, height: 14 },
+    elevation: 10,
+  },
+  bubbleOwn: {
+    backgroundColor: '#6F51EA',
+    shadowColor: '#5836D6',
+    shadowOpacity: 0.16,
+    shadowRadius: 12,
+    shadowOffset: { width: 0, height: 4 },
+  },
+  bubbleOwnLifted: {
+    shadowOpacity: 0.32,
+    shadowRadius: 16,
+    shadowOffset: { width: 0, height: 14 },
+    elevation: 10,
+  },
+  bubbleText: {
+    fontFamily: type.caption.fontFamily,
+    fontSize: 15,
+    lineHeight: 21,
+  },
+  typingLine: {
+    marginTop: 14,
+  },
+  typingBubble: {
+    paddingHorizontal: 16,
+    paddingVertical: 14,
+  },
+  typingDots: {
+    flexDirection: 'row',
+    gap: 5,
+  },
+  typingDot: {
+    width: 7,
+    height: 7,
+    borderRadius: 3.5,
+    backgroundColor: '#A9A4B5',
+  },
+  // Reactions
   reactionRow: {
+    position: 'absolute',
+    bottom: 0,
+    flexDirection: 'row',
+    gap: 4,
+  },
+  reactionRowOther: {
+    left: 12,
+  },
+  reactionRowOwn: {
+    right: 12,
+  },
+  reactionPill: {
+    height: 24,
+    paddingHorizontal: 8,
+    borderRadius: 12,
+    justifyContent: 'center',
+    backgroundColor: colors.surface,
+    borderWidth: 0.5,
+    borderColor: 'rgba(17,17,17,0.1)',
+    shadowColor: '#1C1633',
+    shadowOpacity: 0.08,
+    shadowRadius: 6,
+    shadowOffset: { width: 0, height: 2 },
+  },
+  reactionPillMine: {
+    backgroundColor: colors.purpleSoft,
+    borderWidth: 1,
+    borderColor: 'rgba(108,76,232,0.22)',
+  },
+  reactionText: {
+    fontFamily: type.button.fontFamily,
+    fontSize: 12,
+    lineHeight: 16,
+  },
+  reactionTextMine: {
+    color: colors.purple,
+  },
+  // Task card
+  taskCard: {
+    width: 270,
+    padding: 14,
+    gap: 12,
+    borderRadius: 20,
+  },
+  taskCardOther: {
+    borderTopLeftRadius: 6,
+  },
+  taskCardOwn: {
+    borderTopRightRadius: 6,
+  },
+  taskTop: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    gap: 10,
+  },
+  taskCheck: {
+    marginTop: 1,
+  },
+  taskBody: {
+    flex: 1,
+    minWidth: 0,
+    gap: 6,
+  },
+  taskTitle: {
+    fontFamily: type.button.fontFamily,
+    fontSize: 15,
+    lineHeight: 21,
+  },
+  taskPills: {
     flexDirection: 'row',
     flexWrap: 'wrap',
     gap: 6,
-    marginTop: 2,
   },
-  reactionPill: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 4,
-    height: 26,
-    paddingHorizontal: 8,
-    borderRadius: 13,
-    backgroundColor: colors.surface,
-    borderWidth: StyleSheet.hairlineWidth,
-    borderColor: colors.border,
+  pill: {
+    height: 24,
+    paddingHorizontal: 10,
+    borderRadius: 12,
+    justifyContent: 'center',
   },
-  reactionPillActive: {
+  pillGrey: {
+    backgroundColor: GREY_PILL,
+  },
+  pillCoral: {
+    backgroundColor: colors.redSoft,
+  },
+  pillText: {
+    fontFamily: type.button.fontFamily,
+    fontSize: 12,
+    lineHeight: 16,
+  },
+  dueUrgent: {
+    color: colors.redText,
+  },
+  claimButton: {
+    height: 44,
+    borderRadius: 14,
     backgroundColor: colors.purpleSoft,
-    borderColor: colors.purple,
-  },
-  reactionEmoji: {
-    fontSize: 13,
-  },
-  reactionCountActive: {
-    color: colors.purple,
-  },
-  // Barely dimmed: the point of anchoring the picker is that you can still
-  // see the message you're reacting to.
-  pickerBackdrop: {
-    flex: 1,
-    backgroundColor: 'rgba(17,15,26,0.12)',
-  },
-  pickerCard: {
-    position: 'absolute',
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: PICKER_GAP,
-    // width is set inline per-anchor (pickerWidth) — it depends on whether
-    // the delete item is shown, so there's no single static value here.
-    height: PICKER_H,
-    padding: PICKER_PAD,
-    backgroundColor: colors.surface,
-    borderRadius: PICKER_H / 2,
-    shadowColor: '#1C1633',
-    shadowOpacity: 0.18,
-    shadowRadius: 20,
-    shadowOffset: { width: 0, height: 8 },
-    elevation: 8,
-  },
-  pickerItem: {
-    width: PICKER_ITEM,
-    height: PICKER_ITEM,
-    borderRadius: PICKER_ITEM / 2,
     alignItems: 'center',
     justifyContent: 'center',
   },
-  pickerItemPressed: {
+  claimText: {
+    fontFamily: type.button.fontFamily,
+    fontSize: 14,
+    lineHeight: 20,
+    color: colors.purple,
+  },
+  taskAssignee: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+  },
+  taskMeta: {
+    fontFamily: type.caption.fontFamily,
+    fontSize: 13,
+    lineHeight: 18,
+    flexShrink: 1,
+  },
+  // File card
+  fileCard: {
+    maxWidth: 262,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 12,
+    paddingTop: 10,
+    paddingBottom: 10,
+    paddingLeft: 10,
+    paddingRight: 14,
+  },
+  fileTile: {
+    width: 42,
+    height: 42,
+    borderRadius: 13,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  fileInfo: {
+    flexShrink: 1,
+    minWidth: 0,
+    gap: 1,
+  },
+  fileName: {
+    fontFamily: type.metadata.fontFamily,
+    fontSize: 14,
+    lineHeight: 20,
+  },
+  fileMeta: {
+    fontFamily: type.caption.fontFamily,
+    fontSize: 12,
+    lineHeight: 16,
+  },
+  // Composer
+  composer: {
+    flexDirection: 'row',
+    alignItems: 'flex-end',
+    gap: 10,
+    paddingHorizontal: layout.screenPadding,
+  },
+  attachClose: {
+    width: COMPOSER_H,
+    height: COMPOSER_H,
+    borderRadius: COMPOSER_H / 2,
+    backgroundColor: colors.ink,
+    alignItems: 'center',
+    justifyContent: 'center',
+    shadowColor: colors.ink,
+    shadowOpacity: 0.25,
+    shadowRadius: 10,
+    shadowOffset: { width: 0, height: 8 },
+    elevation: 6,
+  },
+  inputCapsule: {
+    flex: 1,
+    minHeight: COMPOSER_H,
+  },
+  inputRow: {
+    flexDirection: 'row',
+    alignItems: 'flex-end',
+    gap: 8,
+    paddingTop: 6,
+    paddingBottom: 6,
+    paddingLeft: 18,
+    paddingRight: 6,
+  },
+  // No box of its own: the glass capsule around it is the field.
+  input: {
+    flex: 1,
+    minHeight: 40,
+    maxHeight: 120,
+    paddingHorizontal: 0,
+    paddingTop: 9,
+    paddingBottom: 10,
+    color: colors.ink,
+    fontFamily: type.metadata.fontFamily,
+    fontSize: 15,
+    lineHeight: 21,
+  },
+  sendButton: {
+    width: 40,
+    height: 40,
+    borderRadius: 20,
+    overflow: 'hidden',
+  },
+  sendButtonOn: {
+    shadowColor: '#5836D6',
+    shadowOpacity: 0.3,
+    shadowRadius: 12,
+    shadowOffset: { width: 0, height: 4 },
+  },
+  sendButtonPressed: {
+    transform: [{ scale: 0.92 }],
+  },
+  sendFill: {
+    flex: 1,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  sendFillOff: {
+    backgroundColor: colors.purpleSoft,
+  },
+  attachMenu: {
+    position: 'absolute',
+    left: layout.screenPadding,
+    width: 300,
+    paddingVertical: 14,
+    paddingHorizontal: 10,
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    backgroundColor: colors.surface,
+    borderRadius: 24,
+    borderWidth: 0.5,
+    borderColor: 'rgba(17,17,17,0.06)',
+    shadowColor: '#1C1633',
+    shadowOpacity: 0.16,
+    shadowRadius: 20,
+    shadowOffset: { width: 0, height: 16 },
+    elevation: 12,
+  },
+  attachItem: {
+    width: 64,
+    alignItems: 'center',
+    gap: 6,
+  },
+  attachTile: {
+    width: 48,
+    height: 48,
+    borderRadius: 16,
+    backgroundColor: colors.purpleSoft,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  attachLabel: {
+    fontFamily: type.metadata.fontFamily,
+    fontSize: 12,
+    lineHeight: 16,
+  },
+  // Hold menu
+  scrim: {
+    ...StyleSheet.absoluteFill,
+    backgroundColor: 'rgba(21,21,26,0.28)',
+  },
+  holdGroup: {
+    position: 'absolute',
+    gap: HOLD_GAP,
+  },
+  holdBar: {
+    height: HOLD_BAR_H,
+    paddingHorizontal: 6,
+    borderRadius: HOLD_BAR_H / 2,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 2,
+    backgroundColor: colors.surface,
+    borderWidth: 0.5,
+    borderColor: 'rgba(17,17,17,0.06)',
+    shadowColor: '#1C1633',
+    shadowOpacity: 0.2,
+    shadowRadius: 18,
+    shadowOffset: { width: 0, height: 14 },
+    elevation: 10,
+  },
+  holdItem: {
+    width: HOLD_ITEM,
+    height: HOLD_ITEM,
+    borderRadius: HOLD_ITEM / 2,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  holdItemOn: {
+    backgroundColor: colors.purpleSoft,
+  },
+  holdEmoji: {
+    fontSize: 24,
+    lineHeight: 30,
+  },
+  holdCopy: {
+    alignItems: 'stretch',
+    transform: [{ scale: 1.03 }],
+  },
+  holdCard: {
+    width: 200,
+    borderRadius: 18,
+    backgroundColor: colors.surface,
+    borderWidth: 0.5,
+    borderColor: 'rgba(17,17,17,0.06)',
+    shadowColor: '#1C1633',
+    shadowOpacity: 0.2,
+    shadowRadius: 18,
+    shadowOffset: { width: 0, height: 14 },
+    elevation: 10,
+  },
+  holdAction: {
+    height: HOLD_CARD_H,
+    borderRadius: 18,
+    paddingHorizontal: 16,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+  },
+  holdActionPressed: {
     backgroundColor: colors.surfaceMuted,
   },
-  pickerEmoji: {
-    fontSize: 24,
+  holdActionText: {
+    fontFamily: type.metadata.fontFamily,
+    fontSize: 15,
+    lineHeight: 20,
+    color: colors.redText,
   },
 });
