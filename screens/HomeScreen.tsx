@@ -13,6 +13,8 @@ import { AttentionRow } from '../components/home/AttentionRow';
 import { MiniTile, OnlineFaces, ProjectTile } from '../components/home/BentoTiles';
 import { TaskRow } from '../components/home/TaskRow';
 import { WeekCard } from '../components/home/WeekCard';
+import { DueSoon } from '../components/home/DueSoon';
+import { ReviewCard } from '../components/home/ReviewCard';
 import { weekDates } from '../components/home/WeekStrip';
 import { Priority, Task } from '../data/tasks';
 import { RequirementState } from '../state/projectState';
@@ -21,6 +23,9 @@ import { useChatUnread } from '../state/chatUnread';
 import { loadLastSeen, markActivitySeen } from '../state/activity';
 import { useNavigation } from '../state/NavigationProvider';
 import { useProject } from '../state/ProjectRepository';
+import { useDeadlines } from '../state/deadlines';
+import { fetchQuizzes } from '../state/studyQuiz';
+import { buildDueSoon, DueItem, weekDots } from '../state/today';
 import { colors, layout, radius, type } from '../theme';
 import { checkForUpdate, UpdateCheckResult } from '../utils/checkForUpdate';
 import { formatLongDate } from '../utils/dates';
@@ -42,7 +47,9 @@ export function HomeScreen({ activeTab, onSelectTab }: Props) {
   const { project, tasks, projectState, members, membersById, schedule, setTaskStatus, onlineUserIds } = useProject();
   const { session, profile } = useAuth();
   const { hasUnread, summaries } = useChatUnread();
-  const { goToChat, openSettings } = useNavigation();
+  const { goToChat, openSettings, openAddDeadline, setActiveTab } = useNavigation();
+  const { deadlines, setDone } = useDeadlines();
+  const [quizCount, setQuizCount] = useState(0);
   const currentUserId = session?.user.id;
   const [showAllAttention, setShowAllAttention] = useState(false);
   const [activityOpen, setActivityOpen] = useState(false);
@@ -87,6 +94,19 @@ export function HomeScreen({ activeTab, onSelectTab }: Props) {
     }
   }
 
+  useEffect(() => {
+    if (!currentUserId) return;
+    let cancelled = false;
+    fetchQuizzes(currentUserId)
+      .then((rows) => {
+        if (!cancelled) setQuizCount(rows.length);
+      })
+      .catch(() => {});
+    return () => {
+      cancelled = true;
+    };
+  }, [currentUserId]);
+
   async function handleCheckForUpdate() {
     if (checkingUpdate) return;
     setCheckingUpdate(true);
@@ -113,6 +133,29 @@ export function HomeScreen({ activeTab, onSelectTab }: Props) {
         }).length
     );
   }, [myOpenTasks, schedule, today]);
+
+  // Board PToday: deadlines + your tasks with a day, one list.
+  const dueItems = useMemo(
+    () =>
+      buildDueSoon({
+        deadlines,
+        myOpenTasks,
+        taskDay: (t) => schedule.byTaskId[t.id]?.latestFinish ?? null,
+        projectName: project.name,
+        today,
+      }),
+    [deadlines, myOpenTasks, schedule, project.name, today]
+  );
+  const dueInfo = {
+    byTomorrow: dueItems.filter((i) => i.days <= 1).length,
+    late: dueItems.filter((i) => i.days < 0).length,
+    dots: weekDots(weekDates(today), dueItems, today),
+  };
+
+  function completeDue(item: DueItem) {
+    if (item.source === 'deadline') void setDone(item.id, true);
+    else setTaskStatus(item.id, 'completed');
+  }
 
   const weekStart = weekDates(today)[0];
   const doneThisWeek = tasks.filter(
@@ -203,6 +246,7 @@ export function HomeScreen({ activeTab, onSelectTab }: Props) {
             doneThisWeek={doneThisWeek}
             urgentCount={urgentCount}
             hours={openHours}
+            due={dueInfo}
           />
         </View>
         </FadeIn>
@@ -250,34 +294,13 @@ export function HomeScreen({ activeTab, onSelectTab }: Props) {
           </View>
         </FadeIn>
 
-        <FadeIn delay={180}>
-        <View style={styles.section}>
-          <SectionHeader title="Up next" actionLabel="See all" onAction={goToProjects} />
-          <Card>
-            {nextTasks.length === 0 ? (
-              <View style={styles.emptyRow}>
-                <View style={styles.emptyTile}>
-                  <Icon name="check" size={18} color={colors.mintText} strokeWidth={2.4} />
-                </View>
-                <View style={styles.emptyText}>
-                  <Text style={[type.taskTitle, styles.ink]}>Nothing on your plate</Text>
-                  <Text style={[type.caption, styles.muted]}>New tasks assigned to you will show up here</Text>
-                </View>
-              </View>
-            ) : (
-              nextTasks.map((task, i) => (
-                <View key={task.id}>
-                  {i > 0 ? <CardDivider inset={TASK_DIVIDER_INSET} /> : null}
-                  <TaskRow
-                    task={task}
-                    context={taskContext(task)}
-                    onComplete={() => setTaskStatus(task.id, 'completed')}
-                  />
-                </View>
-              ))
-            )}
-          </Card>
-        </View>
+        {/* Right under the three cards (his call, 13 Nov): the daily review. */}
+        <FadeIn delay={140}>
+          <ReviewCard quizCount={quizCount} onStart={() => setActiveTab('study')} />
+        </FadeIn>
+
+        <FadeIn delay={200}>
+          <DueSoon items={dueItems} today={today} onComplete={completeDue} onAdd={openAddDeadline} />
         </FadeIn>
 
         {projectState.health === 'ready' ? (

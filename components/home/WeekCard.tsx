@@ -1,3 +1,4 @@
+import { ReactNode } from 'react';
 import { StyleSheet, Text, View } from 'react-native';
 import { LinearGradient } from 'expo-linear-gradient';
 import { WeekStrip, weekDates } from './WeekStrip';
@@ -15,6 +16,11 @@ type Props = {
   urgentCount: number;
   /** Summed effort estimate of your open tasks, in hours. 0 when none are estimated. */
   hours: number;
+  /**
+   * Deadlines + tasks with a day (board PToday). When something is due by
+   * tomorrow, the card leads with that instead of the week's mood.
+   */
+  due?: { byTomorrow: number; late: number; dots: (string | null)[] };
 };
 
 const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
@@ -32,8 +38,20 @@ const MAX_SEGMENTS = 12;
  * purple — the only saturated marks in here are the meter's done steps and
  * today's circle, both small.
  */
-export function WeekCard({ today, counts, openCount, doneThisWeek, urgentCount, hours }: Props) {
-  const { headline, detail } = describeWeek(openCount, doneThisWeek, urgentCount, hours);
+export function WeekCard({ today, counts, openCount, doneThisWeek, urgentCount, hours, due }: Props) {
+  const week = describeWeek(openCount, doneThisWeek, urgentCount, hours);
+  const dueMode = due !== undefined && due.byTomorrow > 0;
+  const headline = dueMode ? `${due!.byTomorrow} due by tomorrow` : week.headline;
+  const roundedHours = Math.round(hours);
+  const detail: ReactNode = dueMode ? (
+    <>
+      {due!.late > 0 ? <Text style={styles.late}>{due!.late} late</Text> : null}
+      {due!.late > 0 && roundedHours > 0 ? ' · ' : ''}
+      {roundedHours > 0 ? `${roundedHours} h of group work` : due!.late > 0 ? '' : 'Tick them off as you go'}
+    </>
+  ) : (
+    week.detail
+  );
   const total = openCount + doneThisWeek;
   const segments = Math.min(total, MAX_SEGMENTS);
   const filled = total <= MAX_SEGMENTS ? doneThisWeek : Math.round((doneThisWeek / total) * MAX_SEGMENTS);
@@ -60,7 +78,7 @@ export function WeekCard({ today, counts, openCount, doneThisWeek, urgentCount, 
             <Text style={[type.subtitle, styles.muted]}>{detail}</Text>
           </View>
 
-          {segments > 0 ? (
+          {segments > 0 && !dueMode ? (
             <View
               style={styles.meterRow}
               accessible
@@ -80,7 +98,7 @@ export function WeekCard({ today, counts, openCount, doneThisWeek, urgentCount, 
           ) : null}
 
           <View style={styles.divider} />
-          <WeekStrip today={today} counts={counts} showHeader={false} />
+          <WeekStrip today={today} counts={counts} showHeader={false} dots={due?.dots} />
         </View>
       </View>
 
@@ -138,6 +156,9 @@ const styles = StyleSheet.create({
   },
   text: {
     gap: 6,
+  },
+  late: {
+    color: colors.redText,
   },
   heroSize: {
     fontSize: 36,

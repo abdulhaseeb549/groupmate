@@ -7,6 +7,8 @@ type Props = {
   counts: number[];
   /** Off when the strip sits inside a card that already says what week it is. */
   showHeader?: boolean;
+  /** Per-day dot colour (board PToday: coral by today, amber tomorrow, grey later). Overrides the count dots. */
+  dots?: (string | null)[];
 };
 
 const DAY_LETTERS = ['M', 'T', 'W', 'T', 'F', 'S', 'S'];
@@ -29,7 +31,7 @@ export function weekDates(today: Date): Date[] {
  * boxes in a row read as seven objects competing with the real cards above
  * and below; the strip is one object, so only today is marked.
  */
-export function WeekStrip({ today, counts, showHeader = true }: Props) {
+export function WeekStrip({ today, counts, showHeader = true, dots }: Props) {
   const dates = weekDates(today);
   const total = counts.reduce((sum, n) => sum + n, 0);
 
@@ -59,7 +61,11 @@ export function WeekStrip({ today, counts, showHeader = true }: Props) {
                 <Text style={[type.projectTitle, isToday ? styles.numToday : styles.num]}>{date.getDate()}</Text>
               </View>
               <View style={styles.dotSlot}>
-                {count > 0 ? <View style={styles.dot} /> : null}
+                {dots ? (
+                  dots[i] ? <View style={[styles.dot, { backgroundColor: dots[i]! }]} /> : null
+                ) : count > 0 ? (
+                  <View style={styles.dot} />
+                ) : null}
               </View>
             </View>
           );
