@@ -364,13 +364,14 @@ function CreateProjectFlow({ onBack, onDone }: { onBack: () => void; onDone: () 
 
 
 /** The "Join a project" path (GOnboarding2) — an invite code, previewed before submitting, then a security-definer RPC join (see migration 0016). */
-function JoinProjectFlow({
+export function JoinProjectFlow({
   onBack,
   onDone,
   initialCode,
 }: {
   onBack: () => void;
-  onDone: () => void;
+  /** Gets the joined project's id when it could be read, so the caller can switch to it. */
+  onDone: (projectId: string | null) => void;
   /** Prefilled when the app was opened from an invite link. */
   initialCode?: string;
 }) {
@@ -410,8 +411,8 @@ function JoinProjectFlow({
     setJoining(true);
     setError(null);
     try {
-      await joinProjectByCode(code.trim());
-      onDone();
+      const { projectId } = await joinProjectByCode(code.trim());
+      onDone(projectId);
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Could not join that project.');
       setJoining(false);

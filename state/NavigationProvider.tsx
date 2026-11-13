@@ -8,6 +8,12 @@ type NavigationState = {
   newProjectOpen: boolean;
   openNewProject: () => void;
   closeNewProject: () => void;
+  /** "Join a project" for someone who already has one: an invite code, typed or from a tapped link. */
+  joinProjectOpen: boolean;
+  /** The code a tapped invite link brought in, prefilled in the join screen. */
+  joinProjectCode: string | null;
+  openJoinProject: (code?: string) => void;
+  closeJoinProject: () => void;
   settingsOpen: boolean;
   openSettings: () => void;
   closeSettings: () => void;
@@ -44,6 +50,8 @@ const NavigationContext = createContext<NavigationState | null>(null);
 export function NavigationProvider({ children }: { children: ReactNode }) {
   const [activeTab, setActiveTab] = useState<NavTab>('home');
   const [newProjectOpen, setNewProjectOpen] = useState(false);
+  const [joinProjectOpen, setJoinProjectOpen] = useState(false);
+  const [joinProjectCode, setJoinProjectCode] = useState<string | null>(null);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [studySetupRequested, setStudySetupRequested] = useState(false);
   const [requestedConversation, setRequestedConversation] = useState<Conversation | null>(null);
@@ -67,6 +75,16 @@ export function NavigationProvider({ children }: { children: ReactNode }) {
         newProjectOpen,
         openNewProject: () => setNewProjectOpen(true),
         closeNewProject: () => setNewProjectOpen(false),
+        joinProjectOpen,
+        joinProjectCode,
+        openJoinProject: (code?: string) => {
+          setJoinProjectCode(code ?? null);
+          setJoinProjectOpen(true);
+        },
+        closeJoinProject: () => {
+          setJoinProjectOpen(false);
+          setJoinProjectCode(null);
+        },
         settingsOpen,
         openSettings: () => setSettingsOpen(true),
         closeSettings: () => setSettingsOpen(false),

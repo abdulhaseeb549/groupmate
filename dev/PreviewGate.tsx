@@ -3,6 +3,7 @@ import { View } from 'react-native';
 import { NavTab } from '../components/BottomNav';
 import { ChatTab } from '../screens/ChatTab';
 import { HomeScreen } from '../screens/HomeScreen';
+import { JoinProjectFlow } from '../screens/OnboardingScreen';
 import { ProjectsScreen } from '../screens/ProjectsScreen';
 import { SettingsScreen } from '../screens/SettingsScreen';
 import { StudyScreen } from '../screens/StudyScreen';
@@ -199,9 +200,12 @@ function FakeDeadlines({ children }: { children: React.ReactNode }) {
 
 /** Mirrors App.tsx's ProjectTabs, minus the new-project flow it has no data for. */
 function Tabs() {
-  const { activeTab, setActiveTab, settingsOpen } = useNavigation();
+  const { activeTab, setActiveTab, settingsOpen, joinProjectOpen, joinProjectCode, closeJoinProject } = useNavigation();
   const props = { activeTab, onSelectTab: setActiveTab as (t: NavTab) => void };
 
+  if (joinProjectOpen) {
+    return <JoinProjectFlow onBack={closeJoinProject} onDone={closeJoinProject} initialCode={joinProjectCode ?? undefined} />;
+  }
   if (settingsOpen) return <SettingsScreen />;
   if (activeTab === 'projects') return <ProjectsScreen {...props} />;
   if (activeTab === 'chat') return <ChatTab {...props} />;

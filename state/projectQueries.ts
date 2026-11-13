@@ -414,12 +414,19 @@ export async function regenerateInviteCode(projectId: string): Promise<string> {
  * counterpart to handle_new_user's signup-time join branch). Throws with
  * the RPC's own message on a bad code.
  */
-export async function joinProjectByCode(code: string): Promise<{ projectName: string }> {
+export async function joinProjectByCode(code: string): Promise<{ projectName: string; projectId: string | null }> {
   const { data, error } = await supabase.rpc('join_project_by_code', { code });
   if (error) throw error;
   const projectName = data?.[0]?.project_name as string | undefined;
   if (!projectName) throw new Error('No project uses that code.');
-  return { projectName };
+  // Now a member, RLS lets us read the project: its id is what the app
+  // switches to, so someone with other projects lands in the one they joined.
+  const { data: row } = await supabase
+    .from('projects')
+    .select('id')
+    .eq('invite_code', code.trim().toUpperCase())
+    .maybeSingle();
+  return { projectName, projectId: (row?.id as string | undefined) ?? null };
 }
 
 export type TaskChangeEvent = { type: 'upsert'; task: Task } | { type: 'delete'; taskId: string };

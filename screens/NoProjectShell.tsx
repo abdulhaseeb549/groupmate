@@ -21,14 +21,19 @@ import { StudyScreen } from './StudyScreen';
  * everywhere else; two of them just have nothing to show yet and say so.
  */
 export function NoProjectShell({ onDone }: { onDone: () => void }) {
-  const { activeTab, setActiveTab, newProjectOpen, closeNewProject } = useNavigation();
+  const { activeTab, setActiveTab, newProjectOpen, closeNewProject, joinProjectOpen, closeJoinProject } = useNavigation();
 
   // The "+" menu's New project action sets newProjectOpen, but
   // NewProjectScreen replaces an *existing* brief and reads useProject() —
   // neither of which applies yet. It maps onto the create flow instead.
   function handleDone() {
     closeNewProject();
+    closeJoinProject();
     onDone();
+  }
+
+  if (joinProjectOpen) {
+    return <OnboardingScreen onDone={handleDone} startMode="join" onExitMode={closeJoinProject} />;
   }
 
   if (newProjectOpen) {

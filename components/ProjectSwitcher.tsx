@@ -23,7 +23,7 @@ type Props = {
 export function ProjectSwitcher({ visible, onClose }: Props) {
   const insets = useSafeAreaInsets();
   const { project, projects, switchProject } = useProject();
-  const { openNewProject } = useNavigation();
+  const { openNewProject, openJoinProject } = useNavigation();
 
   function pick(projectId: string) {
     onClose();
@@ -90,6 +90,29 @@ export function ProjectSwitcher({ visible, onClose }: Props) {
               </Text>
               <Text style={styles.m} numberOfLines={1}>
                 Read another brief
+              </Text>
+            </View>
+          </Pressable>
+          <View style={styles.sep} />
+
+          <Pressable
+            onPress={() => {
+              onClose();
+              openJoinProject();
+            }}
+            accessibilityRole="button"
+            accessibilityLabel="Join a project with a teammate's invite code"
+            style={({ pressed }) => [styles.row, pressed && styles.pressed]}
+          >
+            <View style={styles.addTile}>
+              <Icon name="joined" size={20} color={colors.purple} strokeWidth={2.2} />
+            </View>
+            <View style={styles.text}>
+              <Text style={[styles.t, styles.tStrong, styles.action]} numberOfLines={1}>
+                Join a project
+              </Text>
+              <Text style={styles.m} numberOfLines={1}>
+                Use a teammate's invite code
               </Text>
             </View>
           </Pressable>
