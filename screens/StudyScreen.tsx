@@ -43,6 +43,7 @@ import {
   attachQuizNotes,
   generateQuizParts,
   recordAttempt,
+  formatDuration,
   leaveQuiz,
   uploadMaterial,
 } from '../state/studyQuiz';
@@ -73,6 +74,9 @@ type Props = {
   activeTab: NavTab;
   onSelectTab: (tab: NavTab) => void;
 };
+
+/** The quiz clock: this many seconds for every question (2 questions = 1:20). */
+const SECONDS_PER_QUESTION = 40;
 
 function capitalize(s: string) {
   return s.charAt(0).toUpperCase() + s.slice(1);
@@ -127,6 +131,10 @@ export function StudyScreen({ activeTab, onSelectTab }: Props) {
   const upload = useRef<{ file: PdfFileInput; token: Promise<string | null> } | null>(null);
   const [moreComing, setMoreComing] = useState(false);
   const [expectedTotal, setExpectedTotal] = useState(0);
+  // Quiz clock (SECONDS_PER_QUESTION each) and how the last attempt ended.
+  const [timeLeftMs, setTimeLeftMs] = useState(0);
+  const [timedOut, setTimedOut] = useState(false);
+  const [resultTotal, setResultTotal] = useState(0);
   // Leaderboard: each finished attempt is saved with its time.
   const quizStartedAt = useRef(0);
   const quizIdRef = useRef<string | null>(null);
@@ -209,7 +217,7 @@ export function StudyScreen({ activeTab, onSelectTab }: Props) {
         started = true;
         setGenerating(false);
         setExpectedTotal(questionCount);
-        startQuiz(quiz, null);
+        startQuiz(quiz, null, questionCount);
       } else {
         setActiveQuiz(quiz);
       }
@@ -268,12 +276,15 @@ export function StudyScreen({ activeTab, onSelectTab }: Props) {
     void refreshList();
   }
 
-  function startQuiz(quiz: ExtractedQuiz, quizId: string | null) {
+  /** `plannedTotal`: how many questions the quiz will have once every part lands. */
+  function startQuiz(quiz: ExtractedQuiz, quizId: string | null, plannedTotal = quiz.questions.length) {
     setActiveQuiz(quiz);
     setActiveQuizId(quizId);
     quizIdRef.current = quizId;
     pendingAttempt.current = null;
     quizStartedAt.current = Date.now();
+    setTimeLeftMs(Math.max(1, plannedTotal) * SECONDS_PER_QUESTION * 1000);
+    setTimedOut(false);
     setIndex(0);
     setSelected(null);
     setScore(0);
@@ -297,27 +308,59 @@ export function StudyScreen({ activeTab, onSelectTab }: Props) {
     }
   }
 
+  /** Ends the attempt: saves it (or holds it until the quiz has an id) and shows results. */
+  function finishQuiz(outOfTime: boolean) {
+    if (!activeQuiz) return;
+    // Out of time while parts are still writing: the unwritten ones count as missed too.
+    const total = Math.min(50, outOfTime && moreComing ? Math.max(expectedTotal, activeQuiz.questions.length) : activeQuiz.questions.length);
+    setResultTotal(total);
+    const durationMs = Date.now() - quizStartedAt.current;
+    const id = quizIdRef.current;
+    if (id) {
+      void recordBestScore(id, score);
+      void recordAttempt(id, score, total, durationMs);
+    } else {
+      // Still saving (fast student): recorded once the quiz has an id.
+      pendingAttempt.current = { score, total, durationMs };
+    }
+    setTimedOut(outOfTime);
+    setPhase('results');
+  }
+
   function next() {
     if (!activeQuiz) return;
     const loadedLast = index + 1 >= activeQuiz.questions.length;
     if (loadedLast && moreComing) return; // the button shows "Writing the next ones…"
     if (loadedLast) {
-      const total = activeQuiz.questions.length;
-      const durationMs = Date.now() - quizStartedAt.current;
-      const id = quizIdRef.current;
-      if (id) {
-        void recordBestScore(id, score);
-        void recordAttempt(id, score, total, durationMs);
-      } else {
-        // Still saving (fast student): recorded once the quiz has an id.
-        pendingAttempt.current = { score, total, durationMs };
-      }
-      setPhase('results');
+      finishQuiz(false);
       return;
     }
     setIndex((i) => i + 1);
     setSelected(null);
   }
+
+  // The quiz clock: SECONDS_PER_QUESTION for every question, for the whole
+  // quiz. It stops while the student waits for the next part to be written
+  // (that wait is ours, not theirs) and ends the quiz at zero.
+  const waitingForQuestions =
+    phase === 'quiz' && !!activeQuiz && moreComing && selected !== null && index + 1 >= activeQuiz.questions.length;
+  const clockRunning = phase === 'quiz' && !!activeQuiz && !waitingForQuestions;
+  const finishRef = useRef(finishQuiz);
+  finishRef.current = finishQuiz;
+  useEffect(() => {
+    if (!clockRunning) return;
+    let last = Date.now();
+    const id = setInterval(() => {
+      const now = Date.now();
+      const step = now - last;
+      last = now;
+      setTimeLeftMs((t) => Math.max(0, t - step));
+    }, 250);
+    return () => clearInterval(id);
+  }, [clockRunning]);
+  useEffect(() => {
+    if (phase === 'quiz' && timeLeftMs <= 0) finishRef.current(true);
+  }, [phase, timeLeftMs]);
 
   function backToList() {
     setPhase('list');
@@ -380,13 +423,16 @@ export function StudyScreen({ activeTab, onSelectTab }: Props) {
             onExit={backToList}
             moreComing={moreComing}
             expectedTotal={expectedTotal}
+            timeLeftMs={timeLeftMs}
+            clockPaused={waitingForQuestions}
           />
         ) : phase === 'results' && activeQuiz ? (
           <ResultsView
             insets={insets}
-            total={activeQuiz.questions.length}
+            total={resultTotal || activeQuiz.questions.length}
             score={score}
             bestStreak={bestStreak}
+            timedOut={timedOut}
             onLeaderboard={
               activeQuizId
                 ? () =>
@@ -989,10 +1035,14 @@ function QuizPlayerView({
   onExit,
   moreComing,
   expectedTotal,
+  timeLeftMs,
+  clockPaused,
 }: {
   insets: Insets;
   moreComing: boolean;
   expectedTotal: number;
+  timeLeftMs: number;
+  clockPaused: boolean;
   quiz: ExtractedQuiz;
   index: number;
   selected: number | null;
@@ -1055,6 +1105,7 @@ function QuizPlayerView({
             style={[styles.fill, { width: progress.interpolate({ inputRange: [0, 1], outputRange: ['0%', '100%'] }) }]}
           />
         </View>
+        <TimerPill ms={timeLeftMs} paused={clockPaused} />
         <StreakPill streak={streak} />
       </View>
 
@@ -1109,6 +1160,25 @@ function QuizPlayerView({
           </FadeIn>
         ) : null}
       </Animated.View>
+    </View>
+  );
+}
+
+/** Time left for the whole quiz, "1:20". Amber under 20 s, red under 10 s. */
+function TimerPill({ ms, paused }: { ms: number; paused: boolean }) {
+  const secs = Math.ceil(ms / 1000);
+  const tone = secs <= 10 ? 'red' : secs <= 20 ? 'amber' : 'plain';
+  const fg = tone === 'red' ? colors.redText : tone === 'amber' ? colors.yellowText : colors.ink;
+  const bg = tone === 'red' ? colors.redSoft : tone === 'amber' ? colors.yellowSoft : 'rgba(21,21,26,0.05)';
+  return (
+    <View
+      accessible
+      accessibilityRole="timer"
+      accessibilityLabel={`${formatDuration(secs * 1000)} left${paused ? ', paused while questions are written' : ''}`}
+      style={[styles.streak, { backgroundColor: bg }]}
+    >
+      <Icon name="clock" size={14} color={fg} strokeWidth={2} />
+      <Text style={[styles.streakText, styles.timerText, { color: fg }]}>{formatDuration(secs * 1000)}</Text>
     </View>
   );
 }
@@ -1246,6 +1316,7 @@ function ResultsView({
   total,
   score,
   bestStreak,
+  timedOut,
   onStudyAgain,
   onDone,
   onLeaderboard,
@@ -1254,6 +1325,8 @@ function ResultsView({
   total: number;
   score: number;
   bestStreak: number;
+  /** The clock ran out before the last question was answered. */
+  timedOut: boolean;
   /** Undefined while the new quiz is still saving. */
   onLeaderboard?: () => void;
   onStudyAgain: () => void;
@@ -1323,6 +1396,12 @@ function ResultsView({
         <FadeIn delay={500}>
           <View style={styles.resultText}>
             <Text style={styles.resultMessage}>{message}</Text>
+            {timedOut ? (
+              <View style={styles.timeUp}>
+                <Icon name="clock" size={14} color={colors.redText} strokeWidth={2} />
+                <Text style={styles.timeUpText}>Time's up · unanswered count as wrong</Text>
+              </View>
+            ) : null}
             {bestStreak > 1 ? (
               <View style={styles.bestStreak}>
                 <Text style={styles.bestStreakText}>Best streak · {bestStreak} in a row</Text>
@@ -1774,6 +1853,24 @@ const styles = StyleSheet.create({
     height: 32,
     borderRadius: 16,
     paddingHorizontal: 12,
+  },
+  timerText: {
+    fontVariant: ['tabular-nums'],
+  },
+  timeUp: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    height: 30,
+    borderRadius: 15,
+    paddingHorizontal: 12,
+    backgroundColor: colors.redSoft,
+  },
+  timeUpText: {
+    fontFamily: type.badge.fontFamily,
+    fontSize: 13,
+    lineHeight: 17,
+    color: colors.redText,
   },
   streakLit: {
     backgroundColor: colors.yellowSoft,
