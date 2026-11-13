@@ -26,6 +26,10 @@ type NavigationState = {
   requestedConversation: Conversation | null;
   goToChat: (conversation?: Conversation) => void;
   clearChatOpenRequest: () => void;
+  /** The Add-a-deadline flow (AddDeadlineFlow, mounted once at the app shell). */
+  addDeadlineOpen: boolean;
+  openAddDeadline: () => void;
+  closeAddDeadline: () => void;
 };
 
 const NavigationContext = createContext<NavigationState | null>(null);
@@ -43,6 +47,7 @@ export function NavigationProvider({ children }: { children: ReactNode }) {
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [studySetupRequested, setStudySetupRequested] = useState(false);
   const [requestedConversation, setRequestedConversation] = useState<Conversation | null>(null);
+  const [addDeadlineOpen, setAddDeadlineOpen] = useState(false);
 
   function goToNewQuiz() {
     setActiveTab('study');
@@ -71,6 +76,9 @@ export function NavigationProvider({ children }: { children: ReactNode }) {
         requestedConversation,
         goToChat,
         clearChatOpenRequest: () => setRequestedConversation(null),
+        addDeadlineOpen,
+        openAddDeadline: () => setAddDeadlineOpen(true),
+        closeAddDeadline: () => setAddDeadlineOpen(false),
       }}
     >
       {children}

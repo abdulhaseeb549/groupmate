@@ -128,3 +128,26 @@ export const previewTaskDependencies: TaskDependency[] = [
   { taskId: 'task-3', dependsOnTaskId: 'task-2' },
   { taskId: 'task-6', dependsOnTaskId: 'task-1' },
 ];
+
+// --- Personal deadlines (daily-use Phase 1) --------------------------------
+import { addDaysYmd, Deadline, DraftDeadline, ymd } from '../state/deadlines';
+
+const todayYmd = () => ymd(new Date());
+
+export const previewDeadlines: Deadline[] = [
+  { id: 'dl-1', title: 'Lab record: Experiment 7', course: 'Physics', kind: 'lab', dueOn: todayYmd(), dueTime: null, details: null, doneAt: null },
+  { id: 'dl-2', title: 'Assignment 3: ER diagram', course: 'DBMS', kind: 'assignment', dueOn: addDaysYmd(todayYmd(), 1), dueTime: '17:00', details: 'Submit in the lab', doneAt: null },
+  { id: 'dl-3', title: 'Unit test 2', course: 'Maths', kind: 'test', dueOn: addDaysYmd(todayYmd(), 4), dueTime: '10:00', details: 'ch 4-5 only', doneAt: null },
+];
+
+export const PREVIEW_DEADLINE_MESSAGE =
+  'Guys DBMS assignment 3 (ER diagram) kal 5 baje tak lab me submit karna hai. Aur maths unit test Monday 10am, ch 4-5 only';
+
+export function previewFoundDeadlines(): Omit<DraftDeadline, 'key'>[] {
+  const t = new Date();
+  const toMon = ((8 - t.getDay()) % 7) || 7;
+  return [
+    { title: 'Assignment 3: ER diagram', course: 'DBMS', kind: 'assignment', dueOn: addDaysYmd(todayYmd(), 1), dueTime: '17:00', details: 'Submit in the lab', quote: 'kal 5 baje' },
+    { title: 'Unit test 2 (ch 4-5)', course: 'Maths', kind: 'test', dueOn: addDaysYmd(todayYmd(), toMon), dueTime: '10:00', details: null, quote: 'Monday 10am' },
+  ];
+}

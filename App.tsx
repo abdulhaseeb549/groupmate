@@ -18,6 +18,8 @@ import { StudyScreen } from './screens/StudyScreen';
 import { AuthProvider, useAuth } from './state/AuthProvider';
 import { NavigationProvider, useNavigation } from './state/NavigationProvider';
 import { ProjectProvider } from './state/ProjectRepository';
+import { DeadlinesProvider } from './state/deadlines';
+import { AddDeadlineFlow } from './components/deadlines/AddDeadlineFlow';
 import { useIncomingPasswordRecovery } from './utils/passwordRecovery';
 import {
   Manrope_400Regular,
@@ -62,10 +64,13 @@ function AppShell() {
 
   return (
     <NavigationProvider>
-      <ProjectProvider>
-        <PushNotificationRegistrar userId={session.user.id} />
-        <ProjectTabs />
-      </ProjectProvider>
+      <DeadlinesProvider userId={session.user.id}>
+        <ProjectProvider>
+          <PushNotificationRegistrar userId={session.user.id} />
+          <ProjectTabs />
+          <AddDeadlineFlow />
+        </ProjectProvider>
+      </DeadlinesProvider>
     </NavigationProvider>
   );
 }

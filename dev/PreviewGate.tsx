@@ -9,6 +9,9 @@ import { StudyScreen } from '../screens/StudyScreen';
 import { AuthContext } from '../state/AuthProvider';
 import { NavigationProvider, useNavigation } from '../state/NavigationProvider';
 import { ProjectContext } from '../state/ProjectRepository';
+import { AddDeadlineFlow } from '../components/deadlines/AddDeadlineFlow';
+import { Deadline, DeadlinesContext, deadlineDevOverrides, newDraftKey } from '../state/deadlines';
+import { previewDeadlines, previewFoundDeadlines } from './previewFixtures';
 import { computeSchedule } from '../state/projectSchedule';
 import { deriveProjectState } from '../state/projectState';
 import {
@@ -159,12 +162,39 @@ function FakeProject() {
   };
 
   return (
-    <ProjectContext.Provider value={value}>
-      <View style={{ flex: 1 }}>
-        <Tabs />
-      </View>
-    </ProjectContext.Provider>
+    <FakeDeadlines>
+      <ProjectContext.Provider value={value}>
+        <View style={{ flex: 1 }}>
+          <Tabs />
+        </View>
+        <AddDeadlineFlow />
+      </ProjectContext.Provider>
+    </FakeDeadlines>
   );
+}
+
+function FakeDeadlines({ children }: { children: React.ReactNode }) {
+  const [deadlines, setDeadlines] = useState<Deadline[]>(previewDeadlines);
+  deadlineDevOverrides.parse = async () => {
+    await new Promise((r) => setTimeout(r, 700));
+    return { deadlines: previewFoundDeadlines().map((d) => ({ ...d, key: newDraftKey() })), error: null };
+  };
+  const value = {
+    deadlines,
+    loading: false,
+    save: async (drafts: any[]) => {
+      setDeadlines((all) => [
+        ...all,
+        ...drafts.map((d, i) => ({ id: `new-${Date.now()}-${i}`, title: d.title, course: d.course, kind: d.kind, dueOn: d.dueOn, dueTime: d.dueTime, details: d.details, doneAt: null })),
+      ]);
+      return { error: null };
+    },
+    setDone: async (id: string, done: boolean) =>
+      setDeadlines((all) => all.map((d) => (d.id === id ? { ...d, doneAt: done ? new Date().toISOString() : null } : d))),
+    remove: async (id: string) => setDeadlines((all) => all.filter((d) => d.id !== id)),
+    reload: async () => {},
+  };
+  return <DeadlinesContext.Provider value={value}>{children}</DeadlinesContext.Provider>;
 }
 
 /** Mirrors App.tsx's ProjectTabs, minus the new-project flow it has no data for. */

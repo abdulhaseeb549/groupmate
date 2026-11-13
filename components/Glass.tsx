@@ -84,7 +84,7 @@ export function GlassButton({
       accessibilityRole="button"
       accessibilityLabel={label}
       hitSlop={4}
-      style={({ pressed }) => [{ width: size, height: size, opacity: pressed ? 0.7 : 1 }, style]}
+      style={({ pressed }) => [{ width: size, height: size, transform: [{ scale: pressed ? 0.94 : 1 }] }, style]}
     >
       <Glass radius={size / 2} style={{ width: size, height: size }}>
         <View style={styles.center}>{children}</View>

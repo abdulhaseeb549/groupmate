@@ -36,7 +36,7 @@ const MENU_WIDTH = 248;
  */
 export function CreateMenu({ visible, canInvite = true, onClose }: Props) {
   const insets = useSafeAreaInsets();
-  const { openNewProject, goToNewQuiz } = useNavigation();
+  const { openNewProject, goToNewQuiz, openAddDeadline } = useNavigation();
   // Derived, not just trusted from the prop: this menu is nested inside a
   // BottomNav that every screen renders for itself, so one screen
   // forgetting canInvite={false} would otherwise mount InviteModal without
@@ -70,6 +70,16 @@ export function CreateMenu({ visible, canInvite = true, onClose }: Props) {
   }
 
   const options: Option[] = [
+    {
+      label: 'Add a deadline',
+      bg: colors.redSoft,
+      stroke: colors.redText,
+      path: 'M4 7.5A2.5 2.5 0 0 1 6.5 5h11A2.5 2.5 0 0 1 20 7.5v10a2.5 2.5 0 0 1-2.5 2.5h-11A2.5 2.5 0 0 1 4 17.5zM8 3v4M16 3v4M4 10.5h16',
+      onPress: () => {
+        handleClose();
+        openAddDeadline();
+      },
+    },
     {
       label: 'New project',
       bg: colors.purpleSoft,
