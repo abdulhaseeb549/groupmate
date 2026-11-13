@@ -40,10 +40,17 @@ import {
   NotePage,
   QuizSummary,
   recordBestScore,
+  attachQuizNotes,
+  generateQuizParts,
+  recordAttempt,
+  leaveQuiz,
+  uploadMaterial,
 } from '../state/studyQuiz';
 import { colors, gradients, radius, type } from '../theme';
 import { useHardwareBackHandler } from '../utils/hardwareBack';
 import { fadeLayer, shadowRoom } from '../components/fadeLayer';
+import { JoinQuizSheet } from '../components/study/JoinQuizSheet';
+import { LeaderboardSheet } from '../components/study/LeaderboardSheet';
 import { pickPdf, PdfFileInput } from '../utils/pdfPicker';
 
 const MIN_LENGTH = 40;
@@ -115,6 +122,17 @@ export function StudyScreen({ activeTab, onSelectTab }: Props) {
   const [score, setScore] = useState(0);
   const [streak, setStreak] = useState(0);
   const [bestStreak, setBestStreak] = useState(0);
+  // Faster quizzes: the PDF uploads the moment it's picked (upload-material),
+  // and the quiz starts on its first part while the rest are still writing.
+  const upload = useRef<{ file: PdfFileInput; token: Promise<string | null> } | null>(null);
+  const [moreComing, setMoreComing] = useState(false);
+  const [expectedTotal, setExpectedTotal] = useState(0);
+  // Leaderboard: each finished attempt is saved with its time.
+  const quizStartedAt = useRef(0);
+  const quizIdRef = useRef<string | null>(null);
+  const pendingAttempt = useRef<{ score: number; total: number; durationMs: number } | null>(null);
+  const [board, setBoard] = useState<{ id: string; title: string; joined: boolean } | null>(null);
+  const [joinOpen, setJoinOpen] = useState(false);
 
   async function refreshList() {
     if (!userId) return;
@@ -150,6 +168,7 @@ export function StudyScreen({ activeTab, onSelectTab }: Props) {
   function openSetup() {
     setStudyText('');
     setSyllabusFile(null);
+    upload.current = null;
     setSetupError(null);
     setPhase('setup');
   }
@@ -163,45 +182,73 @@ export function StudyScreen({ activeTab, onSelectTab }: Props) {
     if (!file) return;
     setSetupError(null);
     setSyllabusFile(file);
+    // Upload now, while they choose difficulty and count. A failed upload
+    // is not an error: Generate falls back to sending the file itself.
+    upload.current = { file, token: uploadMaterial(file).then((r) => r.token).catch(() => null) };
   }
 
   async function handleGenerate() {
     setGenerating(true);
     setSetupError(null);
 
-    // Both read the same upload, so they run together, and are settled
-    // separately: the pointers failing must not cost the student the quiz.
+    const token = syllabusFile && upload.current?.file === syllabusFile ? await upload.current.token : null;
     const source = {
       studyText: studyText.trim() || undefined,
-      syllabusFile: syllabusFile ?? undefined,
+      ...(token ? { fileToken: token } : { syllabusFile: syllabusFile ?? undefined }),
     };
-    const [result, notesResult] = await Promise.all([
-      generateQuiz({ ...source, difficulty, questionCount }),
-      generateNotes(source),
-    ]);
+
+    // Notes run beside the quiz and never hold it up: they're attached to
+    // the saved quiz whenever they land.
+    const notes = generateNotes(source);
+
+    let started = false;
+    const result = await generateQuizParts({ ...source, difficulty, questionCount }, (quiz, settled, parts) => {
+      const more = settled < parts;
+      setMoreComing(more);
+      if (!started) {
+        started = true;
+        setGenerating(false);
+        setExpectedTotal(questionCount);
+        startQuiz(quiz, null);
+      } else {
+        setActiveQuiz(quiz);
+      }
+    });
+    setMoreComing(false);
 
     if (!result.quiz) {
-      setSetupError(result.error);
       setGenerating(false);
+      if (!started) setSetupError(result.error);
       return;
     }
     const quiz = result.quiz;
-    const { quizId, error } = await commitQuiz(quiz, difficulty, notesResult.pages);
-    setGenerating(false);
-    if (error) {
-      setSetupError(error);
+    setActiveQuiz(quiz);
+    const { quizId, error } = await commitQuiz(quiz, difficulty, null);
+    if (error || !quizId) {
+      // The student is already playing; saving can fail quietly.
       return;
     }
-    if (quizId && notesResult.pages) {
-      setPointers({ quizId, title: quiz.title, pages: notesResult.pages });
+    setActiveQuizId(quizId);
+    quizIdRef.current = quizId;
+    const pending = pendingAttempt.current;
+    if (pending) {
+      pendingAttempt.current = null;
+      void recordAttempt(quizId, pending.score, pending.total, pending.durationMs);
+      void recordBestScore(quizId, pending.score);
     }
-    startQuiz(quiz, quizId);
+    void notes.then((n) => {
+      if (!n.pages) return;
+      void attachQuizNotes(quizId, n.pages);
+      setPointers({ quizId, title: quiz.title, pages: n.pages });
+    });
   }
 
   async function openExistingQuiz(summary: QuizSummary) {
     setListError(null);
     try {
       const questions = await fetchQuizQuestions(summary.id);
+      setMoreComing(false);
+      setExpectedTotal(questions.length);
       startQuiz({ title: summary.title, questions }, summary.id);
     } catch (err) {
       setListError(err instanceof Error ? err.message : 'Could not load that quiz.');
@@ -211,7 +258,7 @@ export function StudyScreen({ activeTab, onSelectTab }: Props) {
   async function confirmDelete() {
     if (!deleteTarget) return;
     setDeleting(true);
-    const { error } = await deleteQuiz(deleteTarget.id);
+    const { error } = deleteTarget.joined ? await leaveQuiz(deleteTarget.id) : await deleteQuiz(deleteTarget.id);
     setDeleting(false);
     setDeleteTarget(null);
     if (error) {
@@ -224,6 +271,9 @@ export function StudyScreen({ activeTab, onSelectTab }: Props) {
   function startQuiz(quiz: ExtractedQuiz, quizId: string | null) {
     setActiveQuiz(quiz);
     setActiveQuizId(quizId);
+    quizIdRef.current = quizId;
+    pendingAttempt.current = null;
+    quizStartedAt.current = Date.now();
     setIndex(0);
     setSelected(null);
     setScore(0);
@@ -249,9 +299,19 @@ export function StudyScreen({ activeTab, onSelectTab }: Props) {
 
   function next() {
     if (!activeQuiz) return;
-    const isLast = index + 1 >= activeQuiz.questions.length;
-    if (isLast) {
-      if (activeQuizId) void recordBestScore(activeQuizId, score);
+    const loadedLast = index + 1 >= activeQuiz.questions.length;
+    if (loadedLast && moreComing) return; // the button shows "Writing the next ones…"
+    if (loadedLast) {
+      const total = activeQuiz.questions.length;
+      const durationMs = Date.now() - quizStartedAt.current;
+      const id = quizIdRef.current;
+      if (id) {
+        void recordBestScore(id, score);
+        void recordAttempt(id, score, total, durationMs);
+      } else {
+        // Still saving (fast student): recorded once the quiz has an id.
+        pendingAttempt.current = { score, total, durationMs };
+      }
       setPhase('results');
       return;
     }
@@ -284,6 +344,8 @@ export function StudyScreen({ activeTab, onSelectTab }: Props) {
             onOpenQuiz={openExistingQuiz}
             onDeleteQuiz={setDeleteTarget}
             onOpenNotes={() => setPhase('notes')}
+            onJoin={() => setJoinOpen(true)}
+            onBoard={(q) => setBoard({ id: q.id, title: q.title, joined: q.joined })}
           />
         ) : phase === 'notes' && pointers ? (
           <NotesView insets={insets} title={pointers.title} pages={pointers.pages} onBack={() => setPhase('list')} />
@@ -316,6 +378,8 @@ export function StudyScreen({ activeTab, onSelectTab }: Props) {
             onAnswer={answer}
             onNext={next}
             onExit={backToList}
+            moreComing={moreComing}
+            expectedTotal={expectedTotal}
           />
         ) : phase === 'results' && activeQuiz ? (
           <ResultsView
@@ -323,6 +387,16 @@ export function StudyScreen({ activeTab, onSelectTab }: Props) {
             total={activeQuiz.questions.length}
             score={score}
             bestStreak={bestStreak}
+            onLeaderboard={
+              activeQuizId
+                ? () =>
+                    setBoard({
+                      id: activeQuizId,
+                      title: activeQuiz.title,
+                      joined: quizzes?.find((q) => q.id === activeQuizId)?.joined ?? false,
+                    })
+                : undefined
+            }
             onStudyAgain={openSetup}
             onDone={backToList}
           />
@@ -331,11 +405,36 @@ export function StudyScreen({ activeTab, onSelectTab }: Props) {
 
       {phase === 'list' ? <BottomNav active={activeTab} onSelect={onSelectTab} chatUnread={hasUnread} /> : null}
 
+      <LeaderboardSheet quiz={board} onClose={() => setBoard(null)} />
+      <JoinQuizSheet
+        visible={joinOpen}
+        onClose={() => setJoinOpen(false)}
+        onJoined={async (quizId) => {
+          setJoinOpen(false);
+          await refreshList();
+          try {
+            const questions = await fetchQuizQuestions(quizId);
+            const title = (await fetchQuizzes(userId!)).find((q) => q.id === quizId)?.title ?? 'Quiz';
+            setMoreComing(false);
+            setExpectedTotal(questions.length);
+            startQuiz({ title, questions }, quizId);
+          } catch {
+            setListError('Joined. Open the quiz from your list.');
+          }
+        }}
+      />
+
       <ConfirmDialog
         visible={deleteTarget !== null}
-        title="Delete this quiz?"
-        message={deleteTarget ? `"${deleteTarget.title}" and your best score will be gone for good.` : undefined}
-        confirmLabel={deleting ? 'Deleting…' : 'Delete'}
+        title={deleteTarget?.joined ? 'Leave this quiz?' : 'Delete this quiz?'}
+        message={
+          deleteTarget
+            ? deleteTarget.joined
+              ? `"${deleteTarget.title}" leaves your list. Your score stays on your friend's board.`
+              : `"${deleteTarget.title}" and its leaderboard will be gone for good.`
+            : undefined
+        }
+        confirmLabel={deleting ? 'One moment…' : deleteTarget?.joined ? 'Leave' : 'Delete'}
         destructive
         onConfirm={confirmDelete}
         onCancel={() => setDeleteTarget(null)}
@@ -402,6 +501,8 @@ function ListView({
   onNewQuiz,
   onOpenQuiz,
   onDeleteQuiz,
+  onJoin,
+  onBoard,
   onOpenNotes,
 }: {
   insets: Insets;
@@ -411,6 +512,8 @@ function ListView({
   onNewQuiz: () => void;
   onOpenQuiz: (summary: QuizSummary) => void;
   onDeleteQuiz: (summary: QuizSummary) => void;
+  onJoin: () => void;
+  onBoard: (summary: QuizSummary) => void;
   onOpenNotes: () => void;
 }) {
   return (
@@ -487,7 +590,13 @@ function ListView({
       {/* Quizzes: one card, best score leads each row. */}
       <FadeIn delay={120}>
         <View style={styles.section}>
-          <Text style={styles.lead}>Your quizzes</Text>
+          <View style={styles.leadRow}>
+            <Text style={styles.lead}>Your quizzes</Text>
+            <Pressable onPress={onJoin} accessibilityRole="button" hitSlop={8} style={styles.joinLink}>
+              <Icon name="team" size={16} color={colors.purple} strokeWidth={2} />
+              <Text style={styles.boardLinkText}>Join a quiz</Text>
+            </Pressable>
+          </View>
           {quizzes === null ? (
             <ActivityIndicator color={colors.purple} style={styles.listLoading} />
           ) : quizzes.length === 0 ? (
@@ -512,15 +621,24 @@ function ListView({
                           {q.title}
                         </Text>
                         <Text style={styles.m} numberOfLines={1}>
+                          {q.joined ? "Friend's · " : ''}
                           {capitalize(q.difficulty)} · {q.questionCount} questions
                         </Text>
                       </View>
                       <ScorePill best={q.bestScore} total={q.questionCount} />
                     </Pressable>
                     <Pressable
+                      onPress={() => onBoard(q)}
+                      accessibilityRole="button"
+                      accessibilityLabel={`Leaderboard for ${q.title}`}
+                      style={({ pressed }) => [styles.del, pressed && styles.delPressed]}
+                    >
+                      <Icon name="trophy" size={17} color={colors.faint} strokeWidth={1.8} />
+                    </Pressable>
+                    <Pressable
                       onPress={() => onDeleteQuiz(q)}
                       accessibilityRole="button"
-                      accessibilityLabel={`Delete ${q.title}`}
+                      accessibilityLabel={q.joined ? `Leave ${q.title}` : `Delete ${q.title}`}
                       style={({ pressed }) => [styles.del, pressed && styles.delPressed]}
                     >
                       <Icon name="trash" size={17} color={colors.faint} strokeWidth={1.8} />
@@ -869,8 +987,12 @@ function QuizPlayerView({
   onAnswer,
   onNext,
   onExit,
+  moreComing,
+  expectedTotal,
 }: {
   insets: Insets;
+  moreComing: boolean;
+  expectedTotal: number;
   quiz: ExtractedQuiz;
   index: number;
   selected: number | null;
@@ -880,10 +1002,12 @@ function QuizPlayerView({
   onExit: () => void;
 }) {
   const question: ExtractedQuestion = quiz.questions[index];
-  const total = quiz.questions.length;
+  // While parts are still writing, count against what was asked for.
+  const total = moreComing ? Math.max(expectedTotal, quiz.questions.length) : quiz.questions.length;
   const answered = selected !== null;
   const isCorrect = answered && selected === question.correctIndex;
-  const isLast = index + 1 >= total;
+  const waiting = moreComing && index + 1 >= quiz.questions.length;
+  const isLast = !moreComing && index + 1 >= total;
 
   // Progress counts finished questions: 2 done while on 3 of 10 is 20%.
   const progress = useRef(new Animated.Value(index / total)).current;
@@ -975,7 +1099,13 @@ function QuizPlayerView({
         })}
         {answered ? (
           <FadeIn>
-            <GradientButton label={isLast ? 'See results' : 'Next question'} onPress={onNext} style={styles.nextButton} />
+            <GradientButton
+              label={waiting ? 'Writing the next ones…' : isLast ? 'See results' : 'Next question'}
+              onPress={onNext}
+              loading={waiting}
+              disabled={waiting}
+              style={styles.nextButton}
+            />
           </FadeIn>
         ) : null}
       </Animated.View>
@@ -1118,11 +1248,14 @@ function ResultsView({
   bestStreak,
   onStudyAgain,
   onDone,
+  onLeaderboard,
 }: {
   insets: Insets;
   total: number;
   score: number;
   bestStreak: number;
+  /** Undefined while the new quiz is still saving. */
+  onLeaderboard?: () => void;
   onStudyAgain: () => void;
   onDone: () => void;
 }) {
@@ -1194,6 +1327,12 @@ function ResultsView({
               <View style={styles.bestStreak}>
                 <Text style={styles.bestStreakText}>Best streak · {bestStreak} in a row</Text>
               </View>
+            ) : null}
+            {onLeaderboard ? (
+              <Pressable onPress={onLeaderboard} accessibilityRole="button" style={styles.boardLink} hitSlop={6}>
+                <Icon name="trophy" size={16} color={colors.purple} strokeWidth={2} />
+                <Text style={styles.boardLinkText}>Challenge friends</Text>
+              </Pressable>
             ) : null}
           </View>
         </FadeIn>
@@ -1269,6 +1408,26 @@ const styles = StyleSheet.create({
     shadowRadius: 22,
     shadowOffset: { width: 0, height: 8 },
     elevation: 2,
+  },
+  boardLink: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    alignSelf: 'center',
+    gap: 6,
+    height: 44,
+    marginTop: 4,
+  },
+  boardLinkText: {
+    fontFamily: type.button.fontFamily,
+    fontSize: 14,
+    color: colors.purple,
+  },
+  joinLink: {
+    marginLeft: 'auto',
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    height: 36,
   },
   pressedCard: {
     transform: [{ scale: 0.985 }],
