@@ -22,7 +22,10 @@ export type ExtractedTask = {
 export type ExtractedProjectData = {
   projectName: string;
   course: string;
-  dueDate: string;
+  /** YYYY-MM-DD. The server sends two weeks out when the brief has no date. */
+  dueDate: string | null;
+  /** true when the brief gave no date and dueDate is that two-week default. */
+  dueDateMissing?: boolean;
   requirements: { label: string }[];
   tasks: ExtractedTask[];
 };
@@ -89,7 +92,7 @@ export async function commitExtractedProject(extracted: ExtractedProjectData): P
       project_name: extracted.projectName,
       project_team: 'Team 4',
       project_course: extracted.course,
-      project_due_date: extracted.dueDate,
+      project_due_date: dueDateOrDefault(extracted.dueDate),
     });
     if (projectError) throw projectError;
     const project = { id: projectId as string };
@@ -164,4 +167,17 @@ export async function commitExtractedProject(extracted: ExtractedProjectData): P
     const message = (err as { message?: unknown } | null)?.message;
     return { error: typeof message === 'string' && message ? message : 'Could not save this project.' };
   }
+}
+
+/**
+ * The brief's own date when it gives a real one; otherwise two weeks from
+ * today, so a project can still be made (projects.due_date is not null).
+ * The team can change it later.
+ */
+function dueDateOrDefault(dueDate: string | null | undefined): string {
+  if (dueDate && /^\d{4}-\d{2}-\d{2}$/.test(dueDate)) return dueDate;
+  const d = new Date();
+  d.setDate(d.getDate() + 14);
+  const pad = (n: number) => String(n).padStart(2, '0');
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
 }

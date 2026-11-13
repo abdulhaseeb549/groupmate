@@ -17,7 +17,8 @@ const MONTHS_LONG = [
 const WEEKDAYS = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
 
 /** "10 Oct" for a YYYY-MM-DD date — the year is added only when it isn't this one. */
-export function formatDueDate(isoDate: string, today: Date): string {
+export function formatDueDate(isoDate: string | null | undefined, today: Date): string {
+  if (!isoDate || !/^\d{4}-\d{2}-\d{2}$/.test(isoDate)) return 'date not set';
   const [y, m, d] = isoDate.split('-').map(Number);
   const dayMonth = `${d} ${MONTHS[m - 1]}`;
   return y === today.getFullYear() ? dayMonth : `${dayMonth} ${y}`;

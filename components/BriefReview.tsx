@@ -53,6 +53,7 @@ export function BriefReview({
         </Text>
         <Text style={styles.sub}>
           {extracted.course} · Due {formatDueDate(extracted.dueDate, today)}
+          {extracted.dueDateMissing ? ' (not in the brief, change it any time)' : ''}
         </Text>
       </View>
 

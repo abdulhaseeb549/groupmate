@@ -279,7 +279,7 @@ function CreateProjectFlow({ onBack, onDone }: { onBack: () => void; onDone: () 
             today={new Date()}
             error={error}
             committing={phase === 'committing'}
-            buildLabel="Create my project â†’"
+            buildLabel="Create my project →"
             onStartOver={() => {
               setExtracted(null);
               setError(null);
@@ -352,7 +352,7 @@ function CreateProjectFlow({ onBack, onDone }: { onBack: () => void; onDone: () 
                   <Text style={[type.button, styles.onInk]}>Reading your briefâ€¦</Text>
                 </>
               ) : (
-                <Text style={[type.button, styles.onInk]}>Read my brief â†’</Text>
+                <Text style={[type.button, styles.onInk]}>Read my brief →</Text>
               )}
             </Pressable>
           </>
