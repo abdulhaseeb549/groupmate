@@ -5,6 +5,15 @@ on:
     branches: [master]
   workflow_dispatch: {}
 
+# One build at a time: a newer push cancels the build still running for an
+# older commit. Without this, two builds race and whichever finishes LAST
+# becomes "Latest" — on 12 Nov an older build finished a minute after the
+# newer one, so the download link and the in-app update both served the
+# older APK.
+concurrency:
+  group: build-apk
+  cancel-in-progress: true
+
 env:
   EXPO_PUBLIC_SUPABASE_URL: https://ywcynwkhezupyqxsxshe.supabase.co
   EXPO_PUBLIC_SUPABASE_ANON_KEY: sb_publishable_EpC39xdKU3pS8VlAYXZEcQ_9mnuzFLH
@@ -127,6 +136,9 @@ jobs:
         with:
           tag_name: build-${{ github.run_number }}
           name: Build ${{ github.run_number }}
+          # Tag the commit this APK was built from, not whatever master is
+          # by the time the build finishes.
+          target_commitish: ${{ github.sha }}
           # Glob instead of one exact path: catches app-release.apk,
           # app-release-unsigned.apk, or a differently-flavored output
           # without needing to guess the exact filename up front.
