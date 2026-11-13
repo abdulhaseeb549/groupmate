@@ -123,7 +123,7 @@ export function MiniTile({ lead, badge, title, caption, accessibilityLabel, onPr
       onPress={onPress}
       accessibilityRole="button"
       accessibilityLabel={accessibilityLabel}
-      style={({ pressed }) => [styles.miniShadow, pressed && styles.pressed]}
+      style={({ pressed }) => [styles.miniShadow, pressed && styles.pressedLift]}
     >
       <View style={styles.miniTile}>
         <View style={styles.miniTop}>
@@ -166,6 +166,11 @@ function daysUntil(isoDate: string, today: Date) {
 }
 
 const styles = StyleSheet.create({
+  // Shadowed views shrink when pressed instead of fading: a faded view shows
+  // its Android shadow through it as a grey box.
+  pressedLift: {
+    transform: [{ scale: 0.97 }],
+  },
   pressed: {
     opacity: 0.75,
   },

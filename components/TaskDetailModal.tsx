@@ -183,7 +183,7 @@ export function TaskDetailModal({ taskId, onClose, onClaimed }: Props) {
               disabled={sharing}
               accessibilityRole="button"
               accessibilityLabel={`Share ${task.title} to chat`}
-              style={({ pressed }) => [styles.share, pressed && styles.pressed]}
+              style={({ pressed }) => [styles.share, pressed && styles.pressedLift]}
             >
               {sharing ? (
                 <ActivityIndicator size="small" color={colors.ink} />
@@ -247,7 +247,7 @@ export function TaskDetailModal({ taskId, onClose, onClaimed }: Props) {
                 disabled={claiming}
                 accessibilityRole="button"
                 accessibilityLabel={`Claim ${task.title}`}
-                style={({ pressed }) => [styles.claimButton, (pressed || claiming) && styles.pressed]}
+                style={({ pressed }) => [styles.claimButton, (pressed || claiming) && styles.pressedLift]}
               >
                 <Text style={styles.claimButtonText}>{claiming ? 'Claiming…' : 'Claim it'}</Text>
               </Pressable>
@@ -526,6 +526,11 @@ function ErrorBox({ text }: { text: string }) {
 }
 
 const styles = StyleSheet.create({
+  // Shadowed views shrink when pressed instead of fading: a faded view shows
+  // its Android shadow through it as a grey box.
+  pressedLift: {
+    transform: [{ scale: 0.97 }],
+  },
   flex: {
     flex: 1,
   },

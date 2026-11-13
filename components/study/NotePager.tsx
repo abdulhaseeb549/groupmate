@@ -1,9 +1,12 @@
 import { useRef, useState } from 'react';
 import { Animated, Easing, PanResponder, Pressable, StyleSheet, Text, View } from 'react-native';
+import { fadeLayer, shadowRoom } from '../fadeLayer';
 import { Icon } from '../Icon';
 import { NotePage } from '../../state/studyQuiz';
 import { LinearGradient } from 'expo-linear-gradient';
 import { colors, gradients, radius, type } from '../../theme';
+
+const ROOM = shadowRoom();
 
 type Props = {
   pages: NotePage[];
@@ -115,11 +118,13 @@ export function NotePager({ pages, compact = false, full = false, onOpen, onInde
           {/* Neighbours sit back at the sides: there is one before / after. */}
           {index > 0 ? <View pointerEvents="none" style={[styles.card, styles.side, styles.sideLeft]} /> : null}
           {hasMore ? <View pointerEvents="none" style={[styles.card, styles.side, styles.sideRight]} /> : null}
+          {/* The fade lives on a wrapper, never on the card: Android would show the card's shadow through it as a grey box. */}
           <Animated.View
             {...pan.panHandlers}
-            style={[styles.card, styles.frontFull, { opacity: fade, transform: [{ translateX: shift }] }]}
+            {...fadeLayer}
+            style={[styles.flex, ROOM, { opacity: fade, transform: [{ translateX: shift }] }]}
           >
-            {cardBody}
+            <View style={[styles.card, styles.frontFull]}>{cardBody}</View>
           </Animated.View>
         </View>
         <View style={styles.footer}>
@@ -147,7 +152,7 @@ export function NotePager({ pages, compact = false, full = false, onOpen, onInde
             disabled={!hasMore}
             accessibilityRole="button"
             accessibilityLabel="Next pointer"
-            style={({ pressed }) => [styles.bigNextShadow, (pressed || !hasMore) && styles.dimmed]}
+            style={({ pressed }) => [styles.bigNextShadow, pressed && hasMore && styles.pressedLift, !hasMore && styles.dimmed, !hasMore && styles.flat]}
           >
             <LinearGradient colors={gradients.purpleDeep} style={styles.bigArrow}>
               <Icon name="chevronRight" size={20} color="#FFFFFF" strokeWidth={2.2} />
@@ -165,20 +170,23 @@ export function NotePager({ pages, compact = false, full = false, onOpen, onInde
         {hasMore ? <View pointerEvents="none" style={[styles.card, styles.peek]} /> : null}
         <Animated.View
           {...pan.panHandlers}
-          style={[styles.card, styles.front, { opacity: fade, transform: [{ translateX: shift }] }]}
+          {...fadeLayer}
+          style={[ROOM, { opacity: fade, transform: [{ translateX: shift }] }]}
         >
-          {onOpen ? (
-            <Pressable
-              onPress={onOpen}
-              accessibilityRole="button"
-              accessibilityLabel="Open points to remember"
-              style={styles.frontInner}
-            >
-              {cardBody}
-            </Pressable>
-          ) : (
-            cardBody
-          )}
+          <View style={[styles.card, styles.front]}>
+            {onOpen ? (
+              <Pressable
+                onPress={onOpen}
+                accessibilityRole="button"
+                accessibilityLabel="Open points to remember"
+                style={styles.frontInner}
+              >
+                {cardBody}
+              </Pressable>
+            ) : (
+              cardBody
+            )}
+          </View>
         </Animated.View>
       </View>
 
@@ -253,7 +261,12 @@ const styles = StyleSheet.create({
     right: 14,
     top: 10,
     bottom: -8,
-    opacity: 0.35,
+    // The dark card at 35% over the page, as a solid colour: a see-through
+    // card shows its own shadow through it on Android.
+    backgroundColor: '#ACABAD',
+    borderColor: 'transparent',
+    elevation: 0,
+    shadowOpacity: 0,
   },
   front: {
     paddingTop: 20,
@@ -348,7 +361,10 @@ const styles = StyleSheet.create({
     top: 0,
     bottom: 0,
     width: '100%',
-    opacity: 0.3,
+    backgroundColor: '#B7B6B8',
+    borderColor: 'transparent',
+    elevation: 0,
+    shadowOpacity: 0,
     transform: [{ scale: 0.94 }],
   },
   sideLeft: {
@@ -422,6 +438,16 @@ const styles = StyleSheet.create({
   },
   dimmed: {
     opacity: 0.45,
+  },
+  pressedLift: {
+    transform: [{ scale: 0.95 }],
+  },
+  flat: {
+    elevation: 0,
+    shadowOpacity: 0,
+  },
+  flex: {
+    flex: 1,
   },
   arrowPressed: {
     transform: [{ scale: 0.94 }],

@@ -1,5 +1,6 @@
 import { useEffect, useRef } from 'react';
 import { Animated, Easing, Pressable, StyleSheet, Text, View } from 'react-native';
+import { fadeLayer, shadowRoom } from './fadeLayer';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Avatar } from './Avatar';
 import { Icon } from './Icon';
@@ -62,8 +63,10 @@ export function MemberJoinedToast({ member, onDismiss, onOpenChat }: Props) {
   return (
     <Animated.View
       pointerEvents={member ? 'box-none' : 'none'}
+      {...fadeLayer}
       style={[
         styles.wrap,
+        ROOM,
         {
           top: Math.max(insets.top, 12) + 8,
           opacity: slide.interpolate({ inputRange: [-1, 0], outputRange: [0, 1] }),
@@ -78,7 +81,7 @@ export function MemberJoinedToast({ member, onDismiss, onOpenChat }: Props) {
         }}
         accessibilityRole={onOpenChat ? 'button' : 'alert'}
         accessibilityLabel={`${current.name} joined the project`}
-        style={({ pressed }) => [styles.toast, pressed && onOpenChat && styles.pressed]}
+        style={({ pressed }) => [styles.toast, pressed && onOpenChat && styles.pressedLift]}
       >
         <Avatar {...current} size={34} />
         <View style={styles.text}>
@@ -95,7 +98,15 @@ export function MemberJoinedToast({ member, onDismiss, onOpenChat }: Props) {
   );
 }
 
+// The toast's shadow fades with it as one layer (Android: no grey box).
+const ROOM = shadowRoom();
+
 const styles = StyleSheet.create({
+  // Shadowed views shrink when pressed instead of fading: a faded view shows
+  // its Android shadow through it as a grey box.
+  pressedLift: {
+    transform: [{ scale: 0.97 }],
+  },
   wrap: {
     position: 'absolute',
     left: 16,

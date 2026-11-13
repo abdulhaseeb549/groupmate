@@ -20,6 +20,7 @@ import { Directory, File, Paths } from 'expo-file-system';
 import { LinearGradient } from 'expo-linear-gradient';
 import * as Sharing from 'expo-sharing';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import { canFadeShadowed } from '../components/fadeLayer';
 import { Avatar } from '../components/Avatar';
 import { ConfirmDialog } from '../components/ConfirmDialog';
 import { Glass, GlassButton, GlassScene, GlassTarget } from '../components/Glass';
@@ -1151,7 +1152,9 @@ function ReactionPicker({
               left,
               top,
               width,
-              opacity: progress,
+              // The picker IS the shadowed card, so Android can't fade it
+              // without its shadow showing through: it only pops there.
+              opacity: canFadeShadowed ? progress : 1,
               transform: [{ scale: progress.interpolate({ inputRange: [0, 1], outputRange: [0.85, 1] }) }],
             },
           ]}

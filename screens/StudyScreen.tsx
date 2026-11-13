@@ -43,6 +43,7 @@ import {
 } from '../state/studyQuiz';
 import { colors, gradients, radius, type } from '../theme';
 import { useHardwareBackHandler } from '../utils/hardwareBack';
+import { fadeLayer, shadowRoom } from '../components/fadeLayer';
 import { pickPdf, PdfFileInput } from '../utils/pdfPicker';
 
 const MIN_LENGTH = 40;
@@ -55,6 +56,8 @@ const MAX_COUNT = 50;
 const CUSTOM = -1;
 const KEYS = ['A', 'B', 'C', 'D', 'E', 'F'];
 const MASCOT = require('../assets/Mascot-png.png');
+
+const OPTION_ROOM = shadowRoom(16);
 
 type Phase = 'list' | 'notes' | 'setup' | 'quiz' | 'results';
 type Insets = { top: number; bottom: number };
@@ -895,10 +898,18 @@ function QuizPlayerView({
 
   // The question block slides in fresh for every question.
   const enter = useRef(new Animated.Value(0)).current;
+  // While it slides in, the block fades as one layer (Android: no shadow boxes).
+  const [entering, setEntering] = useState(true);
   useEffect(() => {
     enter.setValue(0);
-    Animated.timing(enter, { toValue: 1, duration: 300, easing: Easing.out(Easing.cubic), useNativeDriver: true }).start();
+    setEntering(true);
+    Animated.timing(enter, { toValue: 1, duration: 300, easing: Easing.out(Easing.cubic), useNativeDriver: true }).start(
+      ({ finished }) => {
+        if (finished) setEntering(false);
+      }
+    );
   }, [index, enter]);
+  const enterLayer = entering ? fadeLayer : null;
   const enterStyle = {
     opacity: enter,
     transform: [{ translateX: enter.interpolate({ inputRange: [0, 1], outputRange: [24, 0] }) }],
@@ -924,7 +935,7 @@ function QuizPlayerView({
       </View>
 
       <ScrollView contentContainerStyle={styles.questionBody} showsVerticalScrollIndicator={false}>
-        <Animated.View style={[styles.questionBlock, enterStyle]}>
+        <Animated.View {...enterLayer} style={[styles.questionBlock, enterStyle]}>
           <Text style={styles.eyebrow}>
             {index + 1} of {total}
           </Text>
@@ -937,6 +948,7 @@ function QuizPlayerView({
 
       {/* Choices sit in the thumb zone; one tap answers. */}
       <Animated.View
+        {...enterLayer}
         style={[styles.choiceZone, { paddingBottom: Math.max(insets.bottom, 0) + (answered ? 28 : 32) }, enterStyle]}
         accessibilityRole="radiogroup"
         accessibilityLabel="Answers"
@@ -1060,7 +1072,7 @@ function OptionRow({
         : { bg: colors.surface, border: colors.border, fg: colors.ink, keyBg: 'rgba(21,21,26,0.05)', keyFg: colors.muted };
 
   return (
-    <Animated.View style={{ opacity: dim, transform: [{ scale }, { translateX: shake }] }}>
+    <Animated.View {...fadeLayer} style={[OPTION_ROOM, { opacity: dim, transform: [{ scale }, { translateX: shake }] }]}>
       <Pressable
         onPress={onPress}
         onPressIn={() => Animated.timing(scale, { toValue: 0.98, duration: 90, useNativeDriver: true }).start()}
@@ -1260,7 +1272,6 @@ const styles = StyleSheet.create({
   },
   pressedCard: {
     transform: [{ scale: 0.985 }],
-    opacity: 0.94,
   },
   pressedRow: {
     opacity: 0.6,

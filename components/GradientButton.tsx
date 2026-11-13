@@ -30,7 +30,7 @@ export function GradientButton({ label, onPress, disabled, loading, leading, tra
       accessibilityRole="button"
       accessibilityLabel={accessibilityLabel ?? label}
       accessibilityState={{ disabled: !!inactive, busy: !!loading }}
-      style={({ pressed }) => [styles.shadow, disabled && styles.disabled, pressed && !inactive && styles.pressed, style]}
+      style={({ pressed }) => [styles.shadow, disabled && styles.disabled, pressed && !inactive && styles.pressedLift, style]}
     >
       <LinearGradient colors={gradients.purpleDeep} start={{ x: 0.25, y: 0 }} end={{ x: 0.75, y: 1 }} style={styles.fill}>
         <LinearGradient colors={gradients.sheen} style={styles.sheen} />
@@ -56,7 +56,7 @@ export function SecondaryButton({
     <Pressable
       onPress={onPress}
       accessibilityRole="button"
-      style={({ pressed }) => [styles.secondary, pressed && styles.pressed, style]}
+      style={({ pressed }) => [styles.secondary, pressed && styles.pressedLift, style]}
     >
       <View>
         <Text style={[type.button, styles.secondaryLabel]}>{label}</Text>
@@ -103,6 +103,11 @@ export function WhiteButton({
 }
 
 const styles = StyleSheet.create({
+  // Shadowed views shrink when pressed instead of fading: a faded view shows
+  // its Android shadow through it as a grey box.
+  pressedLift: {
+    transform: [{ scale: 0.97 }],
+  },
   shadow: {
     height: 56,
     borderRadius: 18,
@@ -134,6 +139,9 @@ const styles = StyleSheet.create({
   },
   disabled: {
     opacity: 0.45,
+    // No shadow while see-through, or Android shows it as a grey box.
+    elevation: 0,
+    shadowOpacity: 0,
   },
   pressed: {
     opacity: 0.88,

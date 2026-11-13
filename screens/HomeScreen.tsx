@@ -189,7 +189,7 @@ export function HomeScreen({ activeTab, onSelectTab }: Props) {
               onPress={openActivity}
               accessibilityRole="button"
               accessibilityLabel={hasUnseen ? 'Activity, new items' : 'Activity'}
-              style={({ pressed }) => [styles.bell, pressed && styles.pressed]}
+              style={({ pressed }) => [styles.bell, pressed && styles.pressedLift]}
             >
               <Icon name="bell" size={20} color={colors.ink} />
               {hasUnseen ? <View style={styles.bellDot} /> : null}
@@ -395,6 +395,11 @@ function risk(state: RequirementState, currentUserId: string | undefined) {
 }
 
 const styles = StyleSheet.create({
+  // Shadowed views shrink when pressed instead of fading: a faded view shows
+  // its Android shadow through it as a grey box.
+  pressedLift: {
+    transform: [{ scale: 0.97 }],
+  },
   screen: {
     flex: 1,
     backgroundColor: colors.bg,

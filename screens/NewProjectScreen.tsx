@@ -247,7 +247,7 @@ function Choice({
       disabled={disabled}
       accessibilityRole="button"
       accessibilityLabel={label === 'PDF' ? 'Attach a PDF' : 'Take a photo'}
-      style={({ pressed }) => [styles.choice, pressed && styles.pressed]}
+      style={({ pressed }) => [styles.choice, pressed && styles.pressedLift]}
     >
       <Icon name={icon} size={19} color={colors.purple} strokeWidth={1.8} />
       <Text style={styles.choiceLabel}>{label}</Text>
@@ -256,6 +256,11 @@ function Choice({
 }
 
 const styles = StyleSheet.create({
+  // Shadowed views shrink when pressed instead of fading: a faded view shows
+  // its Android shadow through it as a grey box.
+  pressedLift: {
+    transform: [{ scale: 0.97 }],
+  },
   screen: {
     flex: 1,
     backgroundColor: colors.bg,

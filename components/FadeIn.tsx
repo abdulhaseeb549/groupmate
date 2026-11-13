@@ -1,5 +1,6 @@
-import { ReactNode, useEffect, useRef } from 'react';
+import { ReactNode, useEffect, useRef, useState } from 'react';
 import { Animated } from 'react-native';
+import { fadeLayer, shadowRoom } from './fadeLayer';
 
 type Props = {
   children: ReactNode;
@@ -9,6 +10,7 @@ type Props = {
 
 const DURATION = 240;
 const LIFT = 12;
+const ROOM = shadowRoom();
 
 /**
  * Fades and lifts a section into place on mount. Screens are swapped by
@@ -17,10 +19,14 @@ const LIFT = 12;
  * as a page transition without needing the bottom nav (rendered inside
  * each screen) to animate along with it and flicker.
  *
- * Opacity and transform only, so it stays on the native driver.
+ * Opacity and transform only, so it stays on the native driver. On Android
+ * the section fades as one layer while it animates (see fadeLayer.ts), so
+ * card shadows don't show through as grey boxes; the layer is dropped once
+ * the fade is done.
  */
 export function FadeIn({ children, delay = 0 }: Props) {
   const progress = useRef(new Animated.Value(0)).current;
+  const [settled, setSettled] = useState(false);
 
   useEffect(() => {
     const animation = Animated.timing(progress, {
@@ -29,16 +35,22 @@ export function FadeIn({ children, delay = 0 }: Props) {
       delay,
       useNativeDriver: true,
     });
-    animation.start();
+    animation.start(({ finished }) => {
+      if (finished) setSettled(true);
+    });
     return () => animation.stop();
   }, [progress, delay]);
 
   return (
     <Animated.View
-      style={{
-        opacity: progress,
-        transform: [{ translateY: progress.interpolate({ inputRange: [0, 1], outputRange: [LIFT, 0] }) }],
-      }}
+      {...(settled ? null : fadeLayer)}
+      style={[
+        ROOM,
+        {
+          opacity: progress,
+          transform: [{ translateY: progress.interpolate({ inputRange: [0, 1], outputRange: [LIFT, 0] }) }],
+        },
+      ]}
     >
       {children}
     </Animated.View>
