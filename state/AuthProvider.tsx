@@ -56,7 +56,7 @@ function toProfile(row: {
   return {
     id: row.id,
     fullName: row.full_name,
-    initials: row.initials,
+    initials: computeInitials(row.full_name ?? '') || row.initials,
     avatarBg: row.avatar_bg,
     avatarFg: row.avatar_fg,
   };

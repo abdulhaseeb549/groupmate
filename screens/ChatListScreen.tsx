@@ -272,6 +272,7 @@ const styles = StyleSheet.create({
   // An outlined button, not a row in the list: it is an action, not a
   // conversation you can open.
   inviteRow: {
+    marginTop: 12,
     flexDirection: 'row',
     alignItems: 'center',
     gap: 14,

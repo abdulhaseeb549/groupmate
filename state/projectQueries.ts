@@ -5,6 +5,7 @@ import { Requirement } from '../data/requirements';
 import { TaskRequirement } from '../data/taskRequirements';
 import { TaskDependency } from '../data/taskDependencies';
 import { Member } from '../data/member';
+import { computeInitials } from '../utils/initials';
 
 type ProjectRow = {
   id: string;
@@ -262,7 +263,7 @@ export async function fetchProjectData(userId: string, activeProjectId?: string 
       if (!profile) return null;
       return {
         id: profile.id,
-        initials: profile.initials,
+        initials: computeInitials(profile.full_name ?? '') || profile.initials,
         name: profile.full_name,
         bg: profile.avatar_bg,
         fg: profile.avatar_fg,
@@ -479,7 +480,7 @@ export async function fetchMember(projectId: string, userId: string): Promise<Me
   const profile = profileRow as ProfileRow;
   return {
     id: profile.id,
-    initials: profile.initials,
+    initials: computeInitials(profile.full_name ?? '') || profile.initials,
     name: profile.full_name,
     bg: profile.avatar_bg,
     fg: profile.avatar_fg,

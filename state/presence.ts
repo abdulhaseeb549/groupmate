@@ -60,7 +60,9 @@ export function subscribeToPresence(
     if (!channel) return;
     if (state === 'active') {
       track();
-    } else {
+    } else if (state === 'background') {
+      // Only real backgrounding: iOS reports 'inactive' for Control Centre,
+      // a call banner or Face ID, which used to flicker you offline.
       void channel.untrack();
     }
   });

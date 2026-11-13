@@ -2,9 +2,11 @@ import { memo, ReactNode, useCallback, useEffect, useMemo, useRef, useState } fr
 import {
   ActivityIndicator,
   Animated,
+  AppState,
   Dimensions,
   FlatList,
   Image,
+  Keyboard,
   Linking,
   ListRenderItem,
   Modal,
@@ -51,7 +53,7 @@ import {
 } from '../state/messages';
 import { ChatHub } from '../state/chatRealtime';
 import { setOpenConversation } from '../state/chatSignals';
-import { useChatHub } from '../state/chatUnread';
+import { useChatHub, useChatUnread } from '../state/chatUnread';
 import { notifyMessage } from '../state/pushNotifications';
 import { pickDocument, pickMedia } from '../utils/filePicker';
 import { useProject } from '../state/ProjectRepository';
@@ -133,11 +135,33 @@ function useStableCallback<A extends unknown[], R>(fn: (...args: A) => R): (...a
  * says when to refetch: on reconnect, on returning to the foreground, and
  * when a message push for this thread arrives.
  */
+const WEEKDAYS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
+const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+
+/** Local calendar day of a timestamp, for grouping messages under a date. */
+function dayKey(iso: string): string {
+  const d = new Date(iso);
+  return `${d.getFullYear()}-${d.getMonth()}-${d.getDate()}`;
+}
+
+/** "Today", "Yesterday", "Mon 10 Nov", or "10 Nov 2025" for another year. */
+function dayLabel(iso: string): string {
+  const d = new Date(iso);
+  const today = new Date();
+  const yesterday = new Date(today.getFullYear(), today.getMonth(), today.getDate() - 1);
+  const key = dayKey(iso);
+  if (key === dayKey(today.toISOString())) return 'Today';
+  if (key === dayKey(yesterday.toISOString())) return 'Yesterday';
+  const base = `${d.getDate()} ${MONTHS[d.getMonth()]}`;
+  return d.getFullYear() === today.getFullYear() ? `${WEEKDAYS[d.getDay()]} ${base}` : `${base} ${d.getFullYear()}`;
+}
+
 export function ChatScreen({ conversation, onBack }: Props) {
   const insets = useSafeAreaInsets();
   const { project, tasks, members, membersById, claimTask, onlineUserIds } = useProject();
   const { session, profile } = useAuth();
   const hub = useChatHub();
+  const { markRead } = useChatUnread();
   const currentUserId = session?.user.id;
   const convKey = conversationKey(conversation);
   const conversationRef = useRef(conversation);
@@ -180,6 +204,8 @@ export function ChatScreen({ conversation, onBack }: Props) {
   /** Messages added / removed while a refresh was in flight, re-applied on top of its (older) result. */
   const arrivedRef = useRef<Message[]>([]);
   const removedRef = useRef<Set<string>>(new Set());
+  /** Reaction changes (live or your own) seen while a reactions fetch was in flight, re-applied on its older snapshot. */
+  const reactionOpsRef = useRef<Set<{ reaction: Reaction; add: boolean }[]>>(new Set());
   const loadingOlderRef = useRef(false);
   // Scroll bookkeeping: until the user drags, every size change jumps
   // straight to the bottom (no animated slide through history on open).
@@ -236,20 +262,32 @@ export function ChatScreen({ conversation, onBack }: Props) {
     [commit]
   );
 
+  const noteReactionOp = useCallback((reaction: Reaction, add: boolean) => {
+    for (const ops of reactionOpsRef.current) ops.push({ reaction, add });
+  }, []);
+
   /** Reactions for just these messages, replacing what's held for them. A failure only means no pills until the next refresh — never an error screen. */
   const loadReactions = useCallback(
     async (messageIds: string[], thread: { cacheKey: string }) => {
       if (messageIds.length === 0) return;
+      const ops: { reaction: Reaction; add: boolean }[] = [];
+      reactionOpsRef.current.add(ops);
       try {
         const fetched = await fetchReactions(messageIds);
         if (threadRef.current !== thread) return;
         const ids = new Set(messageIds);
         const loaded = new Set((messagesRef.current ?? []).map((m) => m.id));
-        commit({
-          reactions: [...reactionsRef.current.filter((r) => !ids.has(r.messageId) && loaded.has(r.messageId)), ...fetched],
-        });
+        let next = [...reactionsRef.current.filter((r) => !ids.has(r.messageId) && loaded.has(r.messageId)), ...fetched];
+        for (const { reaction, add } of ops) {
+          if (!ids.has(reaction.messageId)) continue;
+          next = next.filter((r) => !sameReaction(r, reaction));
+          if (add) next.push(reaction);
+        }
+        commit({ reactions: next });
       } catch {
         // Non-fatal on purpose.
+      } finally {
+        reactionOpsRef.current.delete(ops);
       }
     },
     [commit]
@@ -365,12 +403,14 @@ export function ChatScreen({ conversation, onBack }: Props) {
         case 'reactionAdded': {
           const { reaction } = event;
           if (!messagesRef.current?.some((m) => m.id === reaction.messageId)) return;
+          noteReactionOp(reaction, true);
           if (reactionsRef.current.some((r) => sameReaction(r, reaction))) return;
           commit({ reactions: [...reactionsRef.current, reaction] });
           break;
         }
         case 'reactionRemoved': {
           const { reaction } = event;
+          noteReactionOp(reaction, false);
           if (!reactionsRef.current.some((r) => sameReaction(r, reaction))) return;
           commit({ reactions: reactionsRef.current.filter((r) => !sameReaction(r, reaction)) });
           break;
@@ -380,7 +420,36 @@ export function ChatScreen({ conversation, onBack }: Props) {
           break;
       }
     });
-  }, [hub, currentUserId, convKey, addMessage, removeMessage, commit, refreshLatest]);
+  }, [hub, currentUserId, convKey, addMessage, removeMessage, commit, refreshLatest, noteReactionOp]);
+
+  // Read while you're looking at it: stamped as messages land, when the app
+  // goes to the background, and when this thread closes however that
+  // happens (Back, a notification tap to another thread, Share to chat).
+  const lastMessageId = messages && messages.length > 0 ? messages[messages.length - 1].id : null;
+  useEffect(() => {
+    if (lastMessageId) markRead(conversationRef.current);
+  }, [lastMessageId, markRead]);
+  useEffect(() => {
+    const sub = AppState.addEventListener('change', (state) => {
+      if (state !== 'active') markRead(conversationRef.current);
+    });
+    return () => {
+      sub.remove();
+      markRead(conversationRef.current);
+    };
+  }, [markRead]);
+
+  // With the keyboard up, the home-indicator inset is under the keyboard:
+  // keeping it left an empty strip between the composer and the keys.
+  const [keyboardUp, setKeyboardUp] = useState(false);
+  useEffect(() => {
+    const show = Keyboard.addListener('keyboardDidShow', () => setKeyboardUp(true));
+    const hide = Keyboard.addListener('keyboardDidHide', () => setKeyboardUp(false));
+    return () => {
+      show.remove();
+      hide.remove();
+    };
+  }, []);
 
   // Tells the notification handler which thread is on screen, so a push
   // for it doesn't also pop a banner over the conversation itself.
@@ -397,6 +466,7 @@ export function ChatScreen({ conversation, onBack }: Props) {
     const mineReaction: Reaction = { messageId, userId: currentUserId, emoji };
     const mine = reactionsRef.current.some((r) => sameReaction(r, mineReaction));
     // Optimistic, same as the rest of this app's simple toggles — reverted on failure below.
+    noteReactionOp(mineReaction, !mine);
     commit({
       reactions: mine
         ? reactionsRef.current.filter((r) => !sameReaction(r, mineReaction))
@@ -409,6 +479,7 @@ export function ChatScreen({ conversation, onBack }: Props) {
         await addReaction(messageId, project.id, currentUserId, emoji);
       }
     } catch {
+      noteReactionOp(mineReaction, mine);
       commit({
         reactions: mine
           ? [...reactionsRef.current.filter((r) => !sameReaction(r, mineReaction)), mineReaction]
@@ -427,6 +498,7 @@ export function ChatScreen({ conversation, onBack }: Props) {
     setDeletingId(null);
     setDeleteError(null);
     const removed = messagesRef.current?.find((m) => m.id === messageId) ?? null;
+    const removedReactions = reactionsRef.current.filter((r) => r.messageId === messageId);
     // Optimistic, same as removeTask — the RLS delete is scoped to your
     // own messages, so this only fails on something like a dropped
     // connection, not a permissions surprise.
@@ -434,7 +506,11 @@ export function ChatScreen({ conversation, onBack }: Props) {
     try {
       await deleteMessage(messageId);
     } catch (err) {
-      if (removed) addMessage(removed);
+      if (removed) {
+        removedRef.current.delete(messageId);
+        addMessage(removed);
+        commit({ reactions: [...reactionsRef.current.filter((r) => r.messageId !== messageId), ...removedReactions] });
+      }
       setDeleteError(err instanceof Error ? err.message : 'Could not unsend this message.');
     }
   }
@@ -486,13 +562,22 @@ export function ChatScreen({ conversation, onBack }: Props) {
     if (!body || sending || !currentUserId) return;
     setSending(true);
     setInput('');
+    setAttachError(null);
     try {
       const sent = await sendMessage(project.id, currentUserId, body, conversation.type === 'dm' ? conversation.otherUserId : null);
       // Shown now from the inserted row; the Realtime echo is deduped by id.
       addMessage(sent);
+      // Sent while the thread had failed to load: load it now, so the
+      // message doesn't vanish into an empty error screen.
+      if (messagesRef.current === null) {
+        setLoadError(null);
+        void refreshLatest();
+      }
       notifyOthers(body);
     } catch {
-      setInput(body);
+      // Put the text back, but never over something typed since.
+      setInput((current) => (current.trim().length === 0 ? body : current));
+      setAttachError('Message not sent. Check your connection and try again.');
     }
     setSending(false);
   }
@@ -533,9 +618,10 @@ export function ChatScreen({ conversation, onBack }: Props) {
   const renderItem = useCallback<ListRenderItem<Message>>(
     ({ item, index }) => {
       const prevItem = index > 0 && messages ? messages[index - 1] : undefined;
-      const showHeader = !prevItem || prevItem.authorId !== item.authorId;
+      const newDay = !prevItem || dayKey(prevItem.createdAt) !== dayKey(item.createdAt);
+      const showHeader = newDay || !prevItem || prevItem.authorId !== item.authorId;
       const sharedTask = item.sharedTaskId ? (tasksById.get(item.sharedTaskId) ?? null) : null;
-      return (
+      const row = (
         <MessageRow
           message={item}
           isOwn={item.authorId === currentUserId}
@@ -553,6 +639,17 @@ export function ChatScreen({ conversation, onBack }: Props) {
           isNew={!settledIdsRef.current.has(item.id)}
           onSettled={markSettled}
         />
+      );
+      if (!newDay) return row;
+      return (
+        <View>
+          <View style={styles.dayRow} accessibilityRole="header">
+            <View style={styles.dayChip}>
+              <Text style={styles.dayText}>{dayLabel(item.createdAt)}</Text>
+            </View>
+          </View>
+          {row}
+        </View>
       );
     },
     [messages, tasksById, currentUserId, membersById, stableClaim, handleClaimed, reactionsByMessage, toggleReaction, markSettled]
@@ -605,6 +702,17 @@ export function ChatScreen({ conversation, onBack }: Props) {
               <View style={[styles.centerBox, { paddingTop: headerHeight, paddingBottom: composerHeight }]}>
                 <Icon name="exclamation" size={20} color={colors.redText} strokeWidth={2.2} />
                 <Text style={[type.body, styles.muted, styles.centerText]}>{loadError}</Text>
+                <Pressable
+                  onPress={() => {
+                    setLoadError(null);
+                    void refreshLatest();
+                  }}
+                  accessibilityRole="button"
+                  hitSlop={8}
+                  style={({ pressed }) => [styles.retry, pressed && styles.retryPressed]}
+                >
+                  <Text style={[type.button, styles.retryText]}>Try again</Text>
+                </Pressable>
               </View>
             ) : messages === null ? (
               <View style={[styles.centerBox, { paddingTop: headerHeight, paddingBottom: composerHeight }]}>
@@ -640,6 +748,15 @@ export function ChatScreen({ conversation, onBack }: Props) {
             )}
           </GlassTarget>
 
+          {/* Messages fade out before they reach the back button and the gaps
+              around the title, instead of showing through between them. */}
+          <LinearGradient
+            pointerEvents="none"
+            colors={[colors.bg, colors.bg, 'rgba(250,249,247,0)']}
+            locations={[0, 0.6, 1]}
+            style={[styles.topFade, { height: headerHeight + 18 }]}
+          />
+
           <View
             pointerEvents="box-none"
             style={[styles.header, { paddingTop: Math.max(insets.top, 40) + 6 }]}
@@ -651,7 +768,7 @@ export function ChatScreen({ conversation, onBack }: Props) {
             {/* Heavier wash than the tab bar: this glass sits over text. */}
             <Glass radius={24} wash={0.74} style={styles.titleCapsule}>
               <View style={styles.titleInner}>
-                <Text style={[type.projectTitle, styles.ink]} numberOfLines={1}>
+                <Text style={[type.greeting, styles.ink, styles.headerTitle]} numberOfLines={1}>
                   {title}
                 </Text>
                 <HeaderStatus
@@ -666,9 +783,16 @@ export function ChatScreen({ conversation, onBack }: Props) {
             </Glass>
           </View>
 
+          <LinearGradient
+            pointerEvents="none"
+            colors={['rgba(250,249,247,0)', colors.bg, colors.bg]}
+            locations={[0, 0.35, 1]}
+            style={[styles.bottomFade, { height: composerHeight + 18 }]}
+          />
+
           <View
             pointerEvents="box-none"
-            style={[styles.bottomDock, { paddingBottom: Math.max(insets.bottom, 12) + 6 }]}
+            style={[styles.bottomDock, { paddingBottom: keyboardUp ? 10 : Math.max(insets.bottom, 12) + 6 }]}
             onLayout={(e) => setComposerHeight(e.nativeEvent.layout.height)}
           >
             {attachError ? (
@@ -1375,7 +1499,7 @@ function AttachmentCard({ message, onLongPress }: { message: Message; onLongPres
         )}
       </View>
       <View style={styles.attachmentInfo}>
-        <Text style={[type.body, styles.ink]} numberOfLines={1}>
+        <Text style={[type.body, styles.ink]} numberOfLines={2}>
           {message.attachmentName}
         </Text>
         {message.attachmentSize !== null ? (
@@ -1629,6 +1753,55 @@ const styles = StyleSheet.create({
   },
   centerText: {
     textAlign: 'center',
+  },
+  retry: {
+    marginTop: 4,
+    height: 44,
+    paddingHorizontal: 20,
+    borderRadius: 22,
+    backgroundColor: colors.purpleSoft,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  retryPressed: {
+    transform: [{ scale: 0.97 }],
+  },
+  retryText: {
+    color: colors.purple,
+  },
+  // Medium, not semibold: a bold name in a small capsule looked heavy on phones.
+  headerTitle: {
+    fontSize: 16,
+    lineHeight: 22,
+  },
+  topFade: {
+    position: 'absolute',
+    top: 0,
+    left: 0,
+    right: 0,
+  },
+  bottomFade: {
+    position: 'absolute',
+    bottom: 0,
+    left: 0,
+    right: 0,
+  },
+  dayRow: {
+    alignItems: 'center',
+    paddingTop: 14,
+    paddingBottom: 6,
+  },
+  dayChip: {
+    paddingHorizontal: 12,
+    paddingVertical: 4,
+    borderRadius: 12,
+    backgroundColor: 'rgba(21,21,26,0.05)',
+  },
+  dayText: {
+    fontFamily: type.caption.fontFamily,
+    fontSize: 12,
+    lineHeight: 16,
+    color: colors.muted,
   },
   emptyTile: {
     width: layout.iconTile,

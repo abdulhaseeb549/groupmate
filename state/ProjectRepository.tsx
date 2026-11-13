@@ -558,7 +558,7 @@ function ProjectProviderReady({
 
   return (
     <ProjectContext.Provider value={value}>
-      <ChatUnreadProvider projectId={project.id} userId={userId}>
+      <ChatUnreadProvider projectId={project.id} userId={userId} members={members}>
         {/* Wrapping view, not a fragment: the toast positions absolutely and
             needs a full-height parent it can anchor to from any screen. */}
         <View style={{ flex: 1 }}>

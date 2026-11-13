@@ -6,7 +6,9 @@
  */
 export function computeInitials(name: string): string {
   const trimmed = name.trim();
-  const words = trimmed.split(/\s+/).filter(Boolean);
+  // Dots, underscores and dashes split words too: a name taken from an
+  // email ("ayesha.khan") should read "AK", not "AY".
+  const words = trimmed.split(/[\s._-]+/).filter(Boolean);
   const initials = words.length >= 2 ? words[0][0] + words[1][0] : trimmed.slice(0, 2);
   return initials.toUpperCase();
 }

@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
 import { NavTab } from '../components/BottomNav';
 import { useNavigation } from '../state/NavigationProvider';
-import { Conversation } from '../state/messages';
+import { Conversation, conversationKey } from '../state/messages';
 import { useChatUnread } from '../state/chatUnread';
 import { useHardwareBackHandler } from '../utils/hardwareBack';
 import { ChatListScreen } from './ChatListScreen';
@@ -50,7 +50,9 @@ export function ChatTab({ activeTab, onSelectTab }: Props) {
   useHardwareBackHandler(closeConversation, conversation !== null);
 
   if (conversation) {
-    return <ChatScreen conversation={conversation} onBack={closeConversation} />;
+    // Keyed by thread: switching threads (a notification tap, Share to chat)
+    // must start fresh, or a half-typed DM could be sent to the whole team.
+    return <ChatScreen key={conversationKey(conversation)} conversation={conversation} onBack={closeConversation} />;
   }
 
   return (

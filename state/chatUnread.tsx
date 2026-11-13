@@ -1,5 +1,5 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import { createContext, ReactNode, useCallback, useContext, useEffect, useMemo, useState } from 'react';
+import { createContext, ReactNode, useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react';
 import {
   Conversation,
   ConversationSummary,
@@ -51,10 +51,13 @@ function storageKey(projectId: string, userId: string) {
 export function ChatUnreadProvider({
   projectId,
   userId,
+  members,
   children,
 }: {
   projectId: string;
   userId: string | undefined;
+  /** Current members: a DM with someone who left has no row to open, so it must not light the dot. */
+  members: { id: string }[];
   children: ReactNode;
 }) {
   const [summaries, setSummaries] = useState<Record<string, ConversationSummary>>({});
@@ -62,6 +65,35 @@ export function ChatUnreadProvider({
   // Until the stored stamps have loaded, every thread would look unread —
   // so nothing is reported unread before this flips.
   const [loaded, setLoaded] = useState(false);
+  const summariesRef = useRef(summaries);
+  summariesRef.current = summaries;
+  // Threads a live message touched while a summaries fetch was in flight:
+  // the fetch is a snapshot from before them, so it must not roll them back.
+  const touchedRef = useRef<Set<string> | null>(null);
+
+  /** Refetches every preview, keeping any live message newer than the snapshot. */
+  const refetchSummaries = useCallback(
+    async (isCancelled: () => boolean) => {
+      if (!userId) return;
+      const touched = new Set<string>();
+      touchedRef.current = touched;
+      try {
+        const next = await fetchConversationSummaries(projectId, userId);
+        if (isCancelled()) return;
+        setSummaries((prev) => {
+          const merged = { ...next };
+          for (const key of touched) {
+            const live = prev[key];
+            if (live && (!merged[key] || live.lastAt > merged[key].lastAt)) merged[key] = live;
+          }
+          return merged;
+        });
+      } finally {
+        if (touchedRef.current === touched) touchedRef.current = null;
+      }
+    },
+    [projectId, userId]
+  );
 
   useEffect(() => {
     if (!userId) return;
@@ -81,18 +113,20 @@ export function ChatUnreadProvider({
         if (!cancelled) setLoaded(true);
       });
 
-    fetchConversationSummaries(projectId, userId)
-      .then((next) => {
-        if (!cancelled) setSummaries(next);
-      })
-      .catch(() => {
-        if (!cancelled) setSummaries({});
-      });
+    // One quiet retry: a failed first fetch used to leave every preview
+    // blank until the next reconnect.
+    const isCancelled = () => cancelled;
+    refetchSummaries(isCancelled).catch(() => {
+      if (cancelled) return;
+      setTimeout(() => {
+        if (!cancelled) refetchSummaries(isCancelled).catch(() => {});
+      }, 3000);
+    });
 
     return () => {
       cancelled = true;
     };
-  }, [projectId, userId]);
+  }, [projectId, userId, refetchSummaries]);
 
   // The project's one set of chat channels (see state/chatRealtime.ts).
   // Created during render — it's only a listener registry until start() —
@@ -115,6 +149,7 @@ export function ChatUnreadProvider({
         const message = event.message;
         const conversation = conversationOf(message, userId);
         const key = conversationKey(conversation);
+        touchedRef.current?.add(key);
         setSummaries((prev) => {
           const existing = prev[key];
           if (existing && existing.lastAt > message.createdAt) return prev;
@@ -129,30 +164,33 @@ export function ChatUnreadProvider({
             },
           };
         });
-      } else if (event.type === 'resync') {
+      } else if (event.type === 'resync' || event.type === 'messageDeleted') {
         // Realtime doesn't replay inserts missed while the socket was down
         // (backgrounded app, dropped connection), and this provider isn't
         // remounted by switching tabs — so a reconnect, a return to the
-        // foreground, or a push refetches the previews.
-        fetchConversationSummaries(projectId, userId)
-          .then((next) => {
-            if (!cancelled) setSummaries(next);
-          })
-          .catch(() => {});
+        // foreground, or a push refetches the previews. An unsend does too,
+        // or the deleted text would stay as the list's preview.
+        refetchSummaries(() => cancelled).catch(() => {});
       }
     });
     return () => {
       cancelled = true;
       unsubscribe();
     };
-  }, [hub, projectId, userId]);
+  }, [hub, userId, refetchSummaries]);
 
   const markRead = useCallback(
     (conversation: Conversation) => {
       if (!userId) return;
       const key = conversationKey(conversation);
+      // Never earlier than the newest message: a phone clock running behind
+      // the server would otherwise leave just-read messages unread.
+      const now = new Date().toISOString();
+      const newest = summariesRef.current[key]?.lastAt;
+      const stamp = newest && newest > now ? newest : now;
       setLastRead((prev) => {
-        const next = { ...prev, [key]: new Date().toISOString() };
+        if (prev[key] && prev[key] >= stamp) return prev;
+        const next = { ...prev, [key]: stamp };
         void AsyncStorage.setItem(storageKey(projectId, userId), JSON.stringify(next)).catch(() => {});
         return next;
       });
@@ -173,13 +211,16 @@ export function ChatUnreadProvider({
       return !seenAt || summary.lastAt > seenAt;
     }
 
+    const memberIds = new Set(members.map((m) => m.id));
     return {
       summaries,
-      hasUnread: Object.values(summaries).some((s) => isUnread(s.conversation)),
+      hasUnread: Object.values(summaries).some(
+        (s) => (s.conversation.type === 'group' || memberIds.has(s.conversation.otherUserId)) && isUnread(s.conversation)
+      ),
       isUnread,
       markRead,
     };
-  }, [summaries, lastRead, loaded, userId, markRead]);
+  }, [summaries, lastRead, loaded, userId, markRead, members]);
 
   return (
     <ChatHubContext.Provider value={hub}>

@@ -25,8 +25,8 @@ export const PREVIEW_USER_ID = 'preview-you';
 
 export const previewMembers: Member[] = [
   { id: PREVIEW_USER_ID, initials: 'SK', name: 'Sk Rahman', bg: '#EDE7FF', fg: '#6D4AFF', role: 'owner' },
-  { id: 'preview-ayesha', initials: 'AY', name: 'Ayesha Khan', bg: '#E4F6EE', fg: '#147A52', role: 'member' },
-  { id: 'preview-bilal', initials: 'BI', name: 'Bilal Ahmed', bg: '#FFF0EF', fg: '#C4403B', role: 'member' },
+  { id: 'preview-ayesha', initials: 'AK', name: 'Ayesha Khan', bg: '#E4F6EE', fg: '#147A52', role: 'member' },
+  { id: 'preview-bilal', initials: 'BA', name: 'Bilal Ahmed', bg: '#FFF0EF', fg: '#C4403B', role: 'member' },
 ];
 
 export const previewProject: Project = {
