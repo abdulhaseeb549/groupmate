@@ -1,13 +1,26 @@
+import { decode } from 'base64-arraybuffer';
 import { supabase } from '../lib/supabase';
 import { PdfFileInput } from '../utils/pdfPicker';
+import { ReadFigure, ReadPage, ReadScan } from '../utils/pdfReader/reader';
 
 export type Difficulty = 'easy' | 'medium' | 'hard';
+
+/** A figure shown above a question: a data URI while fresh, a signed link once saved. */
+export type QuestionImage = {
+  uri: string;
+  /** JPEG base64, kept until the quiz is saved so the picture can be uploaded. */
+  base64?: string;
+  width?: number;
+  height?: number;
+};
 
 export type ExtractedQuestion = {
   prompt: string;
   choices: string[];
   correctIndex: number;
   explanation: string;
+  /** A picture question's figure (migration 0028). */
+  image?: QuestionImage | null;
 };
 
 export type ExtractedQuiz = {
@@ -42,6 +55,8 @@ type RawQuizQuestion = {
   choiceD: string;
   correctChoice: 'A' | 'B' | 'C' | 'D';
   explanation: string;
+  /** Picture questions: the id of a figure sent in `source.figures`. */
+  figure?: string | null;
 };
 
 const LETTERS = ['A', 'B', 'C', 'D'] as const;
@@ -59,9 +74,129 @@ export type GenerateQuizInput = {
   batchId?: string;
   part?: number;
   partCount?: number;
+  /** One part's share of a PDF read on the phone (see materialForParts). */
+  source?: SourcePayload;
   difficulty: Difficulty;
   questionCount: number;
 };
+
+// ---------------------------------------------------------------------------
+// Big PDFs (14 Nov): the phone reads the PDF and sends text, not the file
+// ---------------------------------------------------------------------------
+
+/** What the reader pulled out of the pages the student picked. */
+export type StudyMaterial = {
+  from: number;
+  to: number;
+  pages: ReadPage[];
+  scans: ReadScan[];
+  figures: ReadFigure[];
+};
+
+/** What one request carries (generate-quiz's SourceInput). */
+export type SourcePayload = {
+  text: string;
+  images: { page: number; data: string }[];
+  figures: { id: string; page: number; data: string; w?: number; h?: number }[];
+  shared: boolean;
+};
+
+/** Per-request limits, a little under the Edge Functions' own. */
+const PART_TEXT_LIMIT = 220_000;
+const NOTES_TEXT_LIMIT = 300_000;
+const IMAGES_PER_REQUEST = 8;
+const FIGURES_PER_PART = 3;
+/** Below this much text every part reads all of it (and covers its own section). */
+const SHARED_TEXT_LIMIT = 30_000;
+/** A scanned page counts as this much text when sharing pages out. */
+const SCAN_WEIGHT = 2500;
+
+function spreadPick<T>(list: T[], max: number): T[] {
+  if (list.length <= max) return list;
+  return Array.from({ length: max }, (_, i) => list[Math.floor((i * list.length) / max)]);
+}
+
+/** "[Page 12]" + text for each page, dropping evenly spaced pages if it runs over `limit`. */
+function pagesText(pages: ReadPage[], limit: number): string {
+  let keep = pages;
+  const size = (ps: ReadPage[]) => ps.reduce((n, p) => n + p.text.length + 14, 0);
+  while (keep.length > 1 && size(keep) > limit) {
+    keep = spreadPick(keep, Math.max(1, Math.floor(keep.length * (limit / size(keep)) * 0.95)));
+  }
+  return keep
+    .map((p) => `[Page ${p.n}]\n${p.text}`)
+    .join('\n\n')
+    .slice(0, limit);
+}
+
+/**
+ * Shares the material out over the quiz's parts. Short material goes whole
+ * to every part (each then covers its own section, as with a PDF); longer
+ * material is cut into runs of pages of about equal size, one per part, so
+ * each request reads only its own pages. Figures go with their pages.
+ */
+export function materialForParts(m: StudyMaterial, partCount: number): SourcePayload[] {
+  type Unit = { page: number; weight: number; text?: ReadPage; scan?: ReadScan };
+  const units: Unit[] = [
+    ...m.pages.map((p) => ({ page: p.n, weight: p.text.length, text: p })),
+    ...m.scans.map((s) => ({ page: s.page, weight: SCAN_WEIGHT, scan: s })),
+  ].sort((a, b) => a.page - b.page);
+  const total = units.reduce((n, u) => n + u.weight, 0);
+  const figures = m.figures.map((f) => ({ id: f.id, page: f.page, data: f.data, w: f.w, h: f.h }));
+
+  const shared =
+    partCount === 1 ||
+    units.length < partCount ||
+    (total <= SHARED_TEXT_LIMIT && m.scans.length <= IMAGES_PER_REQUEST);
+  if (shared) {
+    const text = pagesText(m.pages, PART_TEXT_LIMIT);
+    const images = spreadPick(m.scans, IMAGES_PER_REQUEST).map((s) => ({ page: s.page, data: s.data }));
+    return Array.from({ length: partCount }, (_, i) => ({
+      text,
+      images,
+      figures: figures.filter((_, k) => k % partCount === i).slice(0, FIGURES_PER_PART),
+      shared: partCount > 1,
+    }));
+  }
+
+  // Cut where the running total crosses each part's share.
+  const groups: Unit[][] = Array.from({ length: partCount }, () => []);
+  let before = 0;
+  for (const u of units) {
+    const middle = before + u.weight / 2;
+    groups[Math.min(partCount - 1, Math.floor((middle / Math.max(1, total)) * partCount))].push(u);
+    before += u.weight;
+  }
+  // A part left empty (one huge page next to it) reads its nearest neighbour's pages.
+  for (let i = 0; i < partCount; i++) {
+    if (groups[i].length > 0) continue;
+    for (let d = 1; d < partCount; d++) {
+      const g = groups[i - d]?.length ? groups[i - d] : groups[i + d]?.length ? groups[i + d] : null;
+      if (g) {
+        groups[i] = g;
+        break;
+      }
+    }
+  }
+  return groups.map((g) => {
+    const first = g[0].page;
+    const last = g[g.length - 1].page;
+    return {
+      text: pagesText(g.flatMap((u) => (u.text ? [u.text] : [])), PART_TEXT_LIMIT),
+      images: spreadPick(g.flatMap((u) => (u.scan ? [{ page: u.scan.page, data: u.scan.data }] : [])), IMAGES_PER_REQUEST),
+      figures: spreadPick(figures.filter((f) => f.page >= first && f.page <= last), FIGURES_PER_PART),
+      shared: false,
+    };
+  });
+}
+
+/** The whole picked range for the pointer cards: all the text that fits, and some scanned pages. */
+export function materialForNotes(m: StudyMaterial): { text: string; images: { page: number; data: string }[] } {
+  return {
+    text: pagesText(m.pages, NOTES_TEXT_LIMIT),
+    images: spreadPick(m.scans, IMAGES_PER_REQUEST).map((s) => ({ page: s.page, data: s.data })),
+  };
+}
 
 /**
  * Calls the generate-quiz Edge Function — generation only, nothing is
@@ -91,12 +226,20 @@ export async function generateQuiz(input: GenerateQuizInput): Promise<GenerateRe
     return { quiz: null, error: data?.error ?? 'Something went wrong generating that quiz.' };
   }
 
-  const questions = data.extracted.questions.map((q) => ({
-    prompt: q.prompt,
-    choices: [q.choiceA, q.choiceB, q.choiceC, q.choiceD],
-    correctIndex: LETTERS.indexOf(q.correctChoice),
-    explanation: q.explanation,
-  }));
+  // A figure question gets its picture from the figures this request sent.
+  const figures = new Map((input.source?.figures ?? []).map((f) => [f.id, f]));
+  const questions = data.extracted.questions.map((q): ExtractedQuestion => {
+    const figure = q.figure ? figures.get(q.figure) : undefined;
+    return {
+      prompt: q.prompt,
+      choices: [q.choiceA, q.choiceB, q.choiceC, q.choiceD],
+      correctIndex: LETTERS.indexOf(q.correctChoice),
+      explanation: q.explanation,
+      image: figure
+        ? { uri: `data:image/jpeg;base64,${figure.data}`, base64: figure.data, width: figure.w, height: figure.h }
+        : null,
+    };
+  });
 
   return { quiz: { title: data.extracted.title, questions }, error: null };
 }
@@ -109,7 +252,10 @@ export async function generateQuiz(input: GenerateQuizInput): Promise<GenerateRe
  * stays null for a later retry rather than taking the quiz down with it.
  */
 export async function generateNotes(
-  input: Pick<GenerateQuizInput, 'studyText' | 'syllabusFile'>
+  input: Pick<GenerateQuizInput, 'studyText' | 'syllabusFile' | 'fileToken'> & {
+    /** A PDF read on the phone (materialForNotes). */
+    source?: { text: string; images: { page: number; data: string }[] };
+  }
 ): Promise<{ pages: NotePage[] | null; error: string | null }> {
   const { data, error } = await supabase.functions.invoke<{
     extracted?: { pages: NotePage[] };
@@ -151,6 +297,22 @@ export async function commitQuiz(
       .single();
     if (quizError) throw quizError;
 
+    // Picture questions: each figure is saved as <quiz id>/<position>.jpg.
+    // A picture that fails to upload (twice) leaves that question without it.
+    const imagePaths = await Promise.all(
+      quiz.questions.map(async (q, i) => {
+        if (!q.image?.base64) return null;
+        const path = `${quizRow.id}/${i + 1}.jpg`;
+        for (let attempt = 0; attempt < 2; attempt++) {
+          const { error } = await supabase.storage
+            .from(FIGURE_BUCKET)
+            .upload(path, decode(q.image.base64), { contentType: 'image/jpeg', upsert: true });
+          if (!error) return path;
+        }
+        return null;
+      })
+    );
+
     const rows = quiz.questions.map((q, i) => ({
       quiz_id: quizRow.id,
       prompt: q.prompt,
@@ -158,6 +320,7 @@ export async function commitQuiz(
       correct_index: q.correctIndex,
       explanation: q.explanation,
       position: i + 1,
+      image_path: imagePaths[i],
     }));
     const { error: questionsError } = await supabase.from('quiz_questions').insert(rows);
     if (questionsError) throw questionsError;
@@ -170,6 +333,13 @@ export async function commitQuiz(
 
 /** RLS scopes this to quizzes the caller owns; quiz_questions cascade-delete with it. */
 export async function deleteQuiz(quizId: string): Promise<{ error: string | null }> {
+  // Figures first: the storage policy needs the quiz row to still exist.
+  try {
+    const { data: files } = await supabase.storage.from(FIGURE_BUCKET).list(quizId, { limit: 100 });
+    if (files?.length) await supabase.storage.from(FIGURE_BUCKET).remove(files.map((f) => `${quizId}/${f.name}`));
+  } catch {
+    // a leftover picture is harmless; the quiz still goes
+  }
   const { error } = await supabase.from('quizzes').delete().eq('id', quizId);
   return { error: error?.message ?? null };
 }
@@ -197,18 +367,32 @@ export async function fetchQuizzes(userId: string): Promise<QuizSummary[]> {
 export async function fetchQuizQuestions(quizId: string): Promise<ExtractedQuestion[]> {
   const { data, error } = await supabase
     .from('quiz_questions')
-    .select('prompt, choices, correct_index, explanation')
+    .select('prompt, choices, correct_index, explanation, image_path')
     .eq('quiz_id', quizId)
     .order('position', { ascending: true });
   if (error) throw error;
 
-  return (data ?? []).map((row) => ({
-    prompt: row.prompt as string,
-    choices: row.choices as string[],
-    correctIndex: row.correct_index as number,
-    explanation: row.explanation as string,
-  }));
+  // Private pictures: short-lived links, made in one call for the whole quiz.
+  const paths = (data ?? []).map((row) => row.image_path as string | null).filter((p): p is string => !!p);
+  const links = new Map<string, string>();
+  if (paths.length > 0) {
+    const { data: signed } = await supabase.storage.from(FIGURE_BUCKET).createSignedUrls(paths, 6 * 60 * 60);
+    for (const s of signed ?? []) if (s.path && s.signedUrl) links.set(s.path, s.signedUrl);
+  }
+
+  return (data ?? []).map((row) => {
+    const link = row.image_path ? links.get(row.image_path as string) : undefined;
+    return {
+      prompt: row.prompt as string,
+      choices: row.choices as string[],
+      correctIndex: row.correct_index as number,
+      explanation: row.explanation as string,
+      image: link ? { uri: link } : null,
+    };
+  });
 }
+
+const FIGURE_BUCKET = 'quiz-figures';
 
 /** Fire-and-forget, same pattern as ProjectRepository's persist calls — only updates if this beats the existing best. */
 export async function recordBestScore(quizId: string, score: number): Promise<void> {
@@ -273,7 +457,15 @@ function splitEvenly(total: number, parts: number): number[] {
   return Array.from({ length: parts }, (_, i) => base + (i < extra ? 1 : 0));
 }
 
-const norm = (t: string) => t.toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim();
+// Works in any script (a Hindi quiz is all non-Latin letters): only spaces
+// and punctuation are folded, so two different Hindi prompts never collapse
+// into the same empty key. No \p{L} here, to be safe on every JS engine.
+const norm = (t: string) =>
+  t
+    .normalize('NFKC')
+    .toLowerCase()
+    .replace(/[\s.,;:!?'"“”‘’()[\]{}\-–—_/\\|।]+/g, ' ')
+    .trim();
 
 /**
  * Writes the quiz as parallel parts of ~5 questions, each covering its own
@@ -283,13 +475,17 @@ const norm = (t: string) => t.toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim();
  */
 export async function generateQuizParts(
   input: GenerateQuizInput,
-  onProgress: (quiz: ExtractedQuiz, settled: number, parts: number) => void
+  onProgress: (quiz: ExtractedQuiz, settled: number, parts: number) => void,
+  /** Pages read on the phone, shared out over the parts (in place of the PDF). */
+  studyMaterial?: StudyMaterial
 ): Promise<GenerateResult> {
   const partCount = Math.max(1, Math.ceil(input.questionCount / QUESTIONS_PER_PART));
   const sizes = splitEvenly(input.questionCount, partCount);
   const batchId = newBatchId();
   const { syllabusFile, fileToken, ...rest } = input;
   const material = fileToken ? { fileToken } : { syllabusFile };
+  // A PDF read on the phone: each part gets its own pages instead of the file.
+  const sources = studyMaterial ? materialForParts(studyMaterial, partCount) : null;
 
   let title = '';
   const questions: ExtractedQuestion[] = [];
@@ -301,7 +497,7 @@ export async function generateQuizParts(
     sizes.map(async (size, i) => {
       const result = await generateQuiz({
         ...rest,
-        ...material,
+        ...(sources ? { source: sources[i] } : material),
         questionCount: size,
         batchId,
         part: i + 1,

@@ -45,14 +45,20 @@ import {
   recordAttempt,
   formatDuration,
   leaveQuiz,
-  uploadMaterial,
+  materialForNotes,
+  QUESTIONS_PER_PART,
+  StudyMaterial,
 } from '../state/studyQuiz';
 import { colors, gradients, radius, type } from '../theme';
 import { useHardwareBackHandler } from '../utils/hardwareBack';
 import { fadeLayer, shadowRoom } from '../components/fadeLayer';
 import { JoinQuizSheet } from '../components/study/JoinQuizSheet';
 import { LeaderboardSheet } from '../components/study/LeaderboardSheet';
-import { pickPdf, PdfFileInput } from '../utils/pdfPicker';
+import { PdfFileInput, pickStudyPdf, PickedStudyPdf } from '../utils/pdfPicker';
+import { pdfReader, ReaderError, ReaderInfo, readerErrorText } from '../utils/pdfReader/reader';
+import { PdfReaderHost } from '../components/study/PdfReaderHost';
+import { PagePicker, PageRange, rangeProblem } from '../components/study/PagePicker';
+import { QuestionFigure } from '../components/study/QuestionFigure';
 
 const MIN_LENGTH = 40;
 // Quick picks, plus "Custom" for any number in range. The range matches the
@@ -74,6 +80,18 @@ type Props = {
   activeTab: NavTab;
   onSelectTab: (tab: NavTab) => void;
 };
+
+/** Most pages one quiz reads: text pages, and scanned pages (sent as pictures, so far fewer). */
+const TEXT_PAGE_LIMIT = 120;
+const SCAN_PAGE_LIMIT = 20;
+/** Books up to this long are read whole without asking which pages. */
+const NO_PICKER_PAGES = 30;
+
+/** "12.4 MB" */
+function formatMb(bytes: number) {
+  const mb = bytes / (1024 * 1024);
+  return mb >= 0.1 ? `${mb >= 100 ? Math.round(mb) : mb.toFixed(1)} MB` : 'PDF';
+}
 
 /** The quiz clock: this many seconds for every question (2 questions = 1:20). */
 const SECONDS_PER_QUESTION = 40;
@@ -110,7 +128,13 @@ export function StudyScreen({ activeTab, onSelectTab }: Props) {
   const [deleting, setDeleting] = useState(false);
 
   const [studyText, setStudyText] = useState('');
-  const [syllabusFile, setSyllabusFile] = useState<PdfFileInput | null>(null);
+  // The picked PDF stays on the phone; the reader takes the chosen pages from it.
+  const [pdf, setPdf] = useState<PickedStudyPdf | null>(null);
+  const [pdfInfo, setPdfInfo] = useState<ReaderInfo | null>(null);
+  /** opening: reader starting; ready: pick pages; fallback: reader failed, the file (15 MB or less) is sent as before. */
+  const [pdfState, setPdfState] = useState<'opening' | 'ready' | 'fallback' | 'failed'>('opening');
+  const [pageRange, setPageRange] = useState<PageRange | null>(null);
+  const [readStatus, setReadStatus] = useState<string | null>(null);
   const [difficulty, setDifficulty] = useState<Difficulty>('medium');
   const [questionCount, setQuestionCount] = useState<number>(15);
   const [generating, setGenerating] = useState(false);
@@ -126,9 +150,7 @@ export function StudyScreen({ activeTab, onSelectTab }: Props) {
   const [score, setScore] = useState(0);
   const [streak, setStreak] = useState(0);
   const [bestStreak, setBestStreak] = useState(0);
-  // Faster quizzes: the PDF uploads the moment it's picked (upload-material),
-  // and the quiz starts on its first part while the rest are still writing.
-  const upload = useRef<{ file: PdfFileInput; token: Promise<string | null> } | null>(null);
+  // The quiz starts on its first part while the rest are still writing.
   const [moreComing, setMoreComing] = useState(false);
   const [expectedTotal, setExpectedTotal] = useState(0);
   // Quiz clock (SECONDS_PER_QUESTION each) and how the last attempt ended.
@@ -173,44 +195,111 @@ export function StudyScreen({ activeTab, onSelectTab }: Props) {
     }
   }, [studySetupRequested]);
 
+  function removePdf() {
+    pdfReader.close();
+    setPdf(null);
+    setPdfInfo(null);
+    setPageRange(null);
+  }
+
   function openSetup() {
     setStudyText('');
-    setSyllabusFile(null);
-    upload.current = null;
+    removePdf();
     setSetupError(null);
     setPhase('setup');
   }
 
   async function pickFile() {
-    const { file, error } = await pickPdf();
+    const { pdf: picked, error } = await pickStudyPdf();
     if (error) {
       setSetupError(error);
       return;
     }
-    if (!file) return;
+    if (!picked) return;
     setSetupError(null);
-    setSyllabusFile(file);
-    // Upload now, while they choose difficulty and count. A failed upload
-    // is not an error: Generate falls back to sending the file itself.
-    upload.current = { file, token: uploadMaterial(file).then((r) => r.token).catch(() => null) };
+    setPdf(picked);
+    setPdfInfo(null);
+    setPageRange(null);
+    setPdfState('opening');
+    try {
+      const info = await pdfReader.open(picked.source);
+      setPdfInfo(info);
+      setPdfState('ready');
+      const limit = info.scanned ? SCAN_PAGE_LIMIT : TEXT_PAGE_LIMIT;
+      if (info.pages <= limit) setPageRange({ from: 1, to: info.pages });
+    } catch (err) {
+      const code = err instanceof ReaderError ? err.code : 'failed';
+      if ((code === 'offline' || code === 'timeout' || code === 'failed') && picked.size <= 15 * 1024 * 1024) {
+        // The reader couldn't start (offline CDN, an old web view): a small
+        // PDF can still go the old way, sent whole.
+        setPdfState('fallback');
+      } else {
+        setPdfState('failed');
+        setSetupError(readerErrorText(err));
+      }
+    }
+  }
+
+  /** Reads the chosen pages on the phone. Null (with the error shown) when there's nothing to quiz on. */
+  async function readPages(partCount: number): Promise<StudyMaterial | null> {
+    if (!pdfInfo || !pageRange) return null;
+    const { from, to } = pageRange;
+    setReadStatus(`Reading pages ${from}–${to}`);
+    try {
+      const out = await pdfReader.extract(
+        from,
+        to,
+        { maxScans: Math.min(SCAN_PAGE_LIMIT, 8 * partCount), maxFigures: Math.min(12, 3 * partCount) },
+        (p) =>
+          setReadStatus(
+            p.stage === 'text' ? `Reading page ${from + p.done - 1} of ${to}` : 'Finding diagrams and graphs'
+          )
+      );
+      if (out.pages.length === 0 && out.scans.length === 0) {
+        setSetupError("Couldn't find anything to read on those pages. Try other pages.");
+        return null;
+      }
+      return { from, to, pages: out.pages, scans: out.scans, figures: out.figures };
+    } catch (err) {
+      setSetupError(readerErrorText(err));
+      return null;
+    } finally {
+      setReadStatus(null);
+    }
   }
 
   async function handleGenerate() {
     setGenerating(true);
     setSetupError(null);
 
-    const token = syllabusFile && upload.current?.file === syllabusFile ? await upload.current.token : null;
-    const source = {
-      studyText: studyText.trim() || undefined,
-      ...(token ? { fileToken: token } : { syllabusFile: syllabusFile ?? undefined }),
-    };
+    const partCount = Math.max(1, Math.ceil(questionCount / QUESTIONS_PER_PART));
+    let material: StudyMaterial | undefined;
+    let syllabusFile: PdfFileInput | undefined;
+    if (pdf && pdfState === 'ready') {
+      const read = await readPages(partCount);
+      if (!read) {
+        setGenerating(false);
+        return;
+      }
+      material = read;
+    } else if (pdf && pdfState === 'fallback') {
+      syllabusFile = (await pdf.readAll()) ?? undefined;
+      if (!syllabusFile) {
+        setGenerating(false);
+        setSetupError("Couldn't read this PDF. Try again, or try another copy.");
+        return;
+      }
+    }
 
+    const typed = studyText.trim() || undefined;
     // Notes run beside the quiz and never hold it up: they're attached to
     // the saved quiz whenever they land.
-    const notes = generateNotes(source);
+    const notes = generateNotes(
+      material ? { studyText: typed, source: materialForNotes(material) } : { studyText: typed, syllabusFile }
+    );
 
     let started = false;
-    const result = await generateQuizParts({ ...source, difficulty, questionCount }, (quiz, settled, parts) => {
+    const result = await generateQuizParts({ studyText: typed, syllabusFile, difficulty, questionCount }, (quiz, settled, parts) => {
       const more = settled < parts;
       setMoreComing(more);
       if (!started) {
@@ -221,7 +310,7 @@ export function StudyScreen({ activeTab, onSelectTab }: Props) {
       } else {
         setActiveQuiz(quiz);
       }
-    });
+    }, material);
     setMoreComing(false);
 
     if (!result.quiz) {
@@ -367,7 +456,11 @@ export function StudyScreen({ activeTab, onSelectTab }: Props) {
     void refreshList();
   }
 
-  const canSubmit = studyText.trim().length >= MIN_LENGTH || syllabusFile !== null;
+  const pageLimit = pdfInfo?.scanned ? SCAN_PAGE_LIMIT : TEXT_PAGE_LIMIT;
+  const pdfUsable =
+    pdf !== null &&
+    (pdfState === 'fallback' || (pdfState === 'ready' && !!pdfInfo && !rangeProblem(pageRange, pdfInfo.pages, pageLimit)));
+  const canSubmit = pdf ? pdfUsable : studyText.trim().length >= MIN_LENGTH;
 
   useHardwareBackHandler(() => {
     if (phase === 'setup' || phase === 'notes') setPhase('list');
@@ -393,15 +486,23 @@ export function StudyScreen({ activeTab, onSelectTab }: Props) {
         ) : phase === 'notes' && pointers ? (
           <NotesView insets={insets} title={pointers.title} pages={pointers.pages} onBack={() => setPhase('list')} />
         ) : phase === 'setup' && generating ? (
-          <WritingView count={questionCount} source={syllabusFile ? stripPdf(syllabusFile.filename) : 'Your notes'} />
+          <WritingView
+            count={questionCount}
+            source={readStatus ?? (pdf ? stripPdf(pdf.name) : 'Your notes')}
+          />
         ) : phase === 'setup' ? (
           <SetupView
             insets={insets}
             studyText={studyText}
             onChangeText={setStudyText}
-            syllabusFile={syllabusFile}
+            pdf={pdf}
+            pdfState={pdfState}
+            pdfInfo={pdfInfo}
+            pageRange={pageRange}
+            onChangeRange={setPageRange}
+            pageLimit={pageLimit}
             onPickFile={pickFile}
-            onRemoveFile={() => setSyllabusFile(null)}
+            onRemoveFile={removePdf}
             difficulty={difficulty}
             onChangeDifficulty={setDifficulty}
             questionCount={questionCount}
@@ -450,6 +551,8 @@ export function StudyScreen({ activeTab, onSelectTab }: Props) {
       </GlassTarget>
 
       {phase === 'list' ? <BottomNav active={activeTab} onSelect={onSelectTab} chatUnread={hasUnread} /> : null}
+      {/* The on-phone PDF reader, loaded as soon as the quiz setup opens. */}
+      {phase === 'setup' ? <PdfReaderHost /> : null}
 
       <LeaderboardSheet quiz={board} onClose={() => setBoard(null)} />
       <JoinQuizSheet
@@ -746,7 +849,12 @@ function SetupView({
   insets,
   studyText,
   onChangeText,
-  syllabusFile,
+  pdf,
+  pdfState,
+  pdfInfo,
+  pageRange,
+  onChangeRange,
+  pageLimit,
   onPickFile,
   onRemoveFile,
   difficulty,
@@ -761,7 +869,12 @@ function SetupView({
   insets: Insets;
   studyText: string;
   onChangeText: (v: string) => void;
-  syllabusFile: PdfFileInput | null;
+  pdf: PickedStudyPdf | null;
+  pdfState: 'opening' | 'ready' | 'fallback' | 'failed';
+  pdfInfo: ReaderInfo | null;
+  pageRange: PageRange | null;
+  onChangeRange: (r: PageRange | null) => void;
+  pageLimit: number;
   onPickFile: () => void;
   onRemoveFile: () => void;
   difficulty: Difficulty;
@@ -779,7 +892,13 @@ function SetupView({
   const [customText, setCustomText] = useState(String(questionCount));
   const customNumber = Number(customText);
   const customValid = !custom || (customNumber >= MIN_COUNT && customNumber <= MAX_COUNT);
-  const sizeMb = syllabusFile ? (syllabusFile.base64.length * 0.75) / (1024 * 1024) : 0;
+  const fileLine = !pdf
+    ? ''
+    : pdfState === 'opening'
+      ? `${formatMb(pdf.size)} · Opening…`
+      : pdfState === 'ready' && pdfInfo
+        ? `${pdfInfo.pages} ${pdfInfo.pages === 1 ? 'page' : 'pages'} · ${formatMb(pdf.size)}`
+        : formatMb(pdf.size);
 
   return (
     <KeyboardAvoider style={styles.flex}>
@@ -804,15 +923,16 @@ function SetupView({
           <View style={styles.group}>
             <Text style={styles.eyebrow}>From</Text>
             {mode === 'pdf' ? (
-              syllabusFile ? (
+              pdf ? (
                 <View style={[styles.card, styles.fileCard]}>
                   <PdfTile />
                   <View style={styles.flexText}>
                     <Text style={styles.t} numberOfLines={1}>
-                      {stripPdf(syllabusFile.filename)}
+                      {stripPdf(pdf.name)}
                     </Text>
-                    <Text style={styles.m}>{sizeMb >= 0.1 ? `${sizeMb.toFixed(1)} MB` : 'PDF'}</Text>
+                    <Text style={styles.m}>{fileLine}</Text>
                   </View>
+                  {pdfState === 'opening' ? <ActivityIndicator size="small" color={colors.muted} /> : null}
                   <Pressable
                     onPress={onRemoveFile}
                     accessibilityRole="button"
@@ -833,7 +953,7 @@ function SetupView({
                   <PdfTile />
                   <View style={styles.flexText}>
                     <Text style={styles.t}>Choose a PDF</Text>
-                    <Text style={styles.m}>Up to 15 MB</Text>
+                    <Text style={styles.m}>Any size, even a whole textbook</Text>
                   </View>
                   <Icon name="chevronRight" size={18} color={colors.faint} strokeWidth={2} />
                 </Pressable>
@@ -868,6 +988,19 @@ function SetupView({
             </Pressable>
           </View>
         </FadeIn>
+
+        {pdf && pdfState === 'ready' && pdfInfo && pdfInfo.pages > NO_PICKER_PAGES ? (
+          <FadeIn>
+            <PagePicker
+              pageCount={pdfInfo.pages}
+              chapters={pdfInfo.outline}
+              range={pageRange}
+              onChange={onChangeRange}
+              limit={pageLimit}
+              scanned={pdfInfo.scanned}
+            />
+          </FadeIn>
+        ) : null}
 
         <FadeIn delay={90}>
           <View style={styles.group}>
@@ -1114,6 +1247,7 @@ function QuizPlayerView({
           <Text style={styles.eyebrow}>
             {index + 1} of {total}
           </Text>
+          {question.image ? <QuestionFigure key={`fig-${index}`} image={question.image} /> : null}
           <Text style={styles.prompt} accessibilityRole="header">
             {question.prompt}
           </Text>
