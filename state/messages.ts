@@ -325,3 +325,41 @@ export async function fetchConversationSummaries(
   }
   return summaries;
 }
+
+/** Read state behind "Seen": the newest message one person has read in one thread (migration 0029). */
+export type ChatRead = { userId: string; thread: string; lastReadAt: string };
+export type ChatReadRow = { user_id: string; thread: string; last_read_at: string };
+
+export function toChatRead(row: ChatReadRow): ChatRead {
+  return { userId: row.user_id, thread: row.thread, lastReadAt: row.last_read_at };
+}
+
+/** The server's name for a thread from the reader's side: 'group', or the other person's id in a DM. */
+export function readThread(conversation: Conversation): string {
+  return conversation.type === 'group' ? 'group' : conversation.otherUserId;
+}
+
+/**
+ * Who has read how far in this thread, other than you. Group: every member's
+ * row for 'group'. DM: the other person's row for the DM with you.
+ */
+export async function fetchChatReads(projectId: string, currentUserId: string, conversation: Conversation): Promise<ChatRead[]> {
+  let query = supabase.from('chat_reads').select('user_id, thread, last_read_at').eq('project_id', projectId);
+  query =
+    conversation.type === 'group'
+      ? query.eq('thread', 'group').neq('user_id', currentUserId)
+      : query.eq('user_id', conversation.otherUserId).eq('thread', currentUserId);
+  const { data, error } = await query;
+  if (error) throw error;
+  return (data as ChatReadRow[]).map(toChatRead);
+}
+
+/** Records that you've read this thread up to a message (never moves backwards). */
+export async function markChatRead(projectId: string, conversation: Conversation, readAt: string): Promise<void> {
+  const { error } = await supabase.rpc('mark_chat_read', {
+    p_project_id: projectId,
+    p_thread: readThread(conversation),
+    p_read_at: readAt,
+  });
+  if (error) throw error;
+}

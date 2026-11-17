@@ -39,10 +39,12 @@ import {
   Conversation,
   conversationKey,
   deleteMessage,
+  fetchChatReads,
   fetchMessages,
   fetchReactions,
   getAttachmentUrl,
   insertMessage,
+  markChatRead,
   mergeLatestPage,
   Message,
   MESSAGE_PAGE_SIZE,
@@ -190,6 +192,8 @@ export function ChatScreen({ conversation, onBack }: Props) {
     currentUserId ? (threadCache.get(threadCacheKey(project.id, currentUserId, convKey))?.reactions ?? []) : []
   );
   const [loadError, setLoadError] = useState<string | null>(null);
+  /** "Seen": how far each other person in this thread has read (user id -> newest read message time). */
+  const [reads, setReads] = useState<Record<string, string>>({});
   const [input, setInput] = useState('');
   const [sending, setSending] = useState(false);
   const [attaching, setAttaching] = useState(false);
@@ -402,6 +406,26 @@ export function ChatScreen({ conversation, onBack }: Props) {
     };
   }, [project.id, currentUserId, convKey, commit, refreshLatest]);
 
+  // "Seen": who has read how far here. Kept per thread; a newer stamp always wins.
+  const noteRead = useCallback((userId: string, at: string) => {
+    setReads((prev) => (prev[userId] && Date.parse(prev[userId]) >= Date.parse(at) ? prev : { ...prev, [userId]: at }));
+  }, []);
+  const loadReads = useCallback(async () => {
+    if (!currentUserId) return;
+    const key = convKey;
+    try {
+      const rows = await fetchChatReads(project.id, currentUserId, conversationRef.current);
+      if (conversationKey(conversationRef.current) !== key) return;
+      for (const r of rows) noteRead(r.userId, r.lastReadAt);
+    } catch {
+      // "Seen" is a nicety: a failed fetch just shows "Sent" until the next resync.
+    }
+  }, [project.id, currentUserId, convKey, noteRead]);
+  useEffect(() => {
+    setReads({});
+    void loadReads();
+  }, [loadReads]);
+
   // Live events for this thread, from the project's shared channels.
   useEffect(() => {
     if (!hub || !currentUserId) return;
@@ -431,20 +455,70 @@ export function ChatScreen({ conversation, onBack }: Props) {
           commit({ reactions: reactionsRef.current.filter((r) => !sameReaction(r, reaction)) });
           break;
         }
+        case 'read': {
+          const { read } = event;
+          const conv = conversationRef.current;
+          const inThread =
+            conv.type === 'group'
+              ? read.thread === 'group'
+              : read.userId === conv.otherUserId && read.thread === currentUserId;
+          if (inThread) noteRead(read.userId, read.lastReadAt);
+          break;
+        }
         case 'resync':
-          if (event.conversationKey === null || event.conversationKey === convKey) void refreshLatest();
+          if (event.conversationKey === null || event.conversationKey === convKey) {
+            void refreshLatest();
+            void loadReads();
+          }
           break;
       }
     });
-  }, [hub, currentUserId, convKey, addMessage, removeMessage, commit, refreshLatest, noteReactionOp]);
+  }, [hub, currentUserId, convKey, addMessage, removeMessage, commit, refreshLatest, noteReactionOp, noteRead, loadReads]);
 
   // Read while you're looking at it: stamped as messages land, when the app
   // goes to the background, and when this thread closes however that
   // happens (Back, a notification tap to another thread, Share to chat).
-  const lastMessageId = messages && messages.length > 0 ? messages[messages.length - 1].id : null;
+  const lastMessage = messages && messages.length > 0 ? messages[messages.length - 1] : null;
+  const lastMessageId = lastMessage?.id ?? null;
+  const lastMessageAt = lastMessage?.createdAt ?? null;
   useEffect(() => {
     if (lastMessageId) markRead(conversationRef.current);
   }, [lastMessageId, markRead]);
+  // Tell the others how far you've read, so their "Sent" turns into "Seen".
+  // Only while the app is in front: a thread left open in the background
+  // hasn't been read.
+  const sentReadRef = useRef<string | null>(null);
+  const [appActive, setAppActive] = useState(AppState.currentState === 'active');
+  useEffect(() => {
+    const sub = AppState.addEventListener('change', (state) => setAppActive(state === 'active'));
+    return () => sub.remove();
+  }, []);
+  useEffect(() => {
+    if (!lastMessageAt || !currentUserId || !appActive) return;
+    const stamp = `${convKey}|${lastMessageAt}`;
+    if (sentReadRef.current === stamp) return;
+    sentReadRef.current = stamp;
+    markChatRead(project.id, conversationRef.current, lastMessageAt).catch(() => {
+      if (sentReadRef.current === stamp) sentReadRef.current = null;
+    });
+  }, [lastMessageAt, convKey, project.id, currentUserId, appActive]);
+
+  // Under your newest message, when it's the last one in the thread:
+  // "Sent" until someone has read it, then "Seen" (DM) or who saw it (group).
+  const seenStatus = useMemo(() => {
+    if (!lastMessage || lastMessage.authorId !== currentUserId) return null;
+    const at = Date.parse(lastMessage.createdAt);
+    const hasSeen = (userId: string) => reads[userId] !== undefined && Date.parse(reads[userId]) >= at;
+    if (conversation.type === 'dm') return hasSeen(conversation.otherUserId) ? 'Seen' : 'Sent';
+    const others = members.filter((m) => m.id !== currentUserId);
+    const seen = others.filter((m) => hasSeen(m.id));
+    if (seen.length === 0) return 'Sent';
+    if (others.length > 1 && seen.length === others.length) return 'Seen by everyone';
+    const names = seen.map((m) => firstName(m.name));
+    if (names.length === 1) return `Seen by ${names[0]}`;
+    if (names.length === 2) return `Seen by ${names[0]} and ${names[1]}`;
+    return `Seen by ${names[0]}, ${names[1]} and ${names.length - 2} more`;
+  }, [lastMessage, currentUserId, reads, conversation, members]);
   useEffect(() => {
     const sub = AppState.addEventListener('change', (state) => {
       if (state !== 'active') markRead(conversationRef.current);
@@ -673,19 +747,28 @@ export function ChatScreen({ conversation, onBack }: Props) {
           onSettled={markSettled}
         />
       );
-      if (!newDay) return row;
+      const status =
+        seenStatus && messages && index === messages.length - 1 ? (
+          <Text style={styles.seenText} accessibilityLiveRegion="polite">
+            {seenStatus}
+          </Text>
+        ) : null;
+      if (!newDay && !status) return row;
       return (
         <View>
-          <View style={[styles.dayRow, index === 0 && styles.dayRowFirst]} accessibilityRole="header">
-            <View style={styles.dayChip}>
-              <Text style={styles.dayText}>{dayLabel(item.createdAt)}</Text>
+          {newDay ? (
+            <View style={[styles.dayRow, index === 0 && styles.dayRowFirst]} accessibilityRole="header">
+              <View style={styles.dayChip}>
+                <Text style={styles.dayText}>{dayLabel(item.createdAt)}</Text>
+              </View>
             </View>
-          </View>
+          ) : null}
           {row}
+          {status}
         </View>
       );
     },
-    [messages, tasksById, currentUserId, membersById, stableClaim, handleClaimed, reactionsByMessage, toggleReaction, markSettled]
+    [messages, tasksById, currentUserId, membersById, stableClaim, handleClaimed, reactionsByMessage, toggleReaction, markSettled, seenStatus]
   );
 
   const handleContentSizeChange = useStableCallback(() => {
@@ -1918,6 +2001,13 @@ const styles = StyleSheet.create({
   },
   muted: {
     color: colors.muted,
+  },
+  seenText: {
+    ...type.metadata,
+    color: colors.muted,
+    textAlign: 'right',
+    marginTop: 4,
+    marginRight: 4,
   },
   ink: {
     color: colors.ink,

@@ -2,7 +2,7 @@ import { AppState, AppStateStatus } from 'react-native';
 import type { RealtimeChannel, RealtimeChannelOptions } from '@supabase/supabase-js';
 import { supabase } from '../lib/supabase';
 import { onMessagePush } from './chatSignals';
-import { Message, MessageRow, Reaction, ReactionRow, toMessage, toReaction } from './messages';
+import { ChatRead, ChatReadRow, Message, MessageRow, Reaction, ReactionRow, toChatRead, toMessage, toReaction } from './messages';
 
 /** Someone is typing — to one member (a DM) or, with recipientId null, to the group. */
 export type TypingEvent = { userId: string; recipientId: string | null };
@@ -13,6 +13,8 @@ export type ChatEvent =
   | { type: 'reactionAdded'; reaction: Reaction }
   | { type: 'reactionRemoved'; reaction: Reaction }
   | { type: 'typing'; typing: TypingEvent }
+  /** Someone read further in a thread ("Seen"). */
+  | { type: 'read'; read: ChatRead }
   /**
    * Events may have been missed — the socket reconnected, the app came
    * back to the foreground, or a message push arrived. Realtime never
@@ -125,6 +127,18 @@ export function createChatHub(projectId: string, userId: string): ChatHub {
           const old = payload.old as Partial<ReactionRow>;
           if (old.message_id && old.user_id && old.emoji) {
             emit({ type: 'reactionRemoved', reaction: toReaction(old as ReactionRow) });
+          }
+        }
+      )
+      .on(
+        // "Seen": someone read further in a thread. RLS only delivers rows
+        // for threads you are in (the group, or a DM with you).
+        'postgres_changes',
+        { event: '*', schema: 'public', table: 'chat_reads', filter: `project_id=eq.${projectId}` },
+        (payload) => {
+          const row = payload.new as Partial<ChatReadRow> | undefined;
+          if (row?.user_id && row.thread && row.last_read_at && row.user_id !== userId) {
+            emit({ type: 'read', read: toChatRead(row as ChatReadRow) });
           }
         }
       )
