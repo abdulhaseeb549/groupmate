@@ -59,6 +59,22 @@ import { pdfReader, ReaderError, ReaderInfo, readerErrorText } from '../utils/pd
 import { PdfReaderHost } from '../components/study/PdfReaderHost';
 import { PagePicker, PageRange, rangeProblem } from '../components/study/PagePicker';
 import { QuestionFigure } from '../components/study/QuestionFigure';
+import { WrittenPlayer } from '../components/study/WrittenPlayer';
+import { KindChips } from '../components/study/KindChips';
+import {
+  commitWritten,
+  deleteWritten,
+  fetchWrittenQuiz,
+  fetchWrittenQuizzes,
+  generateWritten,
+  MarkedAnswer,
+  missedMaterial,
+  recordWrittenBest,
+  WRITTEN_COUNTS,
+  WrittenKind,
+  WrittenQuiz,
+  WrittenSummary,
+} from '../state/writtenQuiz';
 
 const MIN_LENGTH = 40;
 // Quick picks, plus "Custom" for any number in range. The range matches the
@@ -73,7 +89,7 @@ const MASCOT = require('../assets/Mascot-png.png');
 
 const OPTION_ROOM = shadowRoom(16);
 
-type Phase = 'list' | 'notes' | 'setup' | 'quiz' | 'results';
+type Phase = 'list' | 'notes' | 'setup' | 'quiz' | 'results' | 'written';
 type Insets = { top: number; bottom: number };
 
 type Props = {
@@ -126,6 +142,18 @@ export function StudyScreen({ activeTab, onSelectTab }: Props) {
   const [listError, setListError] = useState<string | null>(null);
   const [deleteTarget, setDeleteTarget] = useState<QuizSummary | null>(null);
   const [deleting, setDeleting] = useState(false);
+
+  // Written answers (migration 0030): 2 / 5 / 10-mark questions and practicals.
+  const [answerMode, setAnswerMode] = useState<'choose' | 'write'>('choose');
+  const [writtenKinds, setWrittenKinds] = useState<WrittenKind[]>(['short', 'medium', 'long']);
+  const [writtenCount, setWrittenCount] = useState<number>(5);
+  const [writtenList, setWrittenList] = useState<WrittenSummary[]>([]);
+  const [writtenDelete, setWrittenDelete] = useState<WrittenSummary | null>(null);
+  const [writtenQuiz, setWrittenQuiz] = useState<{ quiz: WrittenQuiz; id: string | null } | null>(null);
+  const [writtenRun, setWrittenRun] = useState(0);
+  const [practising, setPractising] = useState(false);
+  const [practiseError, setPractiseError] = useState<string | null>(null);
+  const pendingBest = useRef<number | null>(null);
 
   const [studyText, setStudyText] = useState('');
   // The picked PDF stays on the phone; the reader takes the chosen pages from it.
@@ -183,8 +211,18 @@ export function StudyScreen({ activeTab, onSelectTab }: Props) {
     }
   }
 
+  async function refreshWritten() {
+    if (!userId) return;
+    try {
+      setWrittenList(await fetchWrittenQuizzes(userId));
+    } catch {
+      // Not set up on the server yet: there are simply no written quizzes to list.
+    }
+  }
+
   useEffect(() => {
     void refreshList();
+    void refreshWritten();
   }, [userId]);
 
   // The "+" menu's "Make a quiz" sets this from anywhere in the app.
@@ -268,7 +306,109 @@ export function StudyScreen({ activeTab, onSelectTab }: Props) {
     }
   }
 
+  /** Written answers: reads the material the same way, then writes questions with a marking scheme. */
+  async function handleGenerateWritten() {
+    setGenerating(true);
+    setSetupError(null);
+    let source: { text: string; images: { page: number; data: string }[] } | undefined;
+    let syllabusFile: PdfFileInput | undefined;
+    if (pdf && pdfState === 'ready') {
+      const read = await readPages(1);
+      if (!read) {
+        setGenerating(false);
+        return;
+      }
+      source = materialForNotes(read);
+    } else if (pdf && pdfState === 'fallback') {
+      syllabusFile = (await pdf.readAll()) ?? undefined;
+      if (!syllabusFile) {
+        setGenerating(false);
+        setSetupError("Couldn't read this PDF. Try again, or try another copy.");
+        return;
+      }
+    }
+    const result = await generateWritten({
+      studyText: studyText.trim() || undefined,
+      source,
+      syllabusFile,
+      kinds: writtenKinds,
+      questionCount: writtenCount,
+    });
+    setGenerating(false);
+    if (!result.quiz) {
+      setSetupError(result.error);
+      return;
+    }
+    await startWritten(result.quiz);
+  }
+
+  /** Opens the written quiz at once; saving runs beside, so a slow save never holds the student up. */
+  async function startWritten(quiz: WrittenQuiz) {
+    pendingBest.current = null;
+    setPractiseError(null);
+    setWrittenQuiz({ quiz, id: null });
+    setWrittenRun((n) => n + 1);
+    setPhase('written');
+    const { quizId } = await commitWritten(quiz);
+    if (!quizId) return; // already playing: saving can fail quietly
+    setWrittenQuiz((w) => (w && w.quiz === quiz ? { ...w, id: quizId } : w));
+    if (pendingBest.current !== null) {
+      void recordWrittenBest(quizId, pendingBest.current);
+      pendingBest.current = null;
+    }
+  }
+
+  async function openWritten(summary: WrittenSummary) {
+    setListError(null);
+    try {
+      const quiz = await fetchWrittenQuiz(summary.id);
+      setPractiseError(null);
+      setWrittenQuiz({ quiz, id: summary.id });
+      setWrittenRun((n) => n + 1);
+      setPhase('written');
+    } catch (err) {
+      setListError(err instanceof Error ? err.message : 'Could not load that quiz.');
+    }
+  }
+
+  function finishWritten(results: (MarkedAnswer | null)[]) {
+    const got = results.reduce((n, r) => n + (r ? r.total : 0), 0);
+    if (writtenQuiz?.id) void recordWrittenBest(writtenQuiz.id, got);
+    else pendingBest.current = got;
+  }
+
+  async function practiseMissed(results: (MarkedAnswer | null)[]) {
+    if (!writtenQuiz) return;
+    setPractising(true);
+    setPractiseError(null);
+    const material = missedMaterial(writtenQuiz.quiz, results);
+    const out = await generateWritten({ studyText: material.text, kinds: material.kinds, questionCount: material.count });
+    setPractising(false);
+    if (!out.quiz) {
+      setPractiseError(out.error);
+      return;
+    }
+    await startWritten({ ...out.quiz, title: `${writtenQuiz.quiz.title}: missed` });
+  }
+
+  async function confirmDeleteWritten() {
+    if (!writtenDelete) return;
+    setDeleting(true);
+    const { error } = await deleteWritten(writtenDelete.id);
+    setDeleting(false);
+    setWrittenDelete(null);
+    if (error) {
+      setListError(error);
+      return;
+    }
+    void refreshWritten();
+  }
+
   async function handleGenerate() {
+    if (answerMode === 'write') {
+      await handleGenerateWritten();
+      return;
+    }
     setGenerating(true);
     setSetupError(null);
 
@@ -454,17 +594,19 @@ export function StudyScreen({ activeTab, onSelectTab }: Props) {
   function backToList() {
     setPhase('list');
     void refreshList();
+    void refreshWritten();
   }
 
   const pageLimit = pdfInfo?.scanned ? SCAN_PAGE_LIMIT : TEXT_PAGE_LIMIT;
   const pdfUsable =
     pdf !== null &&
     (pdfState === 'fallback' || (pdfState === 'ready' && !!pdfInfo && !rangeProblem(pageRange, pdfInfo.pages, pageLimit)));
-  const canSubmit = pdf ? pdfUsable : studyText.trim().length >= MIN_LENGTH;
+  const canSubmit =
+    (pdf ? pdfUsable : studyText.trim().length >= MIN_LENGTH) && (answerMode === 'choose' || writtenKinds.length > 0);
 
   useHardwareBackHandler(() => {
     if (phase === 'setup' || phase === 'notes') setPhase('list');
-    else if (phase === 'quiz' || phase === 'results') backToList();
+    else if (phase === 'quiz' || phase === 'results' || phase === 'written') backToList();
   }, phase !== 'list' && !generating);
 
   return (
@@ -474,6 +616,9 @@ export function StudyScreen({ activeTab, onSelectTab }: Props) {
           <ListView
             insets={insets}
             quizzes={quizzes}
+            written={writtenList}
+            onOpenWritten={openWritten}
+            onDeleteWritten={setWrittenDelete}
             pointers={pointers}
             error={listError}
             onNewQuiz={openSetup}
@@ -487,7 +632,7 @@ export function StudyScreen({ activeTab, onSelectTab }: Props) {
           <NotesView insets={insets} title={pointers.title} pages={pointers.pages} onBack={() => setPhase('list')} />
         ) : phase === 'setup' && generating ? (
           <WritingView
-            count={questionCount}
+            count={answerMode === 'write' ? writtenCount : questionCount}
             source={readStatus ?? (pdf ? stripPdf(pdf.name) : 'Your notes')}
           />
         ) : phase === 'setup' ? (
@@ -507,10 +652,26 @@ export function StudyScreen({ activeTab, onSelectTab }: Props) {
             onChangeDifficulty={setDifficulty}
             questionCount={questionCount}
             onChangeQuestionCount={setQuestionCount}
+            answerMode={answerMode}
+            onChangeAnswerMode={setAnswerMode}
+            kinds={writtenKinds}
+            onChangeKinds={setWrittenKinds}
+            writtenCount={writtenCount}
+            onChangeWrittenCount={setWrittenCount}
             canSubmit={canSubmit}
             error={setupError}
             onBack={() => setPhase('list')}
             onGenerate={handleGenerate}
+          />
+        ) : phase === 'written' && writtenQuiz ? (
+          <WrittenPlayer
+            key={writtenRun}
+            quiz={writtenQuiz.quiz}
+            onFinish={finishWritten}
+            onExit={backToList}
+            onPractiseMissed={practiseMissed}
+            practising={practising}
+            practiseError={practiseError}
           />
         ) : phase === 'quiz' && activeQuiz ? (
           <QuizPlayerView
@@ -573,6 +734,15 @@ export function StudyScreen({ activeTab, onSelectTab }: Props) {
         }}
       />
 
+      <ConfirmDialog
+        visible={writtenDelete !== null}
+        title="Delete this quiz?"
+        message={writtenDelete ? `"${writtenDelete.title}" will be gone for good.` : undefined}
+        confirmLabel={deleting ? 'One moment…' : 'Delete'}
+        destructive
+        onConfirm={confirmDeleteWritten}
+        onCancel={() => setWrittenDelete(null)}
+      />
       <ConfirmDialog
         visible={deleteTarget !== null}
         title={deleteTarget?.joined ? 'Leave this quiz?' : 'Delete this quiz?'}
@@ -645,6 +815,9 @@ function NotesView({
 function ListView({
   insets,
   quizzes,
+  written,
+  onOpenWritten,
+  onDeleteWritten,
   pointers,
   error,
   onNewQuiz,
@@ -656,6 +829,9 @@ function ListView({
 }: {
   insets: Insets;
   quizzes: QuizSummary[] | null;
+  written: WrittenSummary[];
+  onOpenWritten: (summary: WrittenSummary) => void;
+  onDeleteWritten: (summary: WrittenSummary) => void;
   pointers: { quizId: string; title: string; pages: NotePage[] } | null;
   error: string | null;
   onNewQuiz: () => void;
@@ -748,7 +924,7 @@ function ListView({
           </View>
           {quizzes === null ? (
             <ActivityIndicator color={colors.purple} style={styles.listLoading} />
-          ) : quizzes.length === 0 ? (
+          ) : quizzes.length === 0 && written.length === 0 ? (
             <View style={[styles.card, styles.emptyCard]}>
               <Text style={styles.t}>No quizzes yet</Text>
               <Text style={styles.m}>Your quizzes show up here</Text>
@@ -788,6 +964,37 @@ function ListView({
                       onPress={() => onDeleteQuiz(q)}
                       accessibilityRole="button"
                       accessibilityLabel={q.joined ? `Leave ${q.title}` : `Delete ${q.title}`}
+                      style={({ pressed }) => [styles.del, pressed && styles.delPressed]}
+                    >
+                      <Icon name="trash" size={17} color={colors.faint} strokeWidth={1.8} />
+                    </Pressable>
+                  </View>
+                </View>
+              ))}
+              {written.map((w, i) => (
+                <View key={w.id}>
+                  {quizzes.length > 0 || i > 0 ? <View style={styles.hair} /> : null}
+                  <View style={styles.qrow}>
+                    <Pressable
+                      onPress={() => onOpenWritten(w)}
+                      accessibilityRole="button"
+                      accessibilityLabel={`Open ${w.title}, written`}
+                      style={({ pressed }) => [styles.qrowMain, pressed && styles.pressedRow]}
+                    >
+                      <View style={styles.flexText}>
+                        <Text style={styles.t} numberOfLines={1}>
+                          {w.title}
+                        </Text>
+                        <Text style={styles.m} numberOfLines={1}>
+                          Written · {w.questionCount} questions
+                        </Text>
+                      </View>
+                      <ScorePill best={w.bestMarks} total={w.totalMarks} />
+                    </Pressable>
+                    <Pressable
+                      onPress={() => onDeleteWritten(w)}
+                      accessibilityRole="button"
+                      accessibilityLabel={`Delete ${w.title}`}
                       style={({ pressed }) => [styles.del, pressed && styles.delPressed]}
                     >
                       <Icon name="trash" size={17} color={colors.faint} strokeWidth={1.8} />
@@ -845,6 +1052,13 @@ function Bars({ level, selected }: { level: number; selected: boolean }) {
   );
 }
 
+/** One minute a mark, with a practical counted as 6: the same clock the written quiz runs. */
+function writtenMinutes(kinds: WrittenKind[], count: number) {
+  const marks = { short: 2, medium: 5, long: 10, practical: 6 } as const;
+  const avg = kinds.reduce((n, k) => n + marks[k], 0) / Math.max(1, kinds.length);
+  return Math.max(5, Math.round((avg * count) / 5) * 5);
+}
+
 function SetupView({
   insets,
   studyText,
@@ -861,6 +1075,12 @@ function SetupView({
   onChangeDifficulty,
   questionCount,
   onChangeQuestionCount,
+  answerMode,
+  onChangeAnswerMode,
+  kinds,
+  onChangeKinds,
+  writtenCount,
+  onChangeWrittenCount,
   canSubmit,
   error,
   onBack,
@@ -881,6 +1101,12 @@ function SetupView({
   onChangeDifficulty: (d: Difficulty) => void;
   questionCount: number;
   onChangeQuestionCount: (n: number) => void;
+  answerMode: 'choose' | 'write';
+  onChangeAnswerMode: (m: 'choose' | 'write') => void;
+  kinds: WrittenKind[];
+  onChangeKinds: (k: WrittenKind[]) => void;
+  writtenCount: number;
+  onChangeWrittenCount: (n: number) => void;
   canSubmit: boolean;
   error: string | null;
   onBack: () => void;
@@ -1002,6 +1228,56 @@ function SetupView({
           </FadeIn>
         ) : null}
 
+        <FadeIn delay={80}>
+          <View style={styles.group}>
+            <Text style={styles.eyebrow}>Answer by</Text>
+            <Segmented<'choose' | 'write'>
+              label="Answer by"
+              value={answerMode}
+              onChange={onChangeAnswerMode}
+              options={[
+                {
+                  value: 'choose',
+                  label: 'Choosing',
+                  leading: (s) => <Icon name="tick" size={17} color={s ? colors.purple : colors.muted} strokeWidth={1.9} />,
+                },
+                {
+                  value: 'write',
+                  label: 'Writing',
+                  leading: (s) => <Icon name="edit" size={17} color={s ? colors.purple : colors.muted} strokeWidth={1.9} />,
+                },
+              ]}
+            />
+          </View>
+        </FadeIn>
+
+        {answerMode === 'write' ? (
+          <>
+            <FadeIn>
+              <View style={styles.group}>
+                <View style={styles.pickRow}>
+                  <Text style={styles.eyebrow}>Questions like</Text>
+                  <Text style={styles.m}>Pick any</Text>
+                </View>
+                <KindChips value={kinds} onChange={onChangeKinds} />
+              </View>
+            </FadeIn>
+            <FadeIn>
+              <View style={styles.group}>
+                <Text style={styles.eyebrow}>Questions</Text>
+                <Segmented<number>
+                  label="Number of questions"
+                  value={writtenCount}
+                  onChange={onChangeWrittenCount}
+                  options={WRITTEN_COUNTS.map((c) => ({ value: c as number, label: String(c) }))}
+                />
+              </View>
+            </FadeIn>
+          </>
+        ) : null}
+
+        {answerMode === 'choose' ? (
+        <>
         <FadeIn delay={90}>
           <View style={styles.group}>
             <Text style={styles.eyebrow}>Level</Text>
@@ -1061,18 +1337,25 @@ function SetupView({
           </View>
         </FadeIn>
 
+        </>
+        ) : null}
+
         {error ? <ErrorBox text={error} /> : null}
       </ScrollView>
 
       {/* Action in the thumb zone. */}
       <View style={[styles.bottomAction, { paddingBottom: Math.max(insets.bottom, 0) + 28 }]}>
         <GradientButton
-          label={`Make ${questionCount} questions`}
+          label={`Make ${answerMode === 'write' ? writtenCount : questionCount} questions`}
           onPress={onGenerate}
-          disabled={!canSubmit || !customValid}
+          disabled={!canSubmit || (answerMode === 'choose' && !customValid)}
           style={styles.fullWidth}
         />
-        <Text style={styles.caption}>Points to remember come with it</Text>
+        <Text style={styles.caption}>
+          {answerMode === 'write'
+            ? `About ${writtenMinutes(kinds, writtenCount)} minutes · type or snap your page`
+            : 'Points to remember come with it'}
+        </Text>
       </View>
     </KeyboardAvoider>
   );
@@ -1812,6 +2095,11 @@ const styles = StyleSheet.create({
   },
   group: {
     gap: 10,
+  },
+  pickRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
   },
   fileCard: {
     flexDirection: 'row',

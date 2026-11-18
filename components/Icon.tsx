@@ -48,6 +48,8 @@ const PATHS = {
     'M3.5 8A2.5 2.5 0 0 1 6 5.5h6A2.5 2.5 0 0 1 14.5 8v8a2.5 2.5 0 0 1-2.5 2.5H6A2.5 2.5 0 0 1 3.5 16zM14.5 10.8l4.6-2.6a.6.6 0 0 1 .9.5v6.6a.6.6 0 0 1-.9.5l-4.6-2.6z',
   camera:
     'M4 8.5A2 2 0 0 1 6 6.5h2.2l.8-1.5a1 1 0 0 1 .9-.5h4.2a1 1 0 0 1 .9.5l.8 1.5H18a2 2 0 0 1 2 2V17a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2zM12 16a3.2 3.2 0 1 0 0-6.4 3.2 3.2 0 0 0 0 6.4z',
+  // Written answers: a practical question.
+  flask: 'M9.5 3.5h5M10.5 3.5v6L5 18.5A1.6 1.6 0 0 0 6.4 21h11.2a1.6 1.6 0 0 0 1.4-2.5l-5.5-9v-6',
   // Account screens (GSignIn, GOnboarding, GOnboarding2, GInvite, GSettings).
   documentLines: 'M13.5 3H7.5A2.5 2.5 0 0 0 5 5.5v13A2.5 2.5 0 0 0 7.5 21h9a2.5 2.5 0 0 0 2.5-2.5V8.5zM13.5 3v5.5H19M9 13h6M9 16.5h4',
   arrowRight: 'M5 12h14M13 6l6 6-6 6',
